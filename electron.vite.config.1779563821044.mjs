@@ -1,0 +1,36 @@
+// electron.vite.config.ts
+import { resolve } from "path";
+import { defineConfig, externalizeDepsPlugin } from "electron-vite";
+import react from "@vitejs/plugin-react";
+var electron_vite_config_default = defineConfig({
+  main: {
+    plugins: [externalizeDepsPlugin()],
+    build: {
+      emptyOutDir: false,
+      rollupOptions: {
+        external: ["better-sqlite3"]
+      }
+    }
+  },
+  preload: {
+    plugins: [externalizeDepsPlugin()],
+    build: {
+      emptyOutDir: false
+    }
+  },
+  renderer: {
+    resolve: {
+      alias: {
+        "@renderer": resolve("src/renderer/src"),
+        "@": resolve("src/renderer/src")
+      }
+    },
+    plugins: [react()],
+    build: {
+      emptyOutDir: false
+    }
+  }
+});
+export {
+  electron_vite_config_default as default
+};

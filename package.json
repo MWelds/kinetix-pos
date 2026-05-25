@@ -1,0 +1,145 @@
+{
+  "name": "kinetix-pos",
+  "version": "1.0.0",
+  "description": "Offline-first Point of Sale system for Windows",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "start": "electron-vite preview",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "seed": "ts-node src/main/database/seed.ts",
+    "dist": "npm run build && electron-builder --win",
+    "dist:dir": "npm run build && electron-builder --win --dir",
+    "release": "npm run build && electron-builder --win --publish always"
+  },
+  "keywords": [
+    "pos",
+    "point-of-sale",
+    "electron",
+    "offline"
+  ],
+  "author": {
+    "name": "Kinetix POS",
+    "email": "admin@store.com"
+  },
+  "license": "MIT",
+  "build": {
+    "appId": "com.kinetix.pos",
+    "productName": "Kinetix POS",
+    "copyright": "Copyright © 2024",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "files": [
+      "out/**/*",
+      "!out/**/*.map",
+      "node_modules/**/*",
+      "!node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
+      "!node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
+      "!node_modules/.cache",
+      "!node_modules/electron-builder/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "build/resources",
+        "to": "resources",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "requestedExecutionLevel": "asInvoker",
+      "artifactName": "${productName}-${version}-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Kinetix POS",
+      "menuCategory": "Kinetix POS",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "installerLanguages": [
+        "English"
+      ],
+      "displayLanguageSelector": false,
+      "include": "build/installer.nsh"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-Portable.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "mavwelds",
+      "repo": "kinetix-pos",
+      "releaseType": "release"
+    },
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**/*",
+      "node_modules/@electron/rebuild/**/*"
+    ]
+  },
+  "devDependencies": {
+    "@electron-toolkit/tsconfig": "^1.0.1",
+    "@electron/rebuild": "^3.6.0",
+    "@types/better-sqlite3": "^7.6.8",
+    "@types/react": "^18.2.55",
+    "@types/react-dom": "^18.2.19",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.17",
+    "drizzle-kit": "^0.20.14",
+    "electron": "^29.1.0",
+    "electron-builder": "^24.9.1",
+    "electron-vite": "^2.0.0",
+    "postcss": "^8.4.35",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.3.3",
+    "vite": "^5.1.2"
+  },
+  "dependencies": {
+    "@electron-toolkit/preload": "^3.0.1",
+    "@electron-toolkit/utils": "^3.0.0",
+    "@types/nodemailer": "^8.0.0",
+    "@types/qrcode": "^1.5.6",
+    "better-sqlite3": "^9.4.3",
+    "date-fns": "^3.3.1",
+    "drizzle-orm": "^0.29.4",
+    "electron-updater": "^6.8.3",
+    "lucide-react": "^0.323.0",
+    "nodemailer": "^8.0.7",
+    "qrcode": "^1.5.4",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.22.1",
+    "zustand": "^4.5.1"
+  }
+}

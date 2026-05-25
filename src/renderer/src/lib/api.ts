@@ -1,0 +1,237 @@
+/**
+ * Type-safe wrapper around window.api (the IPC bridge).
+ * Components import from here, never accessing window.api directly.
+ */
+
+import type {
+  Product,
+  Category,
+  Customer,
+  StaffMember,
+  Order,
+  InventoryItem,
+  SalesSummary,
+  ProductComponent,
+  Vendor
+} from '../types'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const bridge = (window as any).api
+
+export const api = {
+  products: {
+    list: (categoryId?: string): Promise<Product[]> => bridge.products.list(categoryId),
+    get: (id: string): Promise<Product | null> => bridge.products.get(id),
+    search: (query: string): Promise<Product[]> => bridge.products.search(query),
+    byBarcode: (barcode: string): Promise<Product | null> => bridge.products.byBarcode(barcode),
+    create: (input: Partial<Product>): Promise<Product> => bridge.products.create(input),
+    update: (id: string, input: Partial<Product>): Promise<Product> =>
+      bridge.products.update(id, input),
+    delete: (id: string): Promise<void> => bridge.products.delete(id),
+    getComponents: (compositeProductId: string): Promise<ProductComponent[]> =>
+      bridge.products.getComponents(compositeProductId),
+    setComponents: (
+      compositeProductId: string,
+      components: Array<{ componentProductId: string; quantity: number }>
+    ): Promise<void> => bridge.products.setComponents(compositeProductId, components)
+  },
+
+  categories: {
+    list: (): Promise<Category[]> => bridge.categories.list(),
+    create: (input: { name: string; color?: string }): Promise<Category> =>
+      bridge.categories.create(input),
+    update: (id: string, input: Partial<Category>): Promise<Category> =>
+      bridge.categories.update(id, input),
+    delete: (id: string): Promise<void> => bridge.categories.delete(id)
+  },
+
+  inventory: {
+    list: (): Promise<InventoryItem[]> => bridge.inventory.list(),
+    lowStock: (): Promise<InventoryItem[]> => bridge.inventory.lowStock(),
+    adjust: (input: {
+      productId: string
+      type: 'receive' | 'transfer' | 'loss' | 'adjustment'
+      quantity: number
+      note?: string
+      staffId?: string
+    }): Promise<InventoryItem> => bridge.inventory.adjust(input)
+  },
+
+  customers: {
+    list: (): Promise<Customer[]> => bridge.customers.list(),
+    get: (id: string): Promise<Customer | null> => bridge.customers.get(id),
+    search: (query: string): Promise<Customer[]> => bridge.customers.search(query),
+    create: (input: Partial<Customer>): Promise<Customer> => bridge.customers.create(input),
+    update: (id: string, input: Partial<Customer>): Promise<Customer> =>
+      bridge.customers.update(id, input),
+    purchaseHistory: (customerId: string): Promise<Order[]> =>
+      bridge.customers.purchaseHistory(customerId)
+  },
+
+  orders: {
+    create: (input: unknown): Promise<{ order: Order; items: unknown[]; payments: unknown[] }> =>
+      bridge.orders.create(input),
+    get: (id: string): Promise<{ order: Order; items: unknown[]; payments: unknown[] } | null> =>
+      bridge.orders.get(id),
+    list: (filters?: {
+      status?: string
+      fromDate?: string
+      toDate?: string
+      customerId?: string
+      limit?: number
+      offset?: number
+    }): Promise<Order[]> => bridge.orders.list(filters),
+    complete: (input: unknown): Promise<{ order: Order; items: unknown[]; payments: unknown[] }> =>
+      bridge.orders.complete(input),
+    voidOrder: (id: string, staffId: string): Promise<void> =>
+      bridge.orders.voidOrder(id, staffId),
+    refund: (id: string, itemIds: string[]): Promise<unknown> =>
+      bridge.orders.refund(id, itemIds),
+    hold: (id: string): Promise<void> => bridge.orders.hold(id),
+    heldList: (): Promise<Order[]> => bridge.orders.heldList(),
+    updateStatus: (id: string, status: string): Promise<void> =>
+      bridge.orders.updateStatus(id, status),
+    getForEdit: (id: string): Promise<{ order: Order; items: unknown[]; payments: unknown[] } | null> =>
+      bridge.orders.getForEdit(id),
+    /** Edit an existing pending/held order in-place and complete it, preserving the order number. */
+    updateAndComplete: (input: unknown): Promise<{ order: Order; items: unknown[]; payments: unknown[] }> =>
+      bridge.orders.updateAndComplete(input)
+  },
+
+  staff: {
+    list: (): Promise<StaffMember[]> => bridge.staff.list(),
+    auth: (pin: string): Promise<StaffMember | null> => bridge.staff.auth(pin),
+    create: (input: Partial<StaffMember> & { pin: string }): Promise<StaffMember> =>
+      bridge.staff.create(input),
+    update: (id: string, input: Partial<StaffMember> & { pin?: string }): Promise<StaffMember> =>
+      bridge.staff.update(id, input)
+  },
+
+  shifts: {
+    open: (staffId: string, openingCash: number): Promise<unknown> =>
+      bridge.shifts.open(staffId, openingCash),
+    close: (shiftId: string, closingCash: number, notes?: string): Promise<unknown> =>
+      bridge.shifts.close(shiftId, closingCash, notes),
+    current: (staffId: string): Promise<unknown> => bridge.shifts.current(staffId)
+  },
+
+  reports: {
+    salesSummary: (from: string, to: string): Promise<SalesSummary> =>
+      bridge.reports.salesSummary(from, to),
+    salesByProduct: (from: string, to: string): Promise<unknown[]> =>
+      bridge.reports.salesByProduct(from, to),
+    salesByStaff: (from: string, to: string): Promise<unknown[]> =>
+      bridge.reports.salesByStaff(from, to),
+    paymentBreakdown: (from: string, to: string): Promise<unknown[]> =>
+      bridge.reports.paymentBreakdown(from, to),
+    inventoryValuation: (): Promise<unknown[]> => bridge.reports.inventoryValuation()
+  },
+
+  settings: {
+    get: (key: string): Promise<string> => bridge.settings.get(key),
+    set: (key: string, value: string): Promise<void> => bridge.settings.set(key, value),
+    getAll: (): Promise<Record<string, string>> => bridge.settings.getAll()
+  },
+
+  audit: {
+    log: (input: unknown): Promise<void> => bridge.audit.log(input),
+    list: (limit?: number): Promise<unknown[]> => bridge.audit.list(limit)
+  },
+
+  receipt: {
+    print: (html: string): Promise<{ success: boolean }> => bridge.receipt.print(html)
+  },
+
+  invoice: {
+    print: (html: string): Promise<{ success: boolean }> => bridge.invoice.print(html)
+  },
+
+  email: {
+    sendReceipt: (to: string, html: string, orderNumber: string): Promise<{ success: boolean; error?: string }> =>
+      bridge.email.sendReceipt(to, html, orderNumber),
+    sendInvoice: (to: string, html: string, orderNumber: string): Promise<{ success: boolean; error?: string }> =>
+      bridge.email.sendInvoice(to, html, orderNumber),
+    testConnection: (cfg: {
+      host: string; port: number; secure: boolean
+      user: string; password: string; fromName: string; fromAddress: string
+    }): Promise<{ success: boolean; error?: string }> =>
+      bridge.email.testConnection(cfg)
+  },
+
+  display: {
+    open: (): Promise<{ open: boolean }> => bridge.display.open(),
+    close: (): Promise<{ open: boolean }> => bridge.display.close(),
+    status: (): Promise<{ windowOpen: boolean; networkRunning: boolean; localIp: string }> =>
+      bridge.display.status(),
+    update: (data: unknown): Promise<{ ok: boolean }> => bridge.display.update(data),
+    getState: (): Promise<unknown> => bridge.display.getState(),
+    networkStart: (port: number): Promise<{ running: boolean; port: number; ip: string }> =>
+      bridge.display.networkStart(port),
+    networkStop: (): Promise<{ running: boolean }> => bridge.display.networkStop(),
+    networkStatus: (): Promise<{ running: boolean; ip: string }> => bridge.display.networkStatus()
+  },
+
+  csv: {
+    importProducts: (csvText: string): Promise<{ imported: number; updated: number; failed: number; errors: string[] }> =>
+      bridge.csv.importProducts(csvText),
+    exportProducts: (): Promise<string> => bridge.csv.exportProducts(),
+    importCustomers: (csvText: string): Promise<{ imported: number; updated: number; failed: number; errors: string[] }> =>
+      bridge.csv.importCustomers(csvText),
+    exportCustomers: (): Promise<string> => bridge.csv.exportCustomers()
+  },
+
+  app: {
+    getVersion: (): Promise<string> => bridge.app.getVersion(),
+    openCashDrawer: (): Promise<{ success: boolean }> => bridge.app.openCashDrawer()
+  },
+
+  qbo: {
+    status: (): Promise<{
+      connected: boolean
+      companyName: string | null
+      realmId: string | null
+      sandbox: boolean
+      lastSyncAt: string | null
+    }> => bridge.qbo.status(),
+    startAuth: (): Promise<{ success: boolean; companyName?: string; error?: string }> =>
+      bridge.qbo.startAuth(),
+    disconnect: (): Promise<{ disconnected: boolean }> => bridge.qbo.disconnect(),
+    syncSales: (): Promise<{ synced: number; failed: number; errors: string[] }> =>
+      bridge.qbo.syncSales(),
+    syncCustomers: (): Promise<{ synced: number; failed: number; errors: string[] }> =>
+      bridge.qbo.syncCustomers()
+  },
+
+  accounting: {
+    transactionsCsv: (from: string, to: string): Promise<string> =>
+      bridge.accounting.transactionsCsv(from, to),
+    iif: (from: string, to: string): Promise<string> => bridge.accounting.iif(from, to),
+    dailySummaryCsv: (from: string, to: string): Promise<string> =>
+      bridge.accounting.dailySummaryCsv(from, to)
+  },
+
+
+  images: {
+    pick: (): Promise<string | null> => bridge.images.pick()
+  },
+
+  vendors: {
+    list: (): Promise<Vendor[]> => bridge.vendors.list(),
+    get: (id: string): Promise<Vendor | null> => bridge.vendors.get(id),
+    create: (input: { name: string; phone?: string; email?: string; notes?: string }): Promise<Vendor> =>
+      bridge.vendors.create(input),
+    update: (id: string, input: Partial<{ name: string; phone: string; email: string; notes: string }>): Promise<Vendor> =>
+      bridge.vendors.update(id, input),
+    delete: (id: string): Promise<{ ok: boolean; reason?: string }> => bridge.vendors.delete(id),
+    recordPayout: (input: { vendorId: string; amount: number; note?: string; staffId?: string }): Promise<{ balanceOwed: number }> =>
+      bridge.vendors.recordPayout(input),
+    payoutHistory: (vendorId: string): Promise<unknown[]> => bridge.vendors.payoutHistory(vendorId),
+    products: (vendorId: string): Promise<unknown[]> => bridge.vendors.products(vendorId)
+  },
+
+  listeners: {
+    /** Subscribe to display push events from the main process. Returns unsubscribe fn. */
+    onDisplayPush: (callback: (data: unknown) => void): (() => void) =>
+      bridge.listeners.onDisplayPush(callback)
+  }
+}

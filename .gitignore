@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+dist/
+
+# Database (local only — never commit store data)
+*.db
+*.db-shm
+*.db-wal
+
+# Electron builder cache
+.electron-builder-cache/
+
+# Vite / TypeScript
+*.tsbuildinfo
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Code signing certs (NEVER commit these)
+*.pfx
+*.p12
+*.pem
+*.key
+
+# electron-builder output
+dist/
+release/

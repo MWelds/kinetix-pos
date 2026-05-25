@@ -1,6 +1,6 @@
 {
   "name": "kinetix-pos",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Offline-first Point of Sale system for Windows",
   "main": "./out/main/index.js",
   "scripts": {
@@ -45,15 +45,6 @@
       "!node_modules/.cache",
       "!node_modules/electron-builder/**/*"
     ],
-    "extraResources": [
-      {
-        "from": "build/resources",
-        "to": "resources",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ],
     "win": {
       "target": [
         {
@@ -86,12 +77,7 @@
       "shortcutName": "Kinetix POS",
       "menuCategory": "Kinetix POS",
       "runAfterFinish": true,
-      "deleteAppDataOnUninstall": false,
-      "installerLanguages": [
-        "English"
-      ],
-      "displayLanguageSelector": false,
-      "include": "build/installer.nsh"
+      "deleteAppDataOnUninstall": false
     },
     "portable": {
       "artifactName": "${productName}-${version}-Portable.${ext}"

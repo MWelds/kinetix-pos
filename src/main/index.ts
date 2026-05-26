@@ -8,6 +8,8 @@ import { getDatabase, closeDatabase } from './database/connection'
 import { seedDatabase } from './database/seed'
 import { setMainWindow } from './display/customer-display'
 import { initSync } from './sync/sync.service'
+import { settingsService } from './services/settings.service'
+import { startEmbeddedServer } from './sync/embedded-server'
 
 // ─── Crash logger ─────────────────────────────────────────────────────────────
 // Writes to AppData\Roaming\Kinetix POS\logs\main.log so errors are visible
@@ -139,9 +141,7 @@ app
 
     // If this machine is the sync server, start the embedded HTTP server
     // before initSync() so the sync loop can connect to localhost immediately
-    const { settingsService } = require('./services/settings.service') as typeof import('./services/settings.service')
     if (settingsService.get('nodeMode') === 'server' && settingsService.get('setupComplete') === 'true') {
-      const { startEmbeddedServer } = require('./sync/embedded-server') as typeof import('./sync/embedded-server')
       const port = parseInt(settingsService.get('embeddedServerPort') || '3030', 10)
       const apiKey = settingsService.get('embeddedServerApiKey') || ''
       startEmbeddedServer(port, apiKey).catch((err) => logError('startEmbeddedServer', err))

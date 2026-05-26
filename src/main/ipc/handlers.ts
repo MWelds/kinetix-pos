@@ -29,6 +29,7 @@ import { exportService } from '../services/export.service'
 import { csvImportExportService } from '../services/csv-import-export.service'
 import { vendorService } from '../services/vendor.service'
 import { getSyncState, runSync, testConnection, startSyncLoop, stopSyncLoop, onSyncStateChange } from '../sync/sync.service'
+import { startEmbeddedServer, stopEmbeddedServer, getEmbeddedServerStatus } from '../sync/embedded-server'
 
 /** Register all IPC handlers. Call once after app is ready. */
 export function registerIpcHandlers(): void {
@@ -395,9 +396,6 @@ export function registerIpcHandlers(): void {
   })
 
   // ── Setup wizard + embedded server ──────────────────────────────────────────
-  const {
-    startEmbeddedServer, stopEmbeddedServer, getEmbeddedServerStatus
-  } = require('../sync/embedded-server') as typeof import('../sync/embedded-server')
 
   /** Returns the current setup state for the wizard to read on mount. */
   ipcMain.handle(IPC.SETUP_GET, () => ({

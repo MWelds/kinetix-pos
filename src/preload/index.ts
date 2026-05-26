@@ -217,6 +217,20 @@ const api = {
   updater: {
     /** Quit and install the downloaded update immediately. */
     install: () => ipcRenderer.send('update:install')
+  },
+
+  // Multi-terminal sync
+  sync: {
+    getState: () => ipcRenderer.invoke(IPC.SYNC_GET_STATE),
+    runNow: () => ipcRenderer.invoke(IPC.SYNC_RUN_NOW),
+    testConnection: (url: string, apiKey: string) => ipcRenderer.invoke(IPC.SYNC_TEST_CONNECTION, url, apiKey),
+    start: (intervalSeconds?: number) => ipcRenderer.invoke(IPC.SYNC_START, intervalSeconds),
+    stop: () => ipcRenderer.invoke(IPC.SYNC_STOP),
+    onStateChange: (callback: (state: unknown) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state)
+      ipcRenderer.on(IPC.SYNC_STATE_PUSH, handler)
+      return () => ipcRenderer.removeListener(IPC.SYNC_STATE_PUSH, handler)
+    }
   }
 }
 

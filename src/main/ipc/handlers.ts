@@ -1,4 +1,4 @@
-import { ipcMain, IpcMainInvokeEvent, BrowserWindow, dialog, app } from 'electron'
+import { ipcMain, IpcMainInvokeEvent, BrowserWindow, dialog, app, WebContents } from 'electron'
 import { readFileSync, writeFileSync, unlinkSync, mkdirSync, copyFileSync, existsSync } from 'fs'
 import { extname, join } from 'path'
 import { tmpdir } from 'os'
@@ -360,4 +360,37 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.VENDORS_RECORD_PAYOUT, (_e, input) => vendorService.recordPayout(input))
   ipcMain.handle(IPC.VENDORS_PAYOUT_HISTORY, (_e, vendorId: string) => vendorService.payoutHistory(vendorId))
   ipcMain.handle(IPC.VENDORS_PRODUCTS, (_e, vendorId: string) => vendorService.products(vendorId))
+
+  // ── Multi-terminal sync ──────────────────────────────────────────────────
+  const { getSyncState, runSync, testConnection, startSyncLoop, stopSyncLoop, onSyncStateChange } = await import('../sync/sync.service')
+
+  // Push state changes to all renderer windows
+  onSyncStateChange((syncState) => {
+    BrowserWindow.getAllWindows().forEach((win: BrowserWindow) => {
+      if (!win.isDestroyed()) {
+        win.webContents.send(IPC.SYNC_STATE_PUSH, syncState)
+      }
+    })
+  })
+
+  ipcMain.handle(IPC.SYNC_GET_STATE, () => getSyncState())
+
+  ipcMain.handle(IPC.SYNC_RUN_NOW, async () => {
+    await runSync()
+    return getSyncState()
+  })
+
+  ipcMain.handle(IPC.SYNC_TEST_CONNECTION, async (_e, url: string, apiKey: string) => {
+    return testConnection(url, apiKey)
+  })
+
+  ipcMain.handle(IPC.SYNC_START, (_e, intervalSeconds?: number) => {
+    startSyncLoop(intervalSeconds)
+    return getSyncState()
+  })
+
+  ipcMain.handle(IPC.SYNC_STOP, () => {
+    stopSyncLoop()
+    return getSyncState()
+  })
 }

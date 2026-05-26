@@ -1,175 +1,55 @@
 import Database from 'better-sqlite3'
+import { existsSync, mkdirSync } from 'fs'
+import { join } from 'path'
+import { SYNC_TABLES, type SyncTable, type SyncRecord, type SyncPayload } from './types'
 
-/** Schema version — increment whenever tables change */
-const SCHEMA_VERSION = 6
+let db: Database.Database | null = null
+
+/** Tables that have an updated_at column for change-tracking. */
+const TABLES_WITH_UPDATED_AT = new Set<SyncTable>([
+  'categories', 'products', 'product_variants', 'customers',
+  'discount_rules', 'gift_cards', 'orders', 'order_items',
+  'staff', 'vendors', 'settings'
+])
+
+/** Tables that are append-only (no updated_at — just pull everything newer than last id/created_at). */
+const APPEND_ONLY_TABLES = new Set<SyncTable>([
+  'inventory_adjustments', 'vendor_payouts', 'payments', 'product_components'
+])
 
 /**
- * Runs idempotent DDL migrations on first launch.
- * Uses a schema_version table to track applied version.
+ * Returns the singleton SQLite connection.
+ * Creates the database directory and applies the schema on first run.
  */
-export function runMigrations(sqlite: Database.Database): void {
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS schema_version (
-      version INTEGER PRIMARY KEY
-    )
-  `)
+export function getDb(): Database.Database {
+  if (db) return db
 
-  const row = sqlite.prepare('SELECT version FROM schema_version').get() as
-    | { version: number }
-    | undefined
-  const currentVersion = row?.version ?? 0
+  const dbDir = process.env['DB_PATH'] ?? join(process.cwd(), 'data')
+  if (!existsSync(dbDir)) mkdirSync(dbDir, { recursive: true })
 
-  if (currentVersion < 1) {
-    applyV1(sqlite)
-  }
-  if (currentVersion < 2) {
-    applyV2(sqlite)
-  }
-  if (currentVersion < 3) {
-    applyV3(sqlite)
-  }
-  if (currentVersion < 4) {
-    applyV4(sqlite)
-  }
-  if (currentVersion < 5) {
-    applyV5(sqlite)
-  }
-  if (currentVersion < 6) {
-    applyV6(sqlite)
-  }
+  db = new Database(join(dbDir, 'pos-server.db'))
+  db.pragma('journal_mode = WAL')
+  db.pragma('foreign_keys = ON')
+  db.pragma('synchronous = NORMAL')
 
-  if (currentVersion < SCHEMA_VERSION) {
-    sqlite.prepare('DELETE FROM schema_version').run()
-    sqlite.prepare('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION)
-  }
+  applySchema(db)
+  return db
 }
 
 /**
- * V2: Add order_type column to orders (instore/delivery).
- * Uses ALTER TABLE with error suppression so it is idempotent on re-runs.
+ * Creates all tables using the same DDL as the terminal (schema V6).
+ * Safe to call repeatedly — all statements use CREATE TABLE IF NOT EXISTS.
  */
-function applyV2(sqlite: Database.Database): void {
-  try {
-    sqlite.exec(`ALTER TABLE orders ADD COLUMN order_type TEXT NOT NULL DEFAULT 'instore'`)
-  } catch {
-    // Column already exists -- ignore
-  }
-}
+function applySchema(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY);
 
-/**
- * V3: Add pack/individual product link columns to products.
- * units_per_pack > 1 means this is a pack product (e.g. "Box of 100 Spoons").
- * individual_product_id links the pack to its auto-created individual SKU.
- * pack_product_id links the individual back to its parent pack.
- */
-function applyV3(sqlite: Database.Database): void {
-  const cols = [
-    `ALTER TABLE products ADD COLUMN units_per_pack INTEGER NOT NULL DEFAULT 1`,
-    `ALTER TABLE products ADD COLUMN individual_product_id TEXT REFERENCES products(id)`,
-    `ALTER TABLE products ADD COLUMN pack_product_id TEXT REFERENCES products(id)`
-  ]
-  for (const ddl of cols) {
-    try {
-      sqlite.exec(ddl)
-    } catch {
-      // Column already exists -- ignore
-    }
-  }
-}
-
-/**
- * V4: Add vendor/consignment support.
- * - vendors table: tracks vendors for consignment products.
- * - vendor_payouts table: records payments made to vendors.
- * - products.vendor_id / vendor_cost: link a product to a vendor and record per-unit cost.
- */
-function applyV4(sqlite: Database.Database): void {
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS vendors (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      phone TEXT,
-      email TEXT,
-      notes TEXT,
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS vendor_payouts (
-      id TEXT PRIMARY KEY,
-      vendor_id TEXT NOT NULL REFERENCES vendors(id),
-      amount REAL NOT NULL,
-      note TEXT,
-      staff_id TEXT,
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-  `)
-
-  const productCols = [
-    'ALTER TABLE products ADD COLUMN vendor_id TEXT REFERENCES vendors(id)',
-    'ALTER TABLE products ADD COLUMN vendor_cost REAL'
-  ]
-  for (const ddl of productCols) {
-    try { sqlite.exec(ddl) } catch { /* column already exists */ }
-  }
-}
-
-/**
- * V5: Add track_stock column to products.
- * When false, the product is a service/non-physical item (e.g. "Print Services").
- * Out-of-stock checks and inventory deductions are skipped for these products.
- */
-function applyV5(sqlite: Database.Database): void {
-  try {
-    sqlite.exec(`ALTER TABLE products ADD COLUMN track_stock INTEGER NOT NULL DEFAULT 1`)
-  } catch {
-    // Column already exists -- ignore
-  }
-}
-
-/**
- * V6: Add deleted_at column to all synced tables for soft-delete support.
- * When a record is deleted it gets deleted_at = ISO timestamp instead of a
- * hard DELETE, so the tombstone can propagate to other terminals via sync.
- * Also seeds the terminalId and sync-related settings rows.
- */
-function applyV6(sqlite: Database.Database): void {
-  const syncedTables = [
-    'products', 'categories', 'product_variants', 'product_components',
-    'customers', 'orders', 'order_items', 'payments',
-    'discount_rules', 'gift_cards', 'vendors', 'vendor_payouts',
-    'inventory', 'inventory_adjustments'
-  ]
-  for (const table of syncedTables) {
-    try {
-      sqlite.exec(`ALTER TABLE ${table} ADD COLUMN deleted_at TEXT`)
-    } catch {
-      // Column already exists — ignore
-    }
-  }
-
-  // Seed sync-related settings keys if not already present
-  const syncSettings = [
-    ['syncEnabled', 'false'],
-    ['syncUrl', ''],
-    ['syncApiKey', ''],
-    ['syncIntervalSeconds', '30'],
-    ['terminalId', crypto.randomUUID()]
-  ]
-  for (const [key, value] of syncSettings) {
-    sqlite
-      .prepare(`INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)`)
-      .run(key, value, new Date().toISOString())
-  }
-}
-
-function applyV1(sqlite: Database.Database): void {
-  sqlite.exec(`
     CREATE TABLE IF NOT EXISTS categories (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       color TEXT NOT NULL DEFAULT '#3b82f6',
       sort_order INTEGER NOT NULL DEFAULT 0,
+      deleted_at TEXT,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
@@ -187,13 +67,16 @@ function applyV1(sqlite: Database.Database): void {
       is_composite INTEGER NOT NULL DEFAULT 0,
       is_active INTEGER NOT NULL DEFAULT 1,
       tax_rate REAL NOT NULL DEFAULT 0,
+      units_per_pack INTEGER NOT NULL DEFAULT 1,
+      individual_product_id TEXT REFERENCES products(id),
+      pack_product_id TEXT REFERENCES products(id),
+      vendor_id TEXT REFERENCES vendors(id),
+      vendor_cost REAL,
+      track_stock INTEGER NOT NULL DEFAULT 1,
+      deleted_at TEXT,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
-
-    CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);
-    CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku);
-    CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);
 
     CREATE TABLE IF NOT EXISTS product_variants (
       id TEXT PRIMARY KEY,
@@ -203,6 +86,7 @@ function applyV1(sqlite: Database.Database): void {
       barcode TEXT,
       price_modifier REAL NOT NULL DEFAULT 0,
       is_active INTEGER NOT NULL DEFAULT 1,
+      deleted_at TEXT,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
@@ -211,7 +95,8 @@ function applyV1(sqlite: Database.Database): void {
       id TEXT PRIMARY KEY,
       composite_product_id TEXT NOT NULL REFERENCES products(id),
       component_product_id TEXT NOT NULL REFERENCES products(id),
-      quantity REAL NOT NULL DEFAULT 1
+      quantity REAL NOT NULL DEFAULT 1,
+      deleted_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS inventory (
@@ -220,11 +105,10 @@ function applyV1(sqlite: Database.Database): void {
       variant_id TEXT REFERENCES product_variants(id),
       quantity REAL NOT NULL DEFAULT 0,
       low_stock_threshold REAL NOT NULL DEFAULT 5,
+      deleted_at TEXT,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
-
-    CREATE INDEX IF NOT EXISTS idx_inventory_product ON inventory(product_id);
 
     CREATE TABLE IF NOT EXISTS inventory_adjustments (
       id TEXT PRIMARY KEY,
@@ -234,6 +118,7 @@ function applyV1(sqlite: Database.Database): void {
       quantity REAL NOT NULL,
       note TEXT,
       staff_id TEXT,
+      deleted_at TEXT,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
 
@@ -247,12 +132,10 @@ function applyV1(sqlite: Database.Database): void {
       loyalty_points INTEGER NOT NULL DEFAULT 0,
       store_credit REAL NOT NULL DEFAULT 0,
       notes TEXT,
+      deleted_at TEXT,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
-
-    CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email);
-    CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone);
 
     CREATE TABLE IF NOT EXISTS staff (
       id TEXT PRIMARY KEY,
@@ -262,6 +145,7 @@ function applyV1(sqlite: Database.Database): void {
       pin TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'cashier',
       is_active INTEGER NOT NULL DEFAULT 1,
+      deleted_at TEXT,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
@@ -289,6 +173,7 @@ function applyV1(sqlite: Database.Database): void {
       is_active INTEGER NOT NULL DEFAULT 1,
       valid_from TEXT,
       valid_until TEXT,
+      deleted_at TEXT,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
@@ -297,6 +182,7 @@ function applyV1(sqlite: Database.Database): void {
       id TEXT PRIMARY KEY,
       order_number TEXT NOT NULL UNIQUE,
       status TEXT NOT NULL DEFAULT 'pending',
+      order_type TEXT NOT NULL DEFAULT 'instore',
       customer_id TEXT REFERENCES customers(id),
       staff_id TEXT REFERENCES staff(id),
       shift_id TEXT REFERENCES shifts(id),
@@ -311,13 +197,10 @@ function applyV1(sqlite: Database.Database): void {
       loyalty_points_earned INTEGER NOT NULL DEFAULT 0,
       loyalty_points_redeemed INTEGER NOT NULL DEFAULT 0,
       sync_status TEXT NOT NULL DEFAULT 'pending',
+      deleted_at TEXT,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
-
-    CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
-    CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
-    CREATE INDEX IF NOT EXISTS idx_orders_created ON orders(created_at);
 
     CREATE TABLE IF NOT EXISTS order_items (
       id TEXT PRIMARY KEY,
@@ -333,11 +216,10 @@ function applyV1(sqlite: Database.Database): void {
       tax_amount REAL NOT NULL DEFAULT 0,
       line_total REAL NOT NULL,
       notes TEXT,
+      deleted_at TEXT,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
-
-    CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
 
     CREATE TABLE IF NOT EXISTS payments (
       id TEXT PRIMARY KEY,
@@ -347,10 +229,9 @@ function applyV1(sqlite: Database.Database): void {
       reference TEXT,
       change_given REAL,
       status TEXT NOT NULL DEFAULT 'completed',
+      deleted_at TEXT,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
-
-    CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(order_id);
 
     CREATE TABLE IF NOT EXISTS gift_cards (
       id TEXT PRIMARY KEY,
@@ -358,7 +239,35 @@ function applyV1(sqlite: Database.Database): void {
       balance REAL NOT NULL,
       initial_balance REAL NOT NULL,
       is_active INTEGER NOT NULL DEFAULT 1,
+      deleted_at TEXT,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS vendors (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      phone TEXT,
+      email TEXT,
+      notes TEXT,
+      deleted_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS vendor_payouts (
+      id TEXT PRIMARY KEY,
+      vendor_id TEXT NOT NULL REFERENCES vendors(id),
+      amount REAL NOT NULL,
+      note TEXT,
+      staff_id TEXT,
+      deleted_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
 
     CREATE TABLE IF NOT EXISTS audit_log (
@@ -370,21 +279,54 @@ function applyV1(sqlite: Database.Database): void {
       details TEXT,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
-
-    CREATE INDEX IF NOT EXISTS idx_audit_log_staff ON audit_log(staff_id);
-    CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
-
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-
-    INSERT OR IGNORE INTO settings (key, value) VALUES
-      ('storeName', 'My Store'),
-      ('taxRate', '0.08'),
-      ('taxEnabled', 'true'),
-      ('currency', 'USD'),
-      ('receiptFooter', 'Thank you for your purchase!');
   `)
+}
+
+/**
+ * Returns all records in `table` that were updated after `since`.
+ * Falls back to created_at for append-only tables.
+ */
+export function getRecordsSince(table: SyncTable, since: string): SyncRecord[] {
+  const db = getDb()
+  const col = TABLES_WITH_UPDATED_AT.has(table) ? 'updated_at'
+    : APPEND_ONLY_TABLES.has(table) ? 'created_at'
+    : 'updated_at'
+
+  // inventory uses updated_at
+  const sql = `SELECT * FROM ${table} WHERE ${col} > ? ORDER BY ${col} ASC`
+  return db.prepare(sql).all(since) as SyncRecord[]
+}
+
+/**
+ * Upserts an array of records into `table` using last-write-wins by updated_at.
+ * Records with a newer updated_at on the server are NOT overwritten.
+ */
+export function upsertRecords(table: SyncTable, records: SyncRecord[]): void {
+  if (records.length === 0) return
+  const db = getDb()
+
+  // Build UPSERT SQL dynamically from the first record's keys
+  const sample = records[0]
+  const cols = Object.keys(sample)
+  const placeholders = cols.map(() => '?').join(', ')
+  const updateCol = TABLES_WITH_UPDATED_AT.has(table) ? 'updated_at' : 'created_at'
+
+  // For tables with updated_at: only update if incoming record is newer
+  const setClauses = cols
+    .filter((c) => c !== 'id')
+    .map((c) => `${c} = CASE WHEN excluded.${updateCol} >= ${table}.${updateCol} THEN excluded.${c} ELSE ${table}.${c} END`)
+    .join(', ')
+
+  const sql = `
+    INSERT INTO ${table} (${cols.join(', ')})
+    VALUES (${placeholders})
+    ON CONFLICT(id) DO UPDATE SET ${setClauses}
+  `
+  const stmt = db.prepare(sql)
+  const upsertMany = db.transaction((rows: SyncRecord[]) => {
+    for (const row of rows) {
+      stmt.run(cols.map((c) => row[c]))
+    }
+  })
+  upsertMany(records)
 }

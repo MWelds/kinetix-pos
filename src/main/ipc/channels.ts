@@ -146,7 +146,16 @@ export const IPC = {
   VENDORS_DELETE: 'vendors:delete',
   VENDORS_RECORD_PAYOUT: 'vendors:recordPayout',
   VENDORS_PAYOUT_HISTORY: 'vendors:payoutHistory',
-  VENDORS_PRODUCTS: 'vendors:products'
+  VENDORS_PRODUCTS: 'vendors:products',
+
+  // Multi-terminal sync
+  SYNC_GET_STATE: 'sync:getState',
+  SYNC_RUN_NOW: 'sync:runNow',
+  SYNC_TEST_CONNECTION: 'sync:testConnection',
+  SYNC_START: 'sync:start',
+  SYNC_STOP: 'sync:stop',
+  /** Push channel — main → renderer, fires on every state change */
+  SYNC_STATE_PUSH: 'sync:statePush'
 } as const
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC]

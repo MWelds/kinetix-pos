@@ -7,6 +7,7 @@ import { registerIpcHandlers } from './ipc/handlers'
 import { getDatabase, closeDatabase } from './database/connection'
 import { seedDatabase } from './database/seed'
 import { setMainWindow } from './display/customer-display'
+import { initSync } from './sync/sync.service'
 
 // ─── Crash logger ─────────────────────────────────────────────────────────────
 // Writes to AppData\Roaming\Kinetix POS\logs\main.log so errors are visible
@@ -135,6 +136,9 @@ app
 
     // Register all IPC handlers
     registerIpcHandlers()
+
+    // Start background sync if configured
+    initSync()
 
     // ── Content-Security-Policy ────────────────────────────────────────────
     // Applied to every web request served from the renderer session.

@@ -300,6 +300,156 @@ function InvoicePreviewPane({ showLogo, footer, storeName, storeAddress, logoBas
   )
 }
 
+// ─── Sync Server Section ──────────────────────────────────────────────────────
+
+function SyncServerSection({
+  settings,
+  field,
+  onSave,
+  showToast
+}: {
+  settings: Record<string, string>
+  field: (key: string) => (v: string) => void
+  onSave: () => Promise<void>
+  showToast: (msg: string, type?: string) => void
+}) {
+  const [syncState, setSyncState] = useState<{ status: string; lastSyncAt: string | null; error: string | null } | null>(null)
+  const [testing, setTesting] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const enabled = settings.syncEnabled === 'true'
+
+  useEffect(() => {
+    api.sync.getState().then(setSyncState).catch(() => {})
+    const unsub = api.sync.onStateChange((s: unknown) => setSyncState(s as typeof syncState))
+    return unsub
+  }, [])
+
+  async function handleToggleEnabled(val: boolean) {
+    field('syncEnabled')(val ? 'true' : 'false')
+    // Save immediately then start/stop the loop
+    await api.settings.set('syncEnabled', val ? 'true' : 'false')
+    if (val) {
+      const interval = parseInt(settings.syncIntervalSeconds || '30', 10)
+      await api.sync.start(interval)
+      showToast('Sync enabled — connecting to server…', 'info')
+    } else {
+      await api.sync.stop()
+      showToast('Sync disabled', 'info')
+    }
+  }
+
+  async function handleTestConnection() {
+    setTesting(true)
+    try {
+      const result = await api.sync.testConnection(
+        settings.syncUrl?.trim() ?? '',
+        settings.syncApiKey?.trim() ?? ''
+      )
+      showToast(result.message, result.ok ? 'success' : 'error')
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  async function handleSyncNow() {
+    setSyncing(true)
+    try {
+      await api.sync.runNow()
+      showToast('Sync complete', 'success')
+    } catch {
+      showToast('Sync failed — check error below', 'error')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const statusColor =
+    syncState?.status === 'synced'   ? 'text-green-600'  :
+    syncState?.status === 'syncing'  ? 'text-blue-600'   :
+    syncState?.status === 'error'    ? 'text-red-600'    :
+    syncState?.status === 'disabled' ? 'text-gray-400'   : 'text-gray-500'
+
+  const statusLabel =
+    syncState?.status === 'synced'   ? `Synced${syncState.lastSyncAt ? ` · ${new Date(syncState.lastSyncAt).toLocaleTimeString()}` : ''}` :
+    syncState?.status === 'syncing'  ? 'Syncing…'  :
+    syncState?.status === 'error'    ? 'Error'     :
+    syncState?.status === 'disabled' ? 'Disabled'  : 'Idle'
+
+  return (
+    <section className="bg-white rounded-xl border border-gray-200 p-6">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+          <ArrowLeftRight size={16} className="text-blue-600" />
+          Multi-Terminal Sync Server
+        </h2>
+        <div className="flex items-center gap-3">
+          {syncState && (
+            <span className={`text-xs font-medium ${statusColor}`}>{statusLabel}</span>
+          )}
+          <Toggle checked={enabled} onChange={handleToggleEnabled} />
+        </div>
+      </div>
+
+      <p className="text-sm text-gray-500 mb-5">
+        Point all POS terminals at a central Kinetix POS Sync Server. Each terminal works
+        fully offline and syncs products, inventory, orders, customers, and staff whenever
+        the network is available.
+      </p>
+
+      <div className="space-y-4">
+        <Input
+          label="Server URL"
+          value={settings.syncUrl ?? ''}
+          onChange={field('syncUrl')}
+          placeholder="http://192.168.1.100:3030"
+        />
+        <Input
+          label="API Key"
+          type="password"
+          value={settings.syncApiKey ?? ''}
+          onChange={field('syncApiKey')}
+          placeholder="Leave blank if API key is not set on the server"
+        />
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium text-gray-700 w-32">Sync interval</label>
+          <select
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            value={settings.syncIntervalSeconds ?? '30'}
+            onChange={(e) => field('syncIntervalSeconds')(e.target.value)}
+          >
+            <option value="15">Every 15 seconds</option>
+            <option value="30">Every 30 seconds</option>
+            <option value="60">Every minute</option>
+            <option value="300">Every 5 minutes</option>
+          </select>
+        </div>
+      </div>
+
+      {syncState?.status === 'error' && syncState.error && (
+        <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+          {syncState.error}
+        </div>
+      )}
+
+      <div className="mt-5 flex gap-3">
+        <Button variant="secondary" onClick={handleTestConnection} disabled={testing || !settings.syncUrl}>
+          {testing ? 'Testing…' : 'Test Connection'}
+        </Button>
+        {enabled && (
+          <Button variant="secondary" onClick={handleSyncNow} disabled={syncing}>
+            {syncing ? 'Syncing…' : 'Sync Now'}
+          </Button>
+        )}
+        <Button onClick={onSave}>Save</Button>
+      </div>
+
+      {settings.terminalId && (
+        <p className="mt-4 text-xs text-gray-400">Terminal ID: {settings.terminalId}</p>
+      )}
+    </section>
+  )
+}
+
 export function SettingsScreen() {
   const [settings, setSettings] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -988,24 +1138,8 @@ export function SettingsScreen() {
           </div>
         </section>
 
-        {/* Cloud Sync */}
-        <section className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-base font-semibold text-gray-900 mb-4">Cloud Sync (Optional)</h2>
-          <div className="space-y-4">
-            <Input
-              label="Sync Server URL"
-              value={settings.syncUrl ?? ''}
-              onChange={field('syncUrl')}
-              placeholder="https://your-server.com/api"
-            />
-            <Input
-              label="API Key"
-              type="password"
-              value={settings.syncApiKey ?? ''}
-              onChange={field('syncApiKey')}
-            />
-          </div>
-        </section>
+        {/* Multi-Terminal Sync Server */}
+        <SyncServerSection settings={settings} field={field} onSave={handleSave} showToast={showToast} />
 
         {/* QuickBooks / Accounting Sync */}
         <section className="bg-white rounded-xl border border-gray-200 p-6">

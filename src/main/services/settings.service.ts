@@ -18,6 +18,8 @@ export const DEFAULT_SETTINGS = {
   syncEnabled: 'false',
   syncUrl: '',
   syncApiKey: '',
+  syncIntervalSeconds: '30',
+  terminalId: '',
   // Email / SMTP
   emailHost: '',
   emailPort: '587',

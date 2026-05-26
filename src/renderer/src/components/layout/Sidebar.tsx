@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   ShoppingCart, Package, Users, Archive, BarChart3, Settings,
-  ClipboardList, UserCircle, LogOut, ChevronRight, Clock, Sun, Store
+  ClipboardList, UserCircle, LogOut, ChevronRight, Clock, Sun, Store,
+  RefreshCw, WifiOff, CheckCircle2, AlertCircle
 } from 'lucide-react'
 import { useAuthStore } from '../../stores/auth.store'
 import { useLogoStore } from '../../stores/logo.store'
@@ -10,6 +11,44 @@ import { api } from '../../lib/api'
 import { ROUTES, ROLE_LEVEL } from '../../constants'
 import { ShiftModal } from '../../features/staff/ShiftModal'
 import { EndOfDayModal } from '../../features/staff/EndOfDayModal'
+
+/** Small sync-status pill shown at the bottom of the sidebar. */
+function SyncIndicator() {
+  const [syncState, setSyncState] = useState<{ status: string; error: string | null; lastSyncAt: string | null } | null>(null)
+
+  useEffect(() => {
+    api.sync.getState().then(setSyncState).catch(() => {})
+    const unsub = api.sync.onStateChange((s: unknown) =>
+      setSyncState(s as typeof syncState)
+    )
+    return unsub
+  }, [])
+
+  if (!syncState || syncState.status === 'disabled') return null
+
+  const icon =
+    syncState.status === 'syncing'  ? <RefreshCw size={11} className="animate-spin" /> :
+    syncState.status === 'synced'   ? <CheckCircle2 size={11} /> :
+    syncState.status === 'error'    ? <AlertCircle size={11} /> :
+    <WifiOff size={11} />
+
+  const color =
+    syncState.status === 'synced'  ? 'text-green-400' :
+    syncState.status === 'syncing' ? 'text-blue-400'  :
+    syncState.status === 'error'   ? 'text-red-400'   : 'text-gray-400'
+
+  const label =
+    syncState.status === 'syncing' ? 'Syncing…' :
+    syncState.status === 'synced'  ? 'Synced'   :
+    syncState.status === 'error'   ? 'Sync error' : 'Offline'
+
+  return (
+    <div className={`flex items-center gap-1.5 px-2 py-1 ${color} text-xs`} title={syncState.error ?? label}>
+      {icon}
+      <span>{label}</span>
+    </div>
+  )
+}
 
 interface NavItem {
   to: string
@@ -127,6 +166,8 @@ export function Sidebar() {
           </button>
         </div>
       </div>
+
+      <SyncIndicator />
 
       <ShiftModal isOpen={showShift} onClose={() => setShowShift(false)} />
       <EndOfDayModal isOpen={showEod} onClose={() => setShowEod(false)} />

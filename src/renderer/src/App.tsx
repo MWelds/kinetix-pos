@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, Component, type ReactNode } from 'react'
 import { HashRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { useAuthStore } from './stores/auth.store'
 import { useCartStore } from './stores/cart.store'
@@ -22,6 +22,41 @@ import { SettingsScreen } from './features/settings/SettingsScreen'
 import { CustomerDisplayScreen } from './features/pos/CustomerDisplayScreen'
 import { VendorsScreen } from './features/vendors/VendorsScreen'
 import { ROUTES, ROLE_LEVEL } from './constants'
+
+/** Top-level error boundary — catches render errors so the app shows a recovery UI instead of a blank screen. */
+class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props)
+    this.state = { error: null }
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex flex-col items-center justify-center h-screen bg-gray-50 gap-4 p-8">
+          <h1 className="text-2xl font-semibold text-red-600">Something went wrong</h1>
+          <p className="text-gray-600 text-center max-w-md">
+            Kinetix POS encountered an unexpected error. Try restarting the application.
+          </p>
+          <pre className="text-xs bg-gray-100 rounded p-4 max-w-xl w-full overflow-auto text-gray-700">
+            {this.state.error.message}
+          </pre>
+          <button
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+            onClick={() => window.location.reload()}
+          >
+            Reload
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 /** Route guard -- redirects to login if not authenticated */
 function RequireAuth({ minRole = 1 }: { minRole?: number }) {
@@ -108,10 +143,13 @@ function DisplaySyncBridge() {
 /**
  * Listens for update:ready from the main process and notifies staff.
  * Since autoInstallOnAppQuit is enabled, the update applies on next close.
+ * Guarded: if the preload doesn't expose onUpdateReady (e.g. older build),
+ * skip silently rather than crashing the entire app tree.
  */
 function UpdateBanner() {
   const showToast = useUiStore((s) => s.showToast)
   useEffect(() => {
+    if (typeof api.listeners?.onUpdateReady !== 'function') return
     const unsub = api.listeners.onUpdateReady(() => {
       showToast('Update downloaded — restart Kinetix POS to install the latest version.', 'info')
     })
@@ -143,6 +181,7 @@ function SettingsHydrator() {
 
 export function App() {
   return (
+    <AppErrorBoundary>
     <HashRouter>
       <Routes>
         {/* Public */}
@@ -186,5 +225,6 @@ export function App() {
       <DisplaySyncBridge />
       <UpdateBanner />
     </HashRouter>
+    </AppErrorBoundary>
   )
 }

@@ -16,6 +16,9 @@ dist/
 # Vite / TypeScript
 *.tsbuildinfo
 
+# electron-vite temp config files (generated during build, safe to delete)
+electron.vite.config.*.mjs
+
 # Environment / secrets
 .env
 .env.*

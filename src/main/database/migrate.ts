@@ -333,7 +333,7 @@ function applyV1(sqlite: Database.Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_audit_log_staff ON audit_log(staff_id);
-    ISTS idx_audit_log_created ON audit_log(created_at);
+    CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
 
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,

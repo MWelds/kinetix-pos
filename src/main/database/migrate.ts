@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 
 /** Schema version — increment whenever tables change */
-const SCHEMA_VERSION = 7
+const SCHEMA_VERSION = 8
 
 /**
  * Runs idempotent DDL migrations on first launch.
@@ -39,6 +39,9 @@ export function runMigrations(sqlite: Database.Database): void {
   }
   if (currentVersion < 7) {
     applyV7(sqlite)
+  }
+  if (currentVersion < 8) {
+    applyV8(sqlite)
   }
 
   if (currentVersion < SCHEMA_VERSION) {
@@ -179,6 +182,24 @@ function applyV7(sqlite: Database.Database): void {
     sqlite
       .prepare(`INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)`)
       .run(key, value, new Date().toISOString())
+  }
+}
+
+/**
+ * V8: Add created_at to product_components (was missing, causing sync to crash).
+ * Also adds updated_at to gift_cards so the HAS_UPDATED_AT sync set is consistent.
+ */
+function applyV8(sqlite: Database.Database): void {
+  const cols = [
+    `ALTER TABLE product_components ADD COLUMN created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+    `ALTER TABLE gift_cards ADD COLUMN updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
+  ]
+  for (const ddl of cols) {
+    try {
+      sqlite.exec(ddl)
+    } catch {
+      // Column already exists — ignore
+    }
   }
 }
 

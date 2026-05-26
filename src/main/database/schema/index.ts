@@ -72,7 +72,9 @@ export const productComponents = sqliteTable('product_components', {
   id: text('id').primaryKey(),
   compositeProductId: text('composite_product_id').notNull().references(() => products.id),
   componentProductId: text('component_product_id').notNull().references(() => products.id),
-  quantity: real('quantity').notNull().default(1)
+  quantity: real('quantity').notNull().default(1),
+  // V8: added so sync can filter by timestamp
+  createdAt: text('created_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`)
 })
 
 // ─── Inventory ────────────────────────────────────────────────────────────────
@@ -211,7 +213,9 @@ export const giftCards = sqliteTable('gift_cards', {
   balance: real('balance').notNull(),
   initialBalance: real('initial_balance').notNull(),
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
-  createdAt: text('created_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`)
+  createdAt: text('created_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+  // V8: added so HAS_UPDATED_AT sync set is consistent
+  updatedAt: text('updated_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`)
 })
 
 // ─── Audit Log ────────────────────────────────────────────────────────────────

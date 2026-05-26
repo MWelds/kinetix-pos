@@ -730,8 +730,10 @@ export function SettingsScreen() {
   }
 
   function field(key: string) {
-    return (e: React.ChangeEvent<HTMLInputElement>) =>
-      setSettings((s) => ({ ...s, [key]: e.target.value }))
+    return (eOrValue: React.ChangeEvent<HTMLInputElement> | string) => {
+      const value = typeof eOrValue === 'string' ? eOrValue : eOrValue.target.value
+      setSettings((s) => ({ ...s, [key]: value }))
+    }
   }
 
   function setBool(key: string, val: boolean) {

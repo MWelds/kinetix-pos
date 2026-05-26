@@ -28,6 +28,7 @@ import { qboService } from '../services/qbo.service'
 import { exportService } from '../services/export.service'
 import { csvImportExportService } from '../services/csv-import-export.service'
 import { vendorService } from '../services/vendor.service'
+import { getSyncState, runSync, testConnection, startSyncLoop, stopSyncLoop, onSyncStateChange } from '../sync/sync.service'
 
 /** Register all IPC handlers. Call once after app is ready. */
 export function registerIpcHandlers(): void {
@@ -362,7 +363,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.VENDORS_PRODUCTS, (_e, vendorId: string) => vendorService.products(vendorId))
 
   // ── Multi-terminal sync ──────────────────────────────────────────────────
-  const { getSyncState, runSync, testConnection, startSyncLoop, stopSyncLoop, onSyncStateChange } = await import('../sync/sync.service')
 
   // Push state changes to all renderer windows
   onSyncStateChange((syncState) => {

@@ -8,6 +8,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   release:
     runs-on: windows-latest
@@ -28,7 +31,37 @@ jobs:
       - name: Rebuild native modules for Electron
         run: npm run rebuild
 
-      - name: Build & publish to GitHub Releases
-        run: npm run release
+      - name: Build Windows installers
+        run: npm run dist
+        env:
+          # Prevent electron-builder from trying to publish — we handle that below
+          ELECTRON_BUILDER_NO_PUBLISH: 1
+
+      - name: Create GitHub Release and upload artifacts
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+
+          # Create the release (fails gracefully if it already exists)
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Kinetix POS $TAG" \
+            --notes "## Kinetix POS $TAG
+
+          ### Downloads
+          - **Setup installer** (recommended): \`Kinetix POS-${VERSION}-Setup.exe\`
+          - **Portable** (no install required): \`Kinetix POS-${VERSION}-Portable.exe\`
+
+          ### Installation
+          Run the Setup installer and follow the prompts. The app works fully offline." \
+            --latest || echo "Release may already exist — continuing to upload assets"
+
+          # Upload both artifacts
+          gh release upload "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber \
+            dist/"Kinetix POS-${VERSION}-Setup.exe" \
+            dist/"Kinetix POS-${VERSION}-Portable.exe"

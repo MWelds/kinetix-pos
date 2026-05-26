@@ -32,7 +32,7 @@ jobs:
         run: npm run rebuild
 
       - name: Build Windows installers
-        run: npm run build && electron-builder --win --publish never
+        run: npm run build && npx electron-builder --win --publish never
 
       - name: Create GitHub Release and upload artifacts
         shell: bash

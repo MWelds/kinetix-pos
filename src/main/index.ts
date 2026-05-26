@@ -88,9 +88,6 @@ function createWindow(): BrowserWindow {
 
   win.on('ready-to-show', () => {
     win.show()
-    // Open DevTools in every build so renderer errors are always visible.
-    // Remove this line once the white-screen issue is confirmed resolved.
-    win.webContents.openDevTools()
   })
 
   win.webContents.setWindowOpenHandler((details) => {

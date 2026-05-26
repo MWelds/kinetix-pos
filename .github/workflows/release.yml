@@ -56,9 +56,8 @@ jobs:
           Run the Setup installer and follow the prompts. The app works fully offline." \
             --latest || echo "Release may already exist — continuing to upload assets"
 
-          # Upload both artifacts
+          # Upload all .exe artifacts from dist/
           gh release upload "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --clobber \
-            dist/"Kinetix POS-${VERSION}-Setup.exe" \
-            dist/"Kinetix POS-${VERSION}-Portable.exe"
+            dist/*.exe

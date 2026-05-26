@@ -1,11 +1,40 @@
-import { app, shell, BrowserWindow, session, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, session, ipcMain, dialog } from 'electron'
 import { join } from 'path'
+import { appendFileSync, mkdirSync, existsSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { autoUpdater } from 'electron-updater'
 import { registerIpcHandlers } from './ipc/handlers'
 import { getDatabase, closeDatabase } from './database/connection'
 import { seedDatabase } from './database/seed'
 import { setMainWindow } from './display/customer-display'
+
+// ─── Crash logger ─────────────────────────────────────────────────────────────
+// Writes to AppData\Roaming\Kinetix POS\logs\main.log so errors are visible
+// even when DevTools cannot be opened.
+function logError(context: string, err: unknown): void {
+  try {
+    const logDir = join(app.getPath('userData'), 'logs')
+    if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true })
+    const line = `[${new Date().toISOString()}] [${context}] ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`
+    appendFileSync(join(logDir, 'main.log'), line)
+  } catch {
+    // If logging itself fails there is nothing we can do
+  }
+}
+
+// Catch any errors that escape try/catch blocks
+process.on('uncaughtException', (err) => {
+  logError('uncaughtException', err)
+  dialog.showErrorBox(
+    'Kinetix POS – Fatal Error',
+    `An unexpected error occurred and the application must close.\n\n${err?.message ?? err}\n\nDetails have been saved to:\n%APPDATA%\\Kinetix POS\\logs\\main.log`
+  )
+  app.exit(1)
+})
+
+process.on('unhandledRejection', (reason) => {
+  logError('unhandledRejection', reason)
+})
 
 /**
  * Configure and start the auto-updater.
@@ -59,6 +88,9 @@ function createWindow(): BrowserWindow {
 
   win.on('ready-to-show', () => {
     win.show()
+    // Open DevTools in every build so renderer errors are always visible.
+    // Remove this line once the white-screen issue is confirmed resolved.
+    win.webContents.openDevTools()
   })
 
   win.webContents.setWindowOpenHandler((details) => {
@@ -75,56 +107,77 @@ function createWindow(): BrowserWindow {
   return win
 }
 
-app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.kinetix.pos')
+app
+  .whenReady()
+  .then(() => {
+    electronApp.setAppUserModelId('com.kinetix.pos')
 
-  app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window)
-  })
+    app.on('browser-window-created', (_, window) => {
+      optimizer.watchWindowShortcuts(window)
+    })
 
-  // Initialize DB and run migrations
-  getDatabase()
+    // Initialize DB and run migrations
+    try {
+      getDatabase()
+    } catch (err) {
+      logError('getDatabase', err)
+      dialog.showErrorBox(
+        'Kinetix POS – Database Error',
+        `Failed to initialise the database.\n\n${err instanceof Error ? err.message : String(err)}\n\nDetails saved to:\n%APPDATA%\\Kinetix POS\\logs\\main.log`
+      )
+      app.exit(1)
+      return
+    }
 
-  // Seed demo data on first run
-  try {
-    seedDatabase()
-  } catch {
-    // Seed already ran — ignore duplicate key errors
-  }
+    // Seed demo data on first run
+    try {
+      seedDatabase()
+    } catch {
+      // Seed already ran — ignore duplicate key errors
+    }
 
-  // Register all IPC handlers
-  registerIpcHandlers()
+    // Register all IPC handlers
+    registerIpcHandlers()
 
-  // ── Content-Security-Policy ──────────────────────────────────────────────
-  // Applied to every web request served from the renderer session.
-  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-    callback({
-      responseHeaders: {
-        ...details.responseHeaders,
-        'Content-Security-Policy': [
-          [
-            "default-src 'self'",
-            "script-src 'self' 'unsafe-inline'" + (is.dev ? " 'unsafe-eval'" : ''),
-            "style-src 'self' 'unsafe-inline'",
-            "img-src 'self' data: blob:",
-            "font-src 'self' data:",
-            "connect-src 'self'",
-            "form-action 'none'",
-            "frame-ancestors 'none'"
-          ].join('; ')
-        ]
-      }
+    // ── Content-Security-Policy ────────────────────────────────────────────
+    // Applied to every web request served from the renderer session.
+    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          'Content-Security-Policy': [
+            [
+              "default-src 'self'",
+              "script-src 'self' 'unsafe-inline'" + (is.dev ? " 'unsafe-eval'" : ''),
+              "style-src 'self' 'unsafe-inline'",
+              "img-src 'self' data: blob:",
+              "font-src 'self' data:",
+              "connect-src 'self'",
+              "form-action 'none'",
+              "frame-ancestors 'none'"
+            ].join('; ')
+          ]
+        }
+      })
+    })
+
+    const mainWin = createWindow()
+    setMainWindow(mainWin)
+    initAutoUpdater(mainWin)
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
     })
   })
-
-  const mainWin = createWindow()
-  setMainWindow(mainWin)
-  initAutoUpdater(mainWin)
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  .catch((err) => {
+    // Catches any unhandled async error thrown inside .then() above
+    logError('whenReady', err)
+    dialog.showErrorBox(
+      'Kinetix POS – Startup Error',
+      `The application failed to start.\n\n${err instanceof Error ? err.message : String(err)}\n\nDetails saved to:\n%APPDATA%\\Kinetix POS\\logs\\main.log`
+    )
+    app.exit(1)
   })
-})
 
 app.on('window-all-closed', () => {
   closeDatabase()

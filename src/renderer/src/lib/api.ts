@@ -232,6 +232,22 @@ export const api = {
   listeners: {
     /** Subscribe to display push events from the main process. Returns unsubscribe fn. */
     onDisplayPush: (callback: (data: unknown) => void): (() => void) =>
-      bridge.listeners.onDisplayPush(callback)
+      bridge.listeners.onDisplayPush(callback),
+    /** Subscribe to auto-update ready events. Returns unsubscribe fn. */
+    onUpdateReady: (callback: () => void): (() => void) =>
+      typeof bridge.listeners?.onUpdateReady === 'function'
+        ? bridge.listeners.onUpdateReady(callback)
+        : () => {}
+  },
+
+  sync: {
+    getState: (): Promise<unknown> => bridge.sync.getState(),
+    runNow: (): Promise<unknown> => bridge.sync.runNow(),
+    testConnection: (url: string, apiKey: string): Promise<{ ok: boolean; message: string }> =>
+      bridge.sync.testConnection(url, apiKey),
+    start: (intervalSeconds?: number): Promise<void> => bridge.sync.start(intervalSeconds),
+    stop: (): Promise<void> => bridge.sync.stop(),
+    onStateChange: (callback: (state: unknown) => void): (() => void) =>
+      bridge.sync.onStateChange(callback)
   }
 }

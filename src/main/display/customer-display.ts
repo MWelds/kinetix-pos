@@ -287,13 +287,29 @@ export function pushData(data: DisplayData): void {
 
 // ─── Internals ────────────────────────────────────────────────────────────────
 
+const EMAIL_BODY_LIMIT = 10 * 1024 // 10 KB — email address + type field; no reason to be larger
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
 function handleEmailPost(req: http.IncomingMessage, res: http.ServerResponse): void {
   let body = ''
-  req.on('data', (chunk) => { body += chunk.toString() })
+  let bodySize = 0
+  req.on('data', (chunk: Buffer) => {
+    bodySize += chunk.length
+    if (bodySize > EMAIL_BODY_LIMIT) {
+      req.destroy()
+      return
+    }
+    body += chunk.toString()
+  })
   req.on('end', async () => {
     try {
       const { to, type } = JSON.parse(body) as { to: string; type: 'receipt' | 'invoice' }
-      if (!to || !lastData.completedReceiptHtml || !lastData.orderNumber) {
+      if (!to || !EMAIL_RE.test(to)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ success: false, error: 'Invalid email address' }))
+        return
+      }
+      if (!lastData.completedReceiptHtml || !lastData.orderNumber) {
         res.writeHead(400, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ success: false, error: 'No completed order available' }))
         return

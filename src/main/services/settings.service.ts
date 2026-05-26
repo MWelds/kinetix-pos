@@ -20,6 +20,10 @@ export const DEFAULT_SETTINGS = {
   syncApiKey: '',
   syncIntervalSeconds: '30',
   terminalId: '',
+  setupComplete: 'false',
+  nodeMode: '',             // 'standalone' | 'server' | 'terminal'
+  embeddedServerPort: '3030',
+  embeddedServerApiKey: '',
   // Email / SMTP
   emailHost: '',
   emailPort: '587',

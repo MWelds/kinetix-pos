@@ -240,6 +240,32 @@ export const api = {
         : () => {}
   },
 
+  setup: {
+    get: (): Promise<{
+      setupComplete: string
+      nodeMode: string
+      embeddedServerPort: string
+      embeddedServerApiKey: string
+      terminalId: string
+      syncUrl: string
+      syncApiKey: string
+    }> => bridge.setup.get(),
+    complete: (input: {
+      nodeMode: 'standalone' | 'server' | 'terminal'
+      embeddedServerPort?: number
+      embeddedServerApiKey?: string
+      syncUrl?: string
+      syncApiKey?: string
+      syncIntervalSeconds?: number
+    }): Promise<{ ok: boolean }> => bridge.setup.complete(input),
+    reset: (): Promise<{ ok: boolean }> => bridge.setup.reset(),
+    embeddedServerStart: (port: number, apiKey: string): Promise<{ running: boolean; port: number; ip: string }> =>
+      bridge.setup.embeddedServerStart(port, apiKey),
+    embeddedServerStop: (): Promise<{ running: boolean }> => bridge.setup.embeddedServerStop(),
+    embeddedServerStatus: (): Promise<{ running: boolean; port: number; ip: string }> =>
+      bridge.setup.embeddedServerStatus()
+  },
+
   sync: {
     getState: (): Promise<unknown> => bridge.sync.getState(),
     runNow: (): Promise<unknown> => bridge.sync.runNow(),

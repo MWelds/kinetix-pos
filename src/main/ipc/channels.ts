@@ -155,7 +155,15 @@ export const IPC = {
   SYNC_START: 'sync:start',
   SYNC_STOP: 'sync:stop',
   /** Push channel — main → renderer, fires on every state change */
-  SYNC_STATE_PUSH: 'sync:statePush'
+  SYNC_STATE_PUSH: 'sync:statePush',
+
+  // Setup wizard + embedded server
+  SETUP_GET: 'setup:get',
+  SETUP_COMPLETE: 'setup:complete',
+  SETUP_RESET: 'setup:reset',
+  EMBEDDED_SERVER_START: 'embeddedServer:start',
+  EMBEDDED_SERVER_STOP: 'embeddedServer:stop',
+  EMBEDDED_SERVER_STATUS: 'embeddedServer:status'
 } as const
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC]

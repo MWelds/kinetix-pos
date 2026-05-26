@@ -137,6 +137,16 @@ app
     // Register all IPC handlers
     registerIpcHandlers()
 
+    // If this machine is the sync server, start the embedded HTTP server
+    // before initSync() so the sync loop can connect to localhost immediately
+    const { settingsService } = require('./services/settings.service') as typeof import('./services/settings.service')
+    if (settingsService.get('nodeMode') === 'server' && settingsService.get('setupComplete') === 'true') {
+      const { startEmbeddedServer } = require('./sync/embedded-server') as typeof import('./sync/embedded-server')
+      const port = parseInt(settingsService.get('embeddedServerPort') || '3030', 10)
+      const apiKey = settingsService.get('embeddedServerApiKey') || ''
+      startEmbeddedServer(port, apiKey).catch((err) => logError('startEmbeddedServer', err))
+    }
+
     // Start background sync if configured
     initSync()
 

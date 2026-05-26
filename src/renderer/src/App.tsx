@@ -1,4 +1,4 @@
-import React, { useEffect, Component, type ReactNode } from 'react'
+import React, { useEffect, useState, Component, type ReactNode } from 'react'
 import { HashRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { useAuthStore } from './stores/auth.store'
 import { useCartStore } from './stores/cart.store'
@@ -22,6 +22,7 @@ import { SettingsScreen } from './features/settings/SettingsScreen'
 import { CustomerDisplayScreen } from './features/pos/CustomerDisplayScreen'
 import { VendorsScreen } from './features/vendors/VendorsScreen'
 import { ROUTES, ROLE_LEVEL } from './constants'
+import { SetupWizard } from './features/setup/SetupWizard'
 
 /** Top-level error boundary — catches render errors so the app shows a recovery UI instead of a blank screen. */
 class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -180,6 +181,32 @@ function SettingsHydrator() {
 }
 
 export function App() {
+  const [setupDone, setSetupDone] = useState<boolean | null>(null) // null = loading
+
+  useEffect(() => {
+    api.setup.get()
+      .then((data) => setSetupDone(data.setupComplete === 'true'))
+      .catch(() => setSetupDone(true)) // if IPC fails, don't block the app
+  }, [])
+
+  // Still checking
+  if (setupDone === null) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
+  // First launch — show wizard
+  if (!setupDone) {
+    return (
+      <AppErrorBoundary>
+        <SetupWizard onComplete={() => setSetupDone(true)} />
+      </AppErrorBoundary>
+    )
+  }
+
   return (
     <AppErrorBoundary>
     <HashRouter>

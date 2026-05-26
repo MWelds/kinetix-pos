@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 
 /** Schema version — increment whenever tables change */
-const SCHEMA_VERSION = 6
+const SCHEMA_VERSION = 7
 
 /**
  * Runs idempotent DDL migrations on first launch.
@@ -36,6 +36,9 @@ export function runMigrations(sqlite: Database.Database): void {
   }
   if (currentVersion < 6) {
     applyV6(sqlite)
+  }
+  if (currentVersion < 7) {
+    applyV7(sqlite)
   }
 
   if (currentVersion < SCHEMA_VERSION) {
@@ -157,6 +160,22 @@ function applyV6(sqlite: Database.Database): void {
     ['terminalId', crypto.randomUUID()]
   ]
   for (const [key, value] of syncSettings) {
+    sqlite
+      .prepare(`INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)`)
+      .run(key, value, new Date().toISOString())
+  }
+}
+
+/** V7: Seed setup wizard settings. */
+function applyV7(sqlite: Database.Database): void {
+  const { randomBytes } = require('crypto') as typeof import('crypto')
+  const setupSettings: [string, string][] = [
+    ['setupComplete', 'false'],
+    ['nodeMode', ''],                                          // 'standalone' | 'server' | 'terminal'
+    ['embeddedServerPort', '3030'],
+    ['embeddedServerApiKey', randomBytes(24).toString('hex')] // auto-generated secure key
+  ]
+  for (const [key, value] of setupSettings) {
     sqlite
       .prepare(`INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)`)
       .run(key, value, new Date().toISOString())

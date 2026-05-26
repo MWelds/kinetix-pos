@@ -231,6 +231,17 @@ const api = {
       ipcRenderer.on(IPC.SYNC_STATE_PUSH, handler)
       return () => ipcRenderer.removeListener(IPC.SYNC_STATE_PUSH, handler)
     }
+  },
+
+  // Setup wizard + embedded server
+  setup: {
+    get: () => ipcRenderer.invoke(IPC.SETUP_GET),
+    complete: (input: unknown) => ipcRenderer.invoke(IPC.SETUP_COMPLETE, input),
+    reset: () => ipcRenderer.invoke(IPC.SETUP_RESET),
+    embeddedServerStart: (port: number, apiKey: string) =>
+      ipcRenderer.invoke(IPC.EMBEDDED_SERVER_START, port, apiKey),
+    embeddedServerStop: () => ipcRenderer.invoke(IPC.EMBEDDED_SERVER_STOP),
+    embeddedServerStatus: () => ipcRenderer.invoke(IPC.EMBEDDED_SERVER_STATUS)
   }
 }
 

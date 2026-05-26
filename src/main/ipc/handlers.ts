@@ -393,4 +393,83 @@ export function registerIpcHandlers(): void {
     stopSyncLoop()
     return getSyncState()
   })
+
+  // ── Setup wizard + embedded server ──────────────────────────────────────────
+  const {
+    startEmbeddedServer, stopEmbeddedServer, getEmbeddedServerStatus
+  } = require('../sync/embedded-server') as typeof import('../sync/embedded-server')
+
+  /** Returns the current setup state for the wizard to read on mount. */
+  ipcMain.handle(IPC.SETUP_GET, () => ({
+    setupComplete: settingsService.get('setupComplete'),
+    nodeMode: settingsService.get('nodeMode'),
+    embeddedServerPort: settingsService.get('embeddedServerPort'),
+    embeddedServerApiKey: settingsService.get('embeddedServerApiKey'),
+    terminalId: settingsService.get('terminalId'),
+    syncUrl: settingsService.get('syncUrl'),
+    syncApiKey: settingsService.get('syncApiKey')
+  }))
+
+  /**
+   * Called when the user finishes the setup wizard.
+   * Persists settings, then auto-starts sync / embedded server as appropriate.
+   */
+  ipcMain.handle(IPC.SETUP_COMPLETE, async (_e, input: {
+    nodeMode: 'standalone' | 'server' | 'terminal'
+    embeddedServerPort?: number
+    embeddedServerApiKey?: string
+    syncUrl?: string
+    syncApiKey?: string
+    syncIntervalSeconds?: number
+  }) => {
+    const now = new Date().toISOString()
+    const save = (key: string, value: string) =>
+      settingsService.set(key, value)
+
+    save('nodeMode', input.nodeMode)
+    save('setupComplete', 'true')
+
+    if (input.nodeMode === 'standalone') {
+      save('syncEnabled', 'false')
+
+    } else if (input.nodeMode === 'server') {
+      const port = input.embeddedServerPort ?? 3030
+      const apiKey = input.embeddedServerApiKey ?? ''
+      save('embeddedServerPort', String(port))
+      save('embeddedServerApiKey', apiKey)
+      save('syncEnabled', 'true')
+      save('syncUrl', `http://localhost:${port}`)
+      save('syncApiKey', apiKey)
+      save('syncIntervalSeconds', String(input.syncIntervalSeconds ?? 30))
+      // Start the embedded server and the sync loop
+      await startEmbeddedServer(port, apiKey)
+      startSyncLoop(input.syncIntervalSeconds ?? 30)
+
+    } else if (input.nodeMode === 'terminal') {
+      save('syncEnabled', 'true')
+      save('syncUrl', input.syncUrl ?? '')
+      save('syncApiKey', input.syncApiKey ?? '')
+      save('syncIntervalSeconds', String(input.syncIntervalSeconds ?? 30))
+      startSyncLoop(input.syncIntervalSeconds ?? 30)
+    }
+
+    return { ok: true, serverTime: now }
+  })
+
+  /** Resets setupComplete so the wizard shows again on next launch. */
+  ipcMain.handle(IPC.SETUP_RESET, () => {
+    settingsService.set('setupComplete', 'false')
+    return { ok: true }
+  })
+
+  ipcMain.handle(IPC.EMBEDDED_SERVER_START, async (_e, port: number, apiKey: string) => {
+    return startEmbeddedServer(port, apiKey)
+  })
+
+  ipcMain.handle(IPC.EMBEDDED_SERVER_STOP, async () => {
+    await stopEmbeddedServer()
+    return { running: false }
+  })
+
+  ipcMain.handle(IPC.EMBEDDED_SERVER_STATUS, () => getEmbeddedServerStatus())
 }

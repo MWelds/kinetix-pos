@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import QRCode from 'qrcode'
-import { Save, RefreshCw, ArrowLeftRight, Monitor, Wifi, WifiOff, ExternalLink, FolderOpen, Plus, Edit2, Trash2, Check, X, ImageIcon, Upload, Link2, Link2Off, AlertCircle } from 'lucide-react'
+import { Save, RefreshCw, ArrowLeftRight, Monitor, Wifi, WifiOff, ExternalLink, FolderOpen, Plus, Edit2, Trash2, Check, X, ImageIcon, Upload, Link2, Link2Off, AlertCircle, RotateCcw } from 'lucide-react'
 import { api } from '../../lib/api'
 import { Input, Button } from '../../components/ui'
 import { useUiStore } from '../../stores/ui.store'
@@ -1140,6 +1140,27 @@ export function SettingsScreen() {
 
         {/* Multi-Terminal Sync Server */}
         <SyncServerSection settings={settings} field={field} onSave={handleSave} showToast={showToast} />
+
+        {/* System */}
+        <section className="bg-white rounded-xl border border-gray-200 p-6">
+          <h2 className="text-base font-semibold text-gray-900 mb-1 flex items-center gap-2">
+            <RotateCcw size={16} className="text-gray-500" /> System
+          </h2>
+          <p className="text-xs text-gray-500 mb-4">
+            Re-run the initial setup wizard to change this machine's role (Standalone, Sync Server, or Terminal).
+          </p>
+          <button
+            type="button"
+            onClick={async () => {
+              if (!window.confirm('This will re-open the setup wizard on next launch. Continue?')) return
+              await api.setup.reset()
+              showToast('Setup wizard will appear on next launch.', 'info')
+            }}
+            className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+          >
+            <RotateCcw size={14} /> Re-run Setup Wizard
+          </button>
+        </section>
 
         {/* QuickBooks / Accounting Sync */}
         <section className="bg-white rounded-xl border border-gray-200 p-6">

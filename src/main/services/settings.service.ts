@@ -21,10 +21,9 @@ export const DEFAULT_SETTINGS = {
   syncIntervalSeconds: '30',
   terminalId: '',
   setupComplete: 'false',
-  nodeMode: '',             // 'standalone' | 'server' | 'terminal'
+  nodeMode: '',
   embeddedServerPort: '3030',
   embeddedServerApiKey: '',
-  // Email / SMTP
   emailHost: '',
   emailPort: '587',
   emailSecure: 'false',
@@ -36,12 +35,6 @@ export const DEFAULT_SETTINGS = {
 
 export type SettingKey = keyof typeof DEFAULT_SETTINGS
 
-/**
- * Keys that are generated internally by the app (OAuth tokens, security salt).
- * These are stripped from getAll() so they never travel over the IPC bridge
- * to the renderer.  User-entered credentials (clientId, clientSecret, syncApiKey)
- * ARE writable from the renderer — they are the user's own values.
- */
 const SENSITIVE_KEYS = new Set([
   'qboAccessToken',
   'qboRefreshToken',
@@ -60,12 +53,6 @@ export const settingsService = {
     return row?.value ?? DEFAULT_SETTINGS[key]
   },
 
-  /**
-   * Persists a settings value.
-   * Rejects writes to sensitive keys from this surface (they are set only by
-   * internal services via direct DB access), and enforces a size cap to
-   * prevent the renderer from storing unbounded data (e.g. a multi-MB logo).
-   */
   set(key: string, value: string): void {
     if (Buffer.byteLength(value, 'utf8') > MAX_VALUE_BYTES) {
       throw new Error(`Setting '${key}' exceeds the maximum allowed size (2 MB)`)
@@ -78,11 +65,6 @@ export const settingsService = {
       .run()
   },
 
-  /**
-   * Returns all non-sensitive settings as a flat key→value map.
-   * Sensitive keys (OAuth tokens, secrets, PIN salt) are stripped before
-   * the result is serialised and sent over the IPC bridge to the renderer.
-   */
   getAll(): Record<string, string> {
     const db = getDatabase()
     const rows = db.select().from(schema.settings).all()

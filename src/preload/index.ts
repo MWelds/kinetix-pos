@@ -191,21 +191,12 @@ const api = {
 
   // Push listeners -- one-way main -> renderer subscriptions
   listeners: {
-    /**
-     * Subscribe to display:push events (used by CustomerDisplayScreen).
-     * Returns an unsubscribe function.
-     */
     onDisplayPush: (callback: (data: unknown) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data)
       ipcRenderer.on(IPC.DISPLAY_PUSH, handler)
       return () => ipcRenderer.removeListener(IPC.DISPLAY_PUSH, handler)
     },
 
-    /**
-     * Subscribe to update:ready — fired when a new version is downloaded and
-     * ready to install. Call api.updater.install() to restart and apply it.
-     * Returns an unsubscribe function.
-     */
     onUpdateReady: (callback: () => void) => {
       const handler = () => callback()
       ipcRenderer.on('update:ready', handler)

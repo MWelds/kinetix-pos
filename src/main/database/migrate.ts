@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 
 /** Schema version — increment whenever tables change */
-const SCHEMA_VERSION = 8
+const SCHEMA_VERSION = 9
 
 /**
  * Runs idempotent DDL migrations on first launch.
@@ -42,6 +42,9 @@ export function runMigrations(sqlite: Database.Database): void {
   }
   if (currentVersion < 8) {
     applyV8(sqlite)
+  }
+  if (currentVersion < 9) {
+    applyV9(sqlite)
   }
 
   if (currentVersion < SCHEMA_VERSION) {
@@ -182,6 +185,26 @@ function applyV7(sqlite: Database.Database): void {
     sqlite
       .prepare(`INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)`)
       .run(key, value, new Date().toISOString())
+  }
+}
+
+/**
+ * V9: Belt-and-suspenders repeat of the V8 column additions.
+ * Databases that were already recorded as schema_version=8 before V8 was
+ * implemented never had the ALTER TABLE run.  This migration re-applies the
+ * same idempotent DDL so those databases are healed on the next launch.
+ */
+function applyV9(sqlite: Database.Database): void {
+  const cols = [
+    `ALTER TABLE product_components ADD COLUMN created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+    `ALTER TABLE gift_cards ADD COLUMN updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
+  ]
+  for (const ddl of cols) {
+    try {
+      sqlite.exec(ddl)
+    } catch {
+      // Column already exists — this is the normal case for databases that ran V8 correctly
+    }
   }
 }
 

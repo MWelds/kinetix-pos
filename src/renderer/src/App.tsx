@@ -131,9 +131,14 @@ function DisplaySyncBridge() {
     const unsubCart = useCartStore.subscribe(push)
     const unsubCurrency = useCurrencyStore.subscribe(push)
 
+    // Heartbeat — push current state every second so the HTTP display server
+    // always has a fresh lastData even when the cart hasn't changed.
+    const heartbeat = setInterval(push, 1000)
+
     return () => {
       unsubCart()
       unsubCurrency()
+      clearInterval(heartbeat)
       delete (window as Record<string, unknown>)['__getDisplayData']
     }
   }, [])
@@ -171,7 +176,7 @@ function SettingsHydrator() {
     api.settings.getAll().then((s) => {
       if (s.taxEnabled !== undefined) setTaxEnabled(s.taxEnabled === 'true')
       if (s.taxRate) setTaxRate(parseFloat(s.taxRate) || 0.08)
-
+      if (s.currency) setCurrency(s.currency as CurrencyCode)
       if (s.kydToUsdRate) setKydToUsdRate(parseFloat(s.kydToUsdRate) || 1.20)
       if (s.logoBase64) setLogo(s.logoBase64)
     }).catch(() => { /* settings unavailable -- use defaults */ })

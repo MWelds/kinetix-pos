@@ -38,7 +38,7 @@ function SyncIndicator() {
     syncState.status === 'error'   ? 'text-red-400'   : 'text-gray-400'
 
   const label =
-    syncState.status === 'syncing' ? 'Syncing…' :
+    syncState.status === 'syncing' ? 'Syncing\u2026' :
     syncState.status === 'synced'  ? 'Synced'   :
     syncState.status === 'error'   ? 'Sync error' : 'Offline'
 

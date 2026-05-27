@@ -12,7 +12,8 @@ import {
   startHttpServer,
   stopHttpServer,
   isHttpServerRunning,
-  getLocalIp
+  getLocalIp,
+  forcePushCurrentState
 } from '../display/customer-display'
 import { IPC } from './channels'
 import { sendReceiptEmail, sendInvoiceEmail, testSmtpConnection } from '../services/email.service'
@@ -252,9 +253,20 @@ export function registerIpcHandlers(): void {
   /** Hydrate the renderer on mount — solves timing race with display:push */
   ipcMain.handle(IPC.DISPLAY_GET_STATE, () => getLastData())
   ipcMain.handle(IPC.DISPLAY_NETWORK_START, async (_e: IpcMainInvokeEvent, port: number) => {
+    const usePort = port || 3031
     try { setDisplayLogo(settingsService.get('logoBase64') ?? '') } catch { /* non-fatal */ }
-    await startHttpServer(port || 3030)
-    return { running: true, port: port || 3030, ip: getLocalIp() }
+    try {
+      await startHttpServer(usePort)
+    } catch (err) {
+      const msg = (err as NodeJS.ErrnoException).code === 'EADDRINUSE'
+        ? `Port ${usePort} is already in use. The sync server may be using this port — try a different port (e.g. 3031).`
+        : (err instanceof Error ? err.message : String(err))
+      throw new Error(msg)
+    }
+    // Immediately push current cart state so the first client that connects
+    // gets real data rather than the stale idle default.
+    forcePushCurrentState().catch(() => { /* renderer not ready — ignore */ })
+    return { running: true, port: usePort, ip: getLocalIp() }
   })
   ipcMain.handle(IPC.DISPLAY_NETWORK_STOP, async () => {
     await stopHttpServer()

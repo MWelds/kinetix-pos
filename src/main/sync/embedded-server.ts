@@ -95,7 +95,8 @@ function applyServerSchema(db: Database.Database): void {
     );
     CREATE TABLE IF NOT EXISTS product_components (
       id TEXT PRIMARY KEY, composite_product_id TEXT NOT NULL,
-      component_product_id TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 1, deleted_at TEXT
+      component_product_id TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 1, deleted_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
     CREATE TABLE IF NOT EXISTS inventory (
       id TEXT PRIMARY KEY, product_id TEXT NOT NULL, variant_id TEXT,
@@ -165,7 +166,8 @@ function applyServerSchema(db: Database.Database): void {
       id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, balance REAL NOT NULL,
       initial_balance REAL NOT NULL, is_active INTEGER NOT NULL DEFAULT 1,
       deleted_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
     CREATE TABLE IF NOT EXISTS vendors (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, phone TEXT, email TEXT, notes TEXT,
@@ -183,6 +185,15 @@ function applyServerSchema(db: Database.Database): void {
       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
   `)
+
+  // Patch existing central.db instances that were created before these columns were added
+  const patches = [
+    `ALTER TABLE product_components ADD COLUMN created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+    `ALTER TABLE gift_cards ADD COLUMN updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
+  ]
+  for (const ddl of patches) {
+    try { db.exec(ddl) } catch { /* column already exists — ignore */ }
+  }
 }
 
 function getRecordsSince(table: SyncTable, since: string): SyncRecord[] {
@@ -194,6 +205,24 @@ function getRecordsSince(table: SyncTable, since: string): SyncRecord[] {
 function upsertRecords(table: SyncTable, records: SyncRecord[]): void {
   if (records.length === 0) return
   const db = getServerDb()
+
+  // settings uses `key` as PK — handle separately
+  if (table === 'settings') {
+    const upsertSettings = db.transaction((rows: SyncRecord[]) => {
+      for (const row of rows) {
+        const existing = db.prepare('SELECT updated_at FROM settings WHERE key = ?').get(row['key']) as { updated_at: string } | undefined
+        if (!existing || (row['updated_at'] as string) >= existing.updated_at) {
+          db.prepare(`
+            INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+          `).run(row['key'], row['value'], row['updated_at'])
+        }
+      }
+    })
+    upsertSettings(records)
+    return
+  }
+
   const sample = records[0]
   const cols = Object.keys(sample)
   const placeholders = cols.map(() => '?').join(', ')
@@ -298,8 +327,9 @@ function createHandler(apiKey: string) {
 
       send(res, 404, { error: 'Not found' })
     } catch (err) {
-      console.error('[embedded-server] handler error:', err)
-      send(res, 500, { error: 'Internal server error' })
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[embedded-server] handler error:', msg)
+      send(res, 500, { error: msg })
     }
   }
 }

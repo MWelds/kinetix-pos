@@ -32,25 +32,11 @@ export const products = sqliteTable('products', {
   isComposite: integer('is_composite', { mode: 'boolean' }).notNull().default(false),
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
   taxRate: real('tax_rate').notNull().default(0),
-  /**
-   * Pack / individual linking (V3).
-   * unitsPerPack > 1  -> this is a pack product (e.g. "Box of 100 Spoons").
-   * individualProductId -> the auto-created individual SKU for that pack.
-   * packProductId      -> the parent pack this individual belongs to.
-   * Inventory is tracked in individual units under the individual product;
-   * the pack product derives its displayed quantity via floor(indQty / unitsPerPack).
-   */
   unitsPerPack: integer('units_per_pack').notNull().default(1),
   individualProductId: text('individual_product_id'),
   packProductId: text('pack_product_id'),
-  /** Consignment: the vendor who supplied this product (null = own stock) */
   vendorId: text('vendor_id'),
-  /** Consignment: amount owed to vendor per unit sold */
   vendorCost: real('vendor_cost'),
-  /**
-   * V5: When false the product has no physical stock (e.g. services, print jobs).
-   * Out-of-stock checks and inventory deductions are skipped for these products.
-   */
   trackStock: integer('track_stock', { mode: 'boolean' }).notNull().default(true),
   ...timestamps
 })
@@ -157,8 +143,8 @@ export const discountRules = sqliteTable('discount_rules', {
 export const orders = sqliteTable('orders', {
   id: text('id').primaryKey(),
   orderNumber: text('order_number').notNull().unique(),
-  status: text('status').notNull().default('pending'), // 'pending'|'held'|'completed'|'refunded'|'voided'|'delivered'|'canceled'
-  orderType: text('order_type').notNull().default('instore'), // 'instore'|'delivery'
+  status: text('status').notNull().default('pending'),
+  orderType: text('order_type').notNull().default('instore'),
   customerId: text('customer_id').references(() => customers.id),
   staffId: text('staff_id').references(() => staff.id),
   shiftId: text('shift_id').references(() => shifts.id),
@@ -168,11 +154,11 @@ export const orders = sqliteTable('orders', {
   total: real('total').notNull().default(0),
   notes: text('notes'),
   discountId: text('discount_id').references(() => discountRules.id),
-  manualDiscountType: text('manual_discount_type'), // 'percentage' | 'fixed'
+  manualDiscountType: text('manual_discount_type'),
   manualDiscountValue: real('manual_discount_value'),
   loyaltyPointsEarned: integer('loyalty_points_earned').notNull().default(0),
   loyaltyPointsRedeemed: integer('loyalty_points_redeemed').notNull().default(0),
-  syncStatus: text('sync_status').notNull().default('pending'), // 'pending'|'synced'|'error'
+  syncStatus: text('sync_status').notNull().default('pending'),
   ...timestamps
 })
 
@@ -198,11 +184,11 @@ export const orderItems = sqliteTable('order_items', {
 export const payments = sqliteTable('payments', {
   id: text('id').primaryKey(),
   orderId: text('order_id').notNull().references(() => orders.id),
-  method: text('method').notNull(), // 'cash'|'card'|'store_credit'|'gift_card'|'layaway'
+  method: text('method').notNull(),
   amount: real('amount').notNull(),
   reference: text('reference'),
   changeGiven: real('change_given'),
-  status: text('status').notNull().default('completed'), // 'completed'|'pending'|'failed'
+  status: text('status').notNull().default('completed'),
   createdAt: text('created_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`)
 })
 

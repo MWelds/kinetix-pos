@@ -36,12 +36,4 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Code signing certs (NEVER commit these)
-*.pfx
-*.p12
-*.pem
-*.key
-
-# electron-builder output
-dist/
-release/
+# Cod

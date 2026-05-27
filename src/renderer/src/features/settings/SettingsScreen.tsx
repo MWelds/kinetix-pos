@@ -90,12 +90,32 @@ interface ReceiptPreviewProps {
   footer: string
   storeName: string
   logoBase64: string
+  primaryColor?: string
+  accentColor?: string
+  fontFamily?: string
+  headerMessage?: string
+  customField1?: string
+  customField2?: string
+  customField3?: string
 }
 
-function ReceiptPreviewPane({ template, showLogo, footer, storeName, logoBase64 }: ReceiptPreviewProps) {
+const PREVIEW_FONT_MAP: Record<string, string> = {
+  system: `-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`,
+  mono:   `'Courier New', Courier, monospace`,
+  serif:  `Georgia, 'Times New Roman', serif`,
+}
+
+function ReceiptPreviewPane({
+  template, showLogo, footer, storeName, logoBase64,
+  primaryColor = '#1e293b', accentColor = '#3b82f6', fontFamily = 'system',
+  headerMessage = '', customField1 = '', customField2 = '', customField3 = '',
+}: ReceiptPreviewProps) {
   const logo = showLogo && logoBase64
     ? <img src={logoBase64} alt="logo" style={{ maxWidth: 80, maxHeight: 40, objectFit: 'contain', marginBottom: 6 }} />
     : null
+
+  const fontStack = PREVIEW_FONT_MAP[fontFamily] ?? PREVIEW_FONT_MAP.system
+  const customLines = [customField1, customField2, customField3].filter(Boolean)
 
   const ITEMS = [
     { name: 'Product A', qty: 2, price: '$12.00' },
@@ -107,16 +127,13 @@ function ReceiptPreviewPane({ template, showLogo, footer, storeName, logoBase64 
 
   if (template === 'modern') {
     inner = (
-      <div style={{ fontFamily: 'sans-serif', width: 280, background: '#fff', borderRadius: 10, overflow: 'hidden', boxShadow: '0 2px 12px rgba(0,0,0,0.12)' }}>
+      <div style={{ fontFamily: fontStack, width: 280, background: '#fff', borderRadius: 10, overflow: 'hidden', boxShadow: '0 2px 12px rgba(0,0,0,0.12)' }}>
         {/* Header */}
-        <div style={{ background: '#1e293b', padding: '16px 18px', textAlign: 'center' }}>
+        <div style={{ background: primaryColor, padding: '16px 18px', textAlign: 'center' }}>
           {logo && <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 6 }}>{logo}</div>}
           <div style={{ color: '#fff', fontWeight: 700, fontSize: 15 }}>{storeName || 'My Store'}</div>
-          <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }}>123 Main Street · (555) 000-0000</div>
-        </div>
-        {/* Date */}
-        <div style={{ padding: '8px 18px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#64748b' }}>
-          <span>Order #1042</span><span>Today</span>
+          {headerMessage && <div style={{ color: 'rgba(255,255,255,0.80)', fontSize: 11, marginTop: 2, fontStyle: 'italic' }}>{headerMessage}</div>}
+          <div style={{ color: 'rgba(255,255,255,0.60)', fontSize: 11, marginTop: 2 }}>Order #1042 · Today</div>
         </div>
         {/* Items */}
         <div style={{ padding: '10px 18px' }}>
@@ -128,21 +145,23 @@ function ReceiptPreviewPane({ template, showLogo, footer, storeName, logoBase64 
           ))}
         </div>
         {/* Total */}
-        <div style={{ margin: '0 18px', borderTop: '1px solid #e2e8f0', paddingTop: 8, display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 14 }}>
+        <div style={{ margin: '0 18px', borderTop: `2px solid ${primaryColor}`, paddingTop: 8, display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 14, color: primaryColor }}>
           <span>Total</span><span>$47.50</span>
         </div>
         {/* Payment */}
-        <div style={{ background: '#f0fdf4', margin: '10px 18px', borderRadius: 8, padding: '8px 12px', fontSize: 11, color: '#16a34a' }}>
+        <div style={{ background: '#f0fdf4', margin: '10px 18px', borderRadius: 8, padding: '8px 12px', fontSize: 11, color: accentColor }}>
           ✓ Cash — $50.00 · Change $2.50
         </div>
         {/* Footer */}
-        {footer && <div style={{ textAlign: 'center', padding: '8px 18px 14px', fontSize: 11, color: '#64748b' }}>{footer}</div>}
+        {footer && <div style={{ textAlign: 'center', padding: '4px 18px', fontSize: 11, color: '#64748b' }}>{footer}</div>}
+        {customLines.map((f, i) => <div key={i} style={{ textAlign: 'center', fontSize: 10, color: '#94a3b8', paddingBottom: i === customLines.length - 1 ? 12 : 0 }}>{f}</div>)}
       </div>
     )
   } else if (template === 'minimal') {
     inner = (
-      <div style={{ fontFamily: 'monospace', width: 260, background: '#fff', padding: '14px 16px', fontSize: 11, lineHeight: 1.5, color: '#111' }}>
-        <div style={{ textAlign: 'center', fontWeight: 700, fontSize: 13, marginBottom: 8 }}>{storeName || 'My Store'}</div>
+      <div style={{ fontFamily: fontStack, width: 260, background: '#fff', padding: '14px 16px', fontSize: 11, lineHeight: 1.5, color: '#111' }}>
+        <div style={{ textAlign: 'center', fontWeight: 700, fontSize: 13, marginBottom: 4 }}>{storeName || 'My Store'}</div>
+        {headerMessage && <div style={{ textAlign: 'center', fontSize: 10, color: '#555', marginBottom: 8, fontStyle: 'italic' }}>{headerMessage}</div>}
         <div>{'─'.repeat(34)}</div>
         {ITEMS.map((item) => (
           <div key={item.name} style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -156,20 +175,18 @@ function ReceiptPreviewPane({ template, showLogo, footer, storeName, logoBase64 
         <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555' }}>
           <span>CASH</span><span>$50.00</span>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555' }}>
-          <span>CHANGE</span><span>$2.50</span>
-        </div>
         {footer && <div style={{ textAlign: 'center', marginTop: 8, color: '#555' }}>{footer}</div>}
+        {customLines.map((f, i) => <div key={i} style={{ textAlign: 'center', color: '#999', fontSize: 10 }}>{f}</div>)}
       </div>
     )
   } else {
     // Classic
     inner = (
-      <div style={{ fontFamily: 'monospace', width: 270, background: '#fff', padding: '14px 16px', fontSize: 11, lineHeight: 1.6, color: '#111' }}>
+      <div style={{ fontFamily: fontStack, width: 270, background: '#fff', padding: '14px 16px', fontSize: 11, lineHeight: 1.6, color: '#111' }}>
         {logo && <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}>{logo}</div>}
-        <div style={{ textAlign: 'center', fontWeight: 700, fontSize: 13 }}>{storeName || 'MY STORE'}</div>
+        <div style={{ textAlign: 'center', fontWeight: 700, fontSize: 13, color: primaryColor }}>{storeName || 'MY STORE'}</div>
+        {headerMessage && <div style={{ textAlign: 'center', fontSize: 10, color: '#555', fontStyle: 'italic' }}>{headerMessage}</div>}
         <div style={{ textAlign: 'center', color: '#555', fontSize: 10 }}>123 Main Street</div>
-        <div style={{ textAlign: 'center', color: '#555', fontSize: 10 }}>Tel: (555) 000-0000</div>
         <div style={{ margin: '6px 0', borderTop: '1px dashed #999' }} />
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#555' }}>
           <span>Order #1042</span><span>Today 12:30 PM</span>
@@ -181,17 +198,15 @@ function ReceiptPreviewPane({ template, showLogo, footer, storeName, logoBase64 
           </div>
         ))}
         <div style={{ margin: '4px 0', borderTop: '1px dashed #999' }} />
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, color: primaryColor }}>
           <span>TOTAL</span><span>$47.50</span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
           <span>CASH</span><span>$50.00</span>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span>CHANGE</span><span>$2.50</span>
-        </div>
         <div style={{ margin: '6px 0', borderTop: '1px dashed #999' }} />
         {footer && <div style={{ textAlign: 'center', color: '#555' }}>{footer}</div>}
+        {customLines.map((f, i) => <div key={i} style={{ textAlign: 'center', color: '#999', fontSize: 10 }}>{f}</div>)}
         <div style={{ textAlign: 'center', marginTop: 4, fontSize: 10, color: '#999' }}>*** THANK YOU ***</div>
       </div>
     )
@@ -216,9 +231,18 @@ interface InvoicePreviewProps {
   storeName: string
   storeAddress: string
   logoBase64: string
+  primaryColor?: string
+  headerMessage?: string
+  customField1?: string
+  customField2?: string
+  customField3?: string
 }
 
-function InvoicePreviewPane({ showLogo, footer, storeName, storeAddress, logoBase64 }: InvoicePreviewProps) {
+function InvoicePreviewPane({
+  showLogo, footer, storeName, storeAddress, logoBase64,
+  primaryColor = '#1e293b', headerMessage = '',
+  customField1 = '', customField2 = '', customField3 = '',
+}: InvoicePreviewProps) {
   const logo = showLogo && logoBase64
     ? <img src={logoBase64} alt="logo" style={{ maxWidth: 80, maxHeight: 40, objectFit: 'contain' }} />
     : <div style={{ width: 80, height: 40, background: '#e2e8f0', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#94a3b8' }}>LOGO</div>
@@ -228,6 +252,7 @@ function InvoicePreviewPane({ showLogo, footer, storeName, storeAddress, logoBas
     { name: 'Product B', qty: 1, unit: '$8.50', total: '$8.50' },
     { name: 'Product C', qty: 3, unit: '$9.00', total: '$27.00' },
   ]
+  const customLines = [customField1, customField2, customField3].filter(Boolean)
 
   return (
     <div style={{ position: 'relative', width: '100%', height: 340, overflow: 'hidden', background: '#f1f5f9', borderRadius: 10, border: '1px solid #e2e8f0', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 12 }}>
@@ -239,11 +264,12 @@ function InvoicePreviewPane({ showLogo, footer, storeName, storeAddress, logoBas
             <div>
               {logo}
               <div style={{ marginTop: 8, fontWeight: 700, fontSize: 16 }}>{storeName || 'My Store'}</div>
+              {headerMessage && <div style={{ fontSize: 12, color: '#64748b', fontStyle: 'italic', marginTop: 2 }}>{headerMessage}</div>}
               <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{storeAddress || '123 Main Street'}</div>
               <div style={{ fontSize: 12, color: '#64748b' }}>Tel: (555) 000-0000</div>
             </div>
             <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: 22, fontWeight: 800, color: '#1e293b', letterSpacing: -0.5 }}>INVOICE</div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: primaryColor, letterSpacing: -0.5 }}>INVOICE</div>
               <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>#INV-1042</div>
               <div style={{ fontSize: 12, color: '#64748b' }}>Date: Today</div>
               <div style={{ marginTop: 8, display: 'inline-block', border: '2px solid #16a34a', color: '#16a34a', borderRadius: 4, padding: '2px 10px', fontSize: 12, fontWeight: 700, letterSpacing: 1 }}>PAID</div>
@@ -258,7 +284,7 @@ function InvoicePreviewPane({ showLogo, footer, storeName, storeAddress, logoBas
           {/* Items table */}
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginBottom: 16 }}>
             <thead>
-              <tr style={{ background: '#1e293b', color: '#fff' }}>
+              <tr style={{ background: primaryColor, color: '#fff' }}>
                 <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600 }}>Item</th>
                 <th style={{ padding: '8px 12px', textAlign: 'center', fontWeight: 600 }}>Qty</th>
                 <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>Unit</th>
@@ -285,13 +311,18 @@ function InvoicePreviewPane({ showLogo, footer, storeName, storeAddress, logoBas
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', color: '#64748b' }}>
                 <span>Tax (10%)</span><span>$4.75</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderTop: '2px solid #1e293b', fontWeight: 700, fontSize: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderTop: `2px solid ${primaryColor}`, fontWeight: 700, fontSize: 14, color: primaryColor }}>
                 <span>Total</span><span>$52.25</span>
               </div>
             </div>
           </div>
           {/* Footer */}
-          {footer && <div style={{ marginTop: 24, padding: '12px 16px', background: '#f8fafc', borderRadius: 8, fontSize: 11, color: '#64748b', textAlign: 'center' }}>{footer}</div>}
+          {(footer || customLines.length > 0) && (
+            <div style={{ marginTop: 24, padding: '12px 16px', background: '#f8fafc', borderRadius: 8, fontSize: 11, color: '#64748b', textAlign: 'center' }}>
+              {footer}
+              {customLines.map((f, i) => <div key={i} style={{ marginTop: 4 }}>{f}</div>)}
+            </div>
+          )}
         </div>
       </div>
       <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 40, background: 'linear-gradient(to bottom, transparent, #f1f5f9)', borderRadius: '0 0 10px 10px' }} />
@@ -462,7 +493,7 @@ export function SettingsScreen() {
   // Peripherals state
   const [displayWindowOpen, setDisplayWindowOpen] = useState(false)
   const [networkRunning, setNetworkRunning] = useState(false)
-  const [networkPort, setNetworkPort] = useState('3030')
+  const [networkPort, setNetworkPort] = useState('3031')
   const [localIp, setLocalIp] = useState('127.0.0.1')
   const [displayLoading, setDisplayLoading] = useState(false)
   const [networkLoading, setNetworkLoading] = useState(false)
@@ -507,8 +538,26 @@ export function SettingsScreen() {
         receiptTemplate: 'classic',
         receiptShowLogo: 'true',
         receiptFooterText: 'Thank you for your business!',
+        receiptPrimaryColor: '#1e293b',
+        receiptAccentColor: '#3b82f6',
+        receiptFontFamily: 'system',
+        receiptShowTaxLine: 'true',
+        receiptShowDiscountLine: 'true',
+        receiptShowNotes: 'true',
+        receiptHeaderMessage: '',
+        receiptCustomField1: '',
+        receiptCustomField2: '',
+        receiptCustomField3: '',
         invoiceShowLogo: 'true',
         invoiceFooterText: 'Payment due on receipt. Thank you!',
+        invoicePrimaryColor: '#1e293b',
+        invoiceAccentColor: '#10b981',
+        invoiceHeaderMessage: '',
+        invoiceShowTaxLine: 'true',
+        invoiceShowDiscountLine: 'true',
+        invoiceCustomField1: '',
+        invoiceCustomField2: '',
+        invoiceCustomField3: '',
         displayBgColor: '#0f172a',
         displayBgImage: '',
         terminalName: 'Terminal 1',
@@ -1022,14 +1071,118 @@ export function SettingsScreen() {
                 ))}
               </div>
             </div>
-            <div className="flex items-center justify-between py-1">
-              <div>
-                <p className="text-sm font-medium text-gray-800">Show Logo on Receipt</p>
-                <p className="text-xs text-gray-500 mt-0.5">Prints the store logo at the top of every receipt</p>
+            {/* Colors & Branding */}
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-3">Colors &amp; Branding</p>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs font-medium text-gray-600 mb-2">Brand Color</p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={settings.receiptPrimaryColor ?? '#1e293b'}
+                      onChange={(e) => setSettings((p) => ({ ...p, receiptPrimaryColor: e.target.value }))}
+                      className="w-8 h-8 rounded cursor-pointer border border-gray-300"
+                      title="Brand / header color"
+                    />
+                    <div className="flex flex-wrap gap-1">
+                      {PRESET_COLORS.slice(0, 6).map((c) => (
+                        <ColorDot key={c} color={c} selected={(settings.receiptPrimaryColor ?? '#1e293b') === c} onClick={() => setSettings((p) => ({ ...p, receiptPrimaryColor: c }))} />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-gray-600 mb-2">Accent Color</p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={settings.receiptAccentColor ?? '#3b82f6'}
+                      onChange={(e) => setSettings((p) => ({ ...p, receiptAccentColor: e.target.value }))}
+                      className="w-8 h-8 rounded cursor-pointer border border-gray-300"
+                      title="Accent color for discounts and highlights"
+                    />
+                    <div className="flex flex-wrap gap-1">
+                      {PRESET_COLORS.slice(6, 12).map((c) => (
+                        <ColorDot key={c} color={c} selected={(settings.receiptAccentColor ?? '#3b82f6') === c} onClick={() => setSettings((p) => ({ ...p, receiptAccentColor: c }))} />
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
-              <Toggle checked={(settings.receiptShowLogo ?? 'true') === 'true'} onChange={(v) => setBool('receiptShowLogo', v)} />
             </div>
-            <Input label="Receipt Footer Text" value={settings.receiptFooterText ?? ''} onChange={field('receiptFooterText')} placeholder="Thank you for your business!" />
+            {/* Font Style */}
+            <div>
+              <p className="text-xs font-medium text-gray-600 mb-2">Font Style</p>
+              <div className="grid grid-cols-3 gap-2">
+                {([
+                  { key: 'system', label: 'System', sample: 'Aa' },
+                  { key: 'mono',   label: 'Monospace', sample: 'Aa' },
+                  { key: 'serif',  label: 'Serif', sample: 'Aa' },
+                ] as { key: string; label: string; sample: string }[]).map(({ key, label, sample }) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setSettings((p) => ({ ...p, receiptFontFamily: key }))}
+                    className={`text-center p-2 rounded-lg border-2 transition-all ${
+                      (settings.receiptFontFamily ?? 'system') === key
+                        ? 'border-blue-600 bg-blue-50'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <span style={{
+                      fontFamily: key === 'mono' ? "'Courier New', monospace" : key === 'serif' ? "Georgia, serif" : 'sans-serif',
+                      fontSize: 16, display: 'block', marginBottom: 2,
+                      color: (settings.receiptFontFamily ?? 'system') === key ? '#1d4ed8' : '#374151'
+                    }}>{sample}</span>
+                    <span className={`text-xs ${(settings.receiptFontFamily ?? 'system') === key ? 'text-blue-700 font-semibold' : 'text-gray-500'}`}>{label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* Layout & Sections */}
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-3">Layout &amp; Sections</p>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between py-1">
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">Show Logo on Receipt</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Prints the store logo at the top of every receipt</p>
+                  </div>
+                  <Toggle checked={(settings.receiptShowLogo ?? 'true') === 'true'} onChange={(v) => setBool('receiptShowLogo', v)} />
+                </div>
+                <div className="flex items-center justify-between py-1">
+                  <p className="text-sm font-medium text-gray-800">Show Tax Line</p>
+                  <Toggle checked={(settings.receiptShowTaxLine ?? 'true') === 'true'} onChange={(v) => setBool('receiptShowTaxLine', v)} />
+                </div>
+                <div className="flex items-center justify-between py-1">
+                  <p className="text-sm font-medium text-gray-800">Show Discount Line</p>
+                  <Toggle checked={(settings.receiptShowDiscountLine ?? 'true') === 'true'} onChange={(v) => setBool('receiptShowDiscountLine', v)} />
+                </div>
+                <div className="flex items-center justify-between py-1">
+                  <p className="text-sm font-medium text-gray-800">Show Order Notes</p>
+                  <Toggle checked={(settings.receiptShowNotes ?? 'true') === 'true'} onChange={(v) => setBool('receiptShowNotes', v)} />
+                </div>
+              </div>
+            </div>
+            {/* Header & Footer */}
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-3">Header &amp; Footer Content</p>
+              <div className="space-y-3">
+                <Input label="Header Tagline (optional)" value={settings.receiptHeaderMessage ?? ''} onChange={field('receiptHeaderMessage')} placeholder="Your tagline or slogan" />
+                <Input label="Footer Text" value={settings.receiptFooterText ?? ''} onChange={field('receiptFooterText')} placeholder="Thank you for your business!" />
+              </div>
+            </div>
+            {/* Custom Fields */}
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-1">Custom Fields</p>
+              <p className="text-xs text-gray-500 mb-3">Extra lines printed in the footer — website, loyalty message, social handles, etc.</p>
+              <div className="space-y-2">
+                <Input label="Custom Line 1" value={settings.receiptCustomField1 ?? ''} onChange={field('receiptCustomField1')} placeholder="e.g. www.mystore.com" />
+                <Input label="Custom Line 2" value={settings.receiptCustomField2 ?? ''} onChange={field('receiptCustomField2')} placeholder="e.g. Follow us @mystore" />
+                <Input label="Custom Line 3" value={settings.receiptCustomField3 ?? ''} onChange={field('receiptCustomField3')} placeholder="e.g. Earn points with every purchase!" />
+              </div>
+            </div>
             {/* Live preview */}
             <div>
               <p className="text-sm font-medium text-gray-700 mb-2">Live Preview</p>
@@ -1039,6 +1192,13 @@ export function SettingsScreen() {
                 footer={settings.receiptFooterText ?? ''}
                 storeName={settings.storeName ?? ''}
                 logoBase64={logoBase64 ?? ''}
+                primaryColor={settings.receiptPrimaryColor ?? '#1e293b'}
+                accentColor={settings.receiptAccentColor ?? '#3b82f6'}
+                fontFamily={settings.receiptFontFamily ?? 'system'}
+                headerMessage={settings.receiptHeaderMessage ?? ''}
+                customField1={settings.receiptCustomField1 ?? ''}
+                customField2={settings.receiptCustomField2 ?? ''}
+                customField3={settings.receiptCustomField3 ?? ''}
               />
             </div>
           </div>
@@ -1049,15 +1209,86 @@ export function SettingsScreen() {
           <h2 className="text-base font-semibold text-gray-900 mb-1">Invoice Settings</h2>
           <p className="text-xs text-gray-500 mb-4">Invoices are formal A4 documents printed from the Orders screen.</p>
           <div className="space-y-4">
-            <div className="flex items-center justify-between py-1">
-              <div>
-                <p className="text-sm font-medium text-gray-800">Show Logo on Invoice</p>
-                <p className="text-xs text-gray-500 mt-0.5">Prints the store logo in the invoice header</p>
+            {/* Colors & Branding */}
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-3">Colors &amp; Branding</p>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs font-medium text-gray-600 mb-2">Brand Color</p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={settings.invoicePrimaryColor ?? '#1e293b'}
+                      onChange={(e) => setSettings((p) => ({ ...p, invoicePrimaryColor: e.target.value }))}
+                      className="w-8 h-8 rounded cursor-pointer border border-gray-300"
+                      title="Invoice header and accent color"
+                    />
+                    <div className="flex flex-wrap gap-1">
+                      {PRESET_COLORS.slice(0, 6).map((c) => (
+                        <ColorDot key={c} color={c} selected={(settings.invoicePrimaryColor ?? '#1e293b') === c} onClick={() => setSettings((p) => ({ ...p, invoicePrimaryColor: c }))} />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-gray-600 mb-2">Accent Color</p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={settings.invoiceAccentColor ?? '#10b981'}
+                      onChange={(e) => setSettings((p) => ({ ...p, invoiceAccentColor: e.target.value }))}
+                      className="w-8 h-8 rounded cursor-pointer border border-gray-300"
+                      title="Discount highlight color"
+                    />
+                    <div className="flex flex-wrap gap-1">
+                      {PRESET_COLORS.slice(6, 12).map((c) => (
+                        <ColorDot key={c} color={c} selected={(settings.invoiceAccentColor ?? '#10b981') === c} onClick={() => setSettings((p) => ({ ...p, invoiceAccentColor: c }))} />
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
-              <Toggle checked={(settings.invoiceShowLogo ?? 'true') === 'true'} onChange={(v) => setBool('invoiceShowLogo', v)} />
             </div>
-            <Input label="Invoice Printer Port (leave blank to use system print dialog)" value={settings.invoicePrinterPort ?? ''} onChange={field('invoicePrinterPort')} placeholder="Leave blank for system print dialog" />
-            <Input label="Invoice Footer / Payment Terms" value={settings.invoiceFooterText ?? ''} onChange={field('invoiceFooterText')} placeholder="Payment due on receipt. Thank you!" />
+            {/* Layout & Sections */}
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-3">Layout &amp; Sections</p>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between py-1">
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">Show Logo on Invoice</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Prints the store logo in the invoice header</p>
+                  </div>
+                  <Toggle checked={(settings.invoiceShowLogo ?? 'true') === 'true'} onChange={(v) => setBool('invoiceShowLogo', v)} />
+                </div>
+                <div className="flex items-center justify-between py-1">
+                  <p className="text-sm font-medium text-gray-800">Show Tax Line</p>
+                  <Toggle checked={(settings.invoiceShowTaxLine ?? 'true') === 'true'} onChange={(v) => setBool('invoiceShowTaxLine', v)} />
+                </div>
+                <div className="flex items-center justify-between py-1">
+                  <p className="text-sm font-medium text-gray-800">Show Discount Line</p>
+                  <Toggle checked={(settings.invoiceShowDiscountLine ?? 'true') === 'true'} onChange={(v) => setBool('invoiceShowDiscountLine', v)} />
+                </div>
+              </div>
+            </div>
+            {/* Header & Footer */}
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-3">Header &amp; Footer Content</p>
+              <div className="space-y-3">
+                <Input label="Header Tagline (optional)" value={settings.invoiceHeaderMessage ?? ''} onChange={field('invoiceHeaderMessage')} placeholder="e.g. Your trusted local supplier" />
+                <Input label="Invoice Printer Port (leave blank to use system print dialog)" value={settings.invoicePrinterPort ?? ''} onChange={field('invoicePrinterPort')} placeholder="Leave blank for system print dialog" />
+                <Input label="Footer / Payment Terms" value={settings.invoiceFooterText ?? ''} onChange={field('invoiceFooterText')} placeholder="Payment due on receipt. Thank you!" />
+              </div>
+            </div>
+            {/* Custom Fields */}
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-1">Custom Fields</p>
+              <p className="text-xs text-gray-500 mb-3">Extra lines in the invoice footer — bank details, return policy, website, etc.</p>
+              <div className="space-y-2">
+                <Input label="Custom Line 1" value={settings.invoiceCustomField1 ?? ''} onChange={field('invoiceCustomField1')} placeholder="e.g. Bank: CIBC · Acc: 0012345" />
+                <Input label="Custom Line 2" value={settings.invoiceCustomField2 ?? ''} onChange={field('invoiceCustomField2')} placeholder="e.g. Returns accepted within 14 days" />
+                <Input label="Custom Line 3" value={settings.invoiceCustomField3 ?? ''} onChange={field('invoiceCustomField3')} placeholder="e.g. www.mystore.com" />
+              </div>
+            </div>
             {/* Live preview */}
             <div>
               <p className="text-sm font-medium text-gray-700 mb-2">Live Preview</p>
@@ -1067,6 +1298,11 @@ export function SettingsScreen() {
                 storeName={settings.storeName ?? ''}
                 storeAddress={settings.storeAddress ?? ''}
                 logoBase64={logoBase64 ?? ''}
+                primaryColor={settings.invoicePrimaryColor ?? '#1e293b'}
+                headerMessage={settings.invoiceHeaderMessage ?? ''}
+                customField1={settings.invoiceCustomField1 ?? ''}
+                customField2={settings.invoiceCustomField2 ?? ''}
+                customField3={settings.invoiceCustomField3 ?? ''}
               />
             </div>
           </div>
@@ -1130,7 +1366,7 @@ export function SettingsScreen() {
               </button>
               {emailTestResult && (
                 <span className={`text-sm font-medium ${emailTestResult.ok ? 'text-emerald-600' : 'text-red-600'}`}>
-                  {emailTestResult.ok ? '✓' : '✗'} {emailTestResult.msg}
+                  {emailTestResult.ok ? '\u2713' : '\u2717'} {emailTestResult.msg}
                 </span>
               )}
             </div>
@@ -1477,7 +1713,7 @@ export function SettingsScreen() {
                   max="65535"
                   value={networkPort}
                   onChange={(e) => setNetworkPort(e.target.value)}
-                  placeholder="3030"
+                  placeholder="3031"
                 />
               </div>
             )}

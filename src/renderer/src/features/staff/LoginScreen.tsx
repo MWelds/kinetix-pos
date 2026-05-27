@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { ShoppingBag, Delete } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../../stores/auth.store'
@@ -51,7 +51,34 @@ export function LoginScreen() {
 
   function handleLogin() { submitPin(pin) }
 
-  const PAD = [['1','2','3'],['4','5','6'],['7','8','9'],['','0','⌫']]
+  // Physical keyboard support — digits, Backspace, Delete, Enter.
+  // Uses functional setPin so the handler never captures a stale `pin` value.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.ctrlKey || e.altKey || e.metaKey) return
+      if (/^[0-9]$/.test(e.key)) {
+        const digit = e.key
+        setPin((prev) => {
+          if (prev.length >= 4) return prev
+          const next = prev + digit
+          setError('')
+          if (next.length === 4) setTimeout(() => submitPin(next), 80)
+          return next
+        })
+      } else if (e.key === 'Backspace' || e.key === 'Delete') {
+        setPin((p) => p.slice(0, -1))
+        setError('')
+      } else if (e.key === 'Enter') {
+        setPin((current) => { submitPin(current); return current })
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  // submitPin is stable (no dependency on pin); only needs to run once
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const PAD = [['1','2','3'],['4','5','6'],['7','8','9'],['','0','\u232b']]
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center p-4">
@@ -97,17 +124,17 @@ export function LoginScreen() {
             return (
               <button
                 key={key}
-                onClick={() => key === '⌫' ? backspace() : append(key)}
+                onClick={() => key === '\u232b' ? backspace() : append(key)}
                 className={[
                   'h-14 rounded-xl text-xl font-semibold transition-all active:scale-95',
                   'focus:outline-none focus:ring-2 focus:ring-blue-500',
-                  key === '⌫'
+                  key === '\u232b'
                     ? 'bg-red-50 text-red-500 hover:bg-red-100'
                     : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
                 ].join(' ')}
-                aria-label={key === '⌫' ? 'Backspace' : `Digit ${key}`}
+                aria-label={key === '\u232b' ? 'Backspace' : `Digit ${key}`}
               >
-                {key === '⌫' ? <Delete size={20} className="mx-auto" /> : key}
+                {key === '\u232b' ? <Delete size={20} className="mx-auto" /> : key}
               </button>
             )
           })}

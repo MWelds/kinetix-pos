@@ -96,6 +96,24 @@ export function getLastData(): DisplayData {
   return lastData
 }
 
+/**
+ * Immediately pulls the current cart state from the renderer via
+ * executeJavaScript and calls pushData so lastData (and all SSE clients)
+ * receive a fresh snapshot.  Call this when the HTTP server starts and
+ * whenever a new SSE client connects to avoid stale idle state.
+ */
+export async function forcePushCurrentState(): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  try {
+    const json = await mainWindow.webContents.executeJavaScript(
+      'typeof window.__getDisplayData === "function" ? window.__getDisplayData() : null'
+    ) as string | null
+    if (json) pushData(JSON.parse(json))
+  } catch {
+    /* renderer not ready — ignore */
+  }
+}
+
 // ─── Electron second-screen window ───────────────────────────────────────────
 
 /**
@@ -194,8 +212,77 @@ export function startHttpServer(port: number): Promise<void> {
       }
 
       if (pathname === '/state') {
-        res.writeHead(200, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify(lastData))
+        // Serve cached lastData synchronously — no async, no hanging requests.
+        // The 800ms pull loop in setMainWindow() keeps lastData fresh independently.
+        // logoBase64 is stripped so iOS Safari doesn't choke on a 200KB payload every 800ms.
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { logoBase64: _logo, ...stateForPoll } = lastData as Record<string, unknown>
+        const body = JSON.stringify(stateForPoll)
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+          'Pragma': 'no-cache'
+        })
+        res.end(body)
+        return
+      }
+
+      if (pathname === '/view') {
+        // Returns a pre-rendered HTML fragment of the current display state.
+        // The client sets innerHTML directly — no client-side JSON parsing or render logic.
+        const frag = renderFragment(lastData)
+        const body = frag
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Content-Length': Buffer.byteLength(body),
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+          'Pragma': 'no-cache'
+        })
+        res.end(body)
+        return
+      }
+
+      if (pathname === '/logo') {
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          // Allow a short cache so repeated page loads don't re-fetch unnecessarily,
+          // but still revalidate after 60 s in case the logo changes.
+          'Cache-Control': 'max-age=60'
+        })
+        res.end(JSON.stringify({ logoBase64: cachedLogo }))
+        return
+      }
+
+      // Debug endpoint — visit http://<ip>:<port>/debug to diagnose display issues.
+      if (pathname === '/debug') {
+        ;(async () => {
+          let liveRendererState: string | null = null
+          let rendererError: string | null = null
+          try {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              liveRendererState = await mainWindow.webContents.executeJavaScript(
+                'typeof window.__getDisplayData === "function" ? window.__getDisplayData() : "__getDisplayData_not_set"'
+              ) as string
+            }
+          } catch (e) {
+            rendererError = String(e)
+          }
+          res.writeHead(200, {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store, no-cache, must-revalidate'
+          })
+          res.end(JSON.stringify({
+            lastDataState: lastData.state,
+            lastDataItemCount: lastData.items?.length ?? 0,
+            lastDataHasLogo: !!lastData.logoBase64,
+            liveRendererState,
+            rendererError,
+            sseClientCount: sseClients.size,
+            hasMainWindow: !!mainWindow && !mainWindow.isDestroyed(),
+            timestamp: new Date().toISOString()
+          }, null, 2))
+        })()
         return
       }
 
@@ -206,7 +293,11 @@ export function startHttpServer(port: number): Promise<void> {
       }
 
       // Default: self-contained display page
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'Pragma': 'no-cache'
+      })
       res.end(getDisplayHtml())
     })
 
@@ -266,6 +357,7 @@ export function pushData(data: DisplayData): void {
   // Attach cached logo so every client (Electron + network) can display it without a separate request
   const enriched: DisplayData = cachedLogo ? { ...data, logoBase64: cachedLogo } : data
   lastData = enriched
+  console.log('[display] pushData state=%s items=%d sse=%d', data.state, data.items?.length ?? 0, sseClients.size)
 
   // Electron window
   if (displayWindow && !displayWindow.isDestroyed()) {
@@ -352,6 +444,10 @@ function handleSseRequest(req: http.IncomingMessage, res: http.ServerResponse): 
 
   sseClients.add(res)
 
+  // Immediately refresh state from the renderer so this client gets real data
+  // rather than whatever lastData happened to be when it connected.
+  forcePushCurrentState().catch(() => { /* renderer not ready — ignore */ })
+
   req.on('close', () => {
     clearInterval(heartbeat)
     sseClients.delete(res)
@@ -361,6 +457,78 @@ function handleSseRequest(req: http.IncomingMessage, res: http.ServerResponse): 
 // ─── Self-contained network display HTML ─────────────────────────────────────
 
 /** Returns a single-file HTML page that connects to /events and renders the display. */
+// ─── Server-side HTML fragment renderer ──────────────────────────────────────
+
+function esc(s: unknown): string {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+function fmt(amount: unknown, symbol = '$'): string {
+  return symbol + Number(amount ?? 0).toFixed(2)
+}
+
+/**
+ * Renders the current display state as a self-contained HTML fragment.
+ * The client sets main-area innerHTML directly — zero client-side render logic.
+ */
+function renderFragment(data: DisplayData): string {
+  const sym = data.symbol ?? '$'
+
+  if (!data || data.state === 'idle') {
+    return `<div class="idle-icon">🛍️</div><div class="idle-title">Welcome!</div><div class="idle-sub">Please place your items on the counter</div>`
+  }
+
+  if (data.state === 'shopping') {
+    const items = data.items ?? []
+    const itemRows = items.map(item =>
+      `<div class="item-row"><div class="item-name">${esc(item.name)}</div><div class="item-qty">× ${item.quantity}</div><div class="item-price">${fmt(item.lineTotal, sym)}</div></div>`
+    ).join('')
+    const discountRow = (data.discountAmount ?? 0) > 0
+      ? `<div class="totals-row discount"><span>Discount</span><span>-${fmt(data.discountAmount, sym)}</span></div>` : ''
+    const taxRow = (data.tax ?? 0) > 0
+      ? `<div class="totals-row"><span>Tax</span><span>${fmt(data.tax, sym)}</span></div>` : ''
+    const altRow = data.altTotal != null && data.altCurrency
+      ? `<div class="totals-row alt"><span>≈ ${esc(data.altCurrency)}</span><span>${fmt(data.altTotal, data.altSymbol)}</span></div>` : ''
+    const greeting = data.customer
+      ? `<div class="customer-greeting">Welcome back, ${esc(data.customer)}! 👋</div>` : ''
+    return `<div class="shopping-layout">${greeting}
+      <div class="items-list">${itemRows || '<div style="padding:24px;text-align:center;color:var(--muted)">No items yet</div>'}</div>
+      <div class="totals">
+        <div class="totals-row"><span>Subtotal</span><span>${fmt(data.subtotal, sym)}</span></div>
+        ${discountRow}${taxRow}
+        <div class="totals-row total"><span>Total</span><span>${fmt(data.total, sym)}</span></div>
+        ${altRow}
+      </div></div>`
+  }
+
+  if (data.state === 'payment_processing') {
+    return `<div class="payment-layout"><div class="spinner"></div><div style="font-size:32px;font-weight:700">Processing Payment</div><div class="payment-amount">${fmt(data.total, sym)}</div><div style="color:var(--muted);font-size:18px">Please follow the terminal prompts</div></div>`
+  }
+
+  if (data.state === 'complete') {
+    const sym3 = data.changeSymbol ?? '$'
+    const changeRow = (data.change ?? 0) > 0 ? `<div class="complete-change">Change: <strong>${fmt(data.change, sym3)}</strong></div>` : ''
+    const loyaltyRow = (data.loyaltyEarned ?? 0) > 0 ? `<div class="loyalty-badge">🎁 +${data.loyaltyEarned} loyalty points earned!</div>` : ''
+    const emailPanel = (data.completedReceiptHtml && data.orderNumber)
+      ? `<div class="email-panel" id="email-panel">
+          <div class="email-label">Get your receipt by email</div>
+          <div class="email-type-toggle">
+            <button class="email-type-btn active" id="btn-receipt" onclick="setEmailType('receipt')">Receipt</button>
+            <button class="email-type-btn" id="btn-invoice" onclick="setEmailType('invoice')">Invoice</button>
+          </div>
+          <div class="email-row">
+            <input id="email-input" class="email-input" type="email" placeholder="your@email.com" autocomplete="email"
+              onkeydown="if(event.key==='Enter')submitEmail()"/>
+            <button id="email-send" class="email-send-btn" onclick="submitEmail()">Send</button>
+          </div>
+          <div id="email-feedback" class="email-feedback"></div>
+        </div>` : ''
+    return `<div class="complete-layout"><div class="complete-check">✓</div><div class="complete-title">Thank You!</div>${changeRow}${loyaltyRow}${emailPanel}</div>`
+  }
+
+  return `<div class="idle-icon">🛍️</div><div class="idle-title">Welcome!</div><div class="idle-sub">Please place your items on the counter</div>`
+}
+
 function getDisplayHtml(): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -438,198 +606,88 @@ function getDisplayHtml(): string {
   <div class="header-time" id="clock"></div>
 </header>
 <main class="main" id="main-area"><div class="idle-icon">🛍️</div><div class="idle-title">Welcome!</div><div class="idle-sub">Please place your items on the counter</div></main>
-<footer class="footer"><span class="footer-text">Thank you for shopping with us</span></footer>
+<footer class="footer">
+  <span class="footer-text">Thank you for shopping with us</span>
+  <span id="dbg" style="position:fixed;bottom:4px;right:8px;font-size:10px;color:#334155;font-family:monospace"></span>
+</footer>
 
 <script>
 (function () {
   'use strict';
 
   // Clock
-  function updateClock() {
-    document.getElementById('clock').textContent =
-      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
-  updateClock();
-  setInterval(updateClock, 1000);
+  (function tick() {
+    var el = document.getElementById('clock');
+    if (el) el.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    setTimeout(tick, 1000);
+  }());
 
-  function fmt(amount, symbol) {
-    return (symbol || '$') + Number(amount || 0).toFixed(2);
-  }
-  function esc(str) {
-    return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  }
-
-  // Email UI state
-  var emailType = 'receipt';
-  var emailSent = false;
-
-  function render(data) {
-    if (!data) return;
-
-    // Store name + logo
-    if (data.storeName) document.getElementById('store-name').textContent = data.storeName;
-    if (data.logoBase64) {
+  // Logo
+  fetch('/logo').then(function(r){return r.json();}).then(function(d){
+    if (d.logoBase64) {
       var img = document.getElementById('logo-img');
-      img.src = data.logoBase64;
-      img.style.display = 'block';
-      document.getElementById('store-name').style.display = 'none';
+      var nm = document.getElementById('store-name');
+      if (img) { img.src = d.logoBase64; img.style.display = 'block'; }
+      if (nm) nm.style.display = 'none';
     }
+  }).catch(function(){});
 
-    // Background
-    if (data.displayBgColor) document.body.style.backgroundColor = data.displayBgColor;
-    if (data.displayBgImage !== undefined) {
-      document.body.style.backgroundImage = data.displayBgImage ? 'url(' + data.displayBgImage + ')' : 'none';
-      document.body.style.backgroundSize = 'cover';
-      document.body.style.backgroundPosition = 'center';
-    }
+  var area = document.getElementById('main-area');
+  var dbgEl = document.getElementById('dbg');
 
-    var area = document.getElementById('main-area');
-    if (!area) return;
-
-    switch (data.state) {
-      case 'idle':
-        area.innerHTML = '<div class="idle-icon">🛍️</div><div class="idle-title">Welcome!</div><div class="idle-sub">Please place your items on the counter</div>';
-        break;
-
-      case 'shopping': {
-        var items = data.items || [];
-        var sym = data.symbol || '$';
-        var itemRows = items.map(function(item) {
-          return '<div class="item-row"><div class="item-name">' + esc(item.name) + '</div><div class="item-qty">× ' + item.quantity + '</div><div class="item-price">' + fmt(item.lineTotal, sym) + '</div></div>';
-        }).join('');
-        var discountRow = (data.discountAmount || 0) > 0 ? '<div class="totals-row discount"><span>Discount</span><span>-' + fmt(data.discountAmount, sym) + '</span></div>' : '';
-        var taxRow = (data.tax || 0) > 0 ? '<div class="totals-row"><span>Tax</span><span>' + fmt(data.tax, sym) + '</span></div>' : '';
-        var altRow = data.altTotal != null && data.altCurrency ? '<div class="totals-row alt"><span>≈ ' + esc(data.altCurrency) + '</span><span>' + fmt(data.altTotal, data.altSymbol) + '</span></div>' : '';
-        var greeting = data.customer ? '<div class="customer-greeting">Welcome back, ' + esc(data.customer) + '! 👋</div>' : '';
-        area.innerHTML = '<div class="shopping-layout">' + greeting +
-          '<div class="items-list">' + (itemRows || '<div style="padding:24px;text-align:center;color:var(--muted)">No items yet</div>') + '</div>' +
-          '<div class="totals"><div class="totals-row"><span>Subtotal</span><span>' + fmt(data.subtotal, sym) + '</span></div>' + discountRow + taxRow +
-          '<div class="totals-row total"><span>Total</span><span>' + fmt(data.total, sym) + '</span></div>' + altRow + '</div></div>';
-        break;
-      }
-
-      case 'payment_processing': {
-        var sym2 = data.symbol || '$';
-        area.innerHTML = '<div class="payment-layout"><div class="spinner"></div><div style="font-size:32px;font-weight:700">Processing Payment</div><div class="payment-amount">' + fmt(data.total, sym2) + '</div><div style="color:var(--muted);font-size:18px">Please follow the terminal prompts</div></div>';
-        break;
-      }
-
-      case 'complete': {
-        // Reset email state for new order
-        emailSent = false;
-        emailType = 'receipt';
-        var sym3 = data.changeSymbol || '$';
-        var changeRow = (data.change || 0) > 0 ? '<div class="complete-change">Change: <strong>' + fmt(data.change, sym3) + '</strong></div>' : '';
-        var loyaltyRow = (data.loyaltyEarned || 0) > 0 ? '<div class="loyalty-badge">🎁 +' + data.loyaltyEarned + ' loyalty points earned!</div>' : '';
-        var hasReceipt = !!(data.completedReceiptHtml && data.orderNumber);
-        var emailSection = hasReceipt ? buildEmailPanel() : '';
-        area.innerHTML = '<div class="complete-layout"><div class="complete-check">✓</div><div class="complete-title">Thank You!</div>' + changeRow + loyaltyRow + emailSection + '</div>';
-        if (hasReceipt) wireEmailPanel(data);
-        break;
-      }
-
-      default:
-        area.innerHTML = '<div class="idle-icon">🛍️</div><div class="idle-title">Welcome!</div><div class="idle-sub">Please place your items on the counter</div>';
-        break;
-    }
+  function poll() {
+    fetch('/view?_t=' + Date.now(), { cache: 'no-store' })
+      .then(function(r) { return r.text(); })
+      .then(function(html) {
+        if (area) area.innerHTML = html;
+        if (dbgEl) dbgEl.textContent = new Date().toLocaleTimeString();
+      })
+      .catch(function(e) { if (dbgEl) dbgEl.textContent = 'ERR ' + new Date().toLocaleTimeString(); })
+      .finally(function() { setTimeout(poll, 800); });
   }
-
-  function buildEmailPanel() {
-    return '<div class="email-panel" id="email-panel">' +
-      '<div class="email-label">Get your receipt by email</div>' +
-      '<div class="email-type-toggle">' +
-        '<button class="email-type-btn active" id="btn-receipt" onclick="setEmailType(\'receipt\')">Receipt</button>' +
-        '<button class="email-type-btn" id="btn-invoice" onclick="setEmailType(\'invoice\')">Invoice</button>' +
-      '</div>' +
-      '<div class="email-row">' +
-        '<input id="email-input" class="email-input" type="email" placeholder="your@email.com" autocomplete="email"/>' +
-        '<button id="email-send" class="email-send-btn" onclick="submitEmail()">Send</button>' +
-      '</div>' +
-      '<div id="email-feedback" class="email-feedback"></div>' +
-    '</div>';
-  }
+  poll();
 
   window.setEmailType = function(type) {
-    emailType = type;
-    var rb = document.getElementById('btn-receipt');
-    var ib = document.getElementById('btn-invoice');
-    if (!rb || !ib) return;
-    rb.classList.toggle('active', type === 'receipt');
-    ib.classList.toggle('active', type === 'invoice');
+    var rb = document.getElementById('btn-receipt'), ib = document.getElementById('btn-invoice');
+    if (rb) rb.classList.toggle('active', type === 'receipt');
+    if (ib) ib.classList.toggle('active', type === 'invoice');
+    window._emailType = type;
   };
+  window._emailType = 'receipt';
 
   window.submitEmail = function() {
     var input = document.getElementById('email-input');
     var btn = document.getElementById('email-send');
     var fb = document.getElementById('email-feedback');
     if (!input || !btn || !fb) return;
-    var email = input.value.trim();
+    var email = (input.value || '').trim();
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       fb.textContent = 'Please enter a valid email address';
       fb.className = 'email-feedback err';
       return;
     }
     btn.disabled = true;
-    btn.textContent = 'Sending…';
+    btn.textContent = 'Sending\u2026';
     fb.textContent = '';
-    fetch('/send-email', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: email, type: emailType })
-    })
-    .then(function(r) { return r.json(); })
-    .then(function(result) {
-      if (result.success) {
-        var panel = document.getElementById('email-panel');
-        if (panel) panel.outerHTML = '<div class="email-sent">✓ Email sent to ' + esc(email) + '</div>';
-      } else {
-        fb.textContent = result.error || 'Failed to send. Check email settings.';
+    fetch('/send-email', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: email, type: window._emailType || 'receipt' }) })
+      .then(function(r){return r.json();})
+      .then(function(result) {
+        if (result.success) {
+          var panel = document.getElementById('email-panel');
+          if (panel) panel.outerHTML = '<div class="email-sent">\u2713 Email sent to ' + email.replace(/</g,'') + '</div>';
+        } else {
+          fb.textContent = result.error || 'Failed to send.';
+          fb.className = 'email-feedback err';
+          btn.disabled = false; btn.textContent = 'Send';
+        }
+      })
+      .catch(function() {
+        fb.textContent = 'Network error \u2014 please try again';
         fb.className = 'email-feedback err';
-        btn.disabled = false;
-        btn.textContent = 'Send';
-      }
-    })
-    .catch(function() {
-      fb.textContent = 'Network error — please try again';
-      fb.className = 'email-feedback err';
-      btn.disabled = false;
-      btn.textContent = 'Send';
-    });
-  };
-
-  function wireEmailPanel(data) {
-    var input = document.getElementById('email-input');
-    if (input) {
-      input.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter') window.submitEmail();
+        btn.disabled = false; btn.textContent = 'Send';
       });
-    }
-  }
-
-  // Poll /state every second
-  function poll() {
-    fetch('/state')
-      .then(function(r) { return r.json(); })
-      .then(function(d) { render(d); })
-      .catch(function() { })
-      .finally(function() { setTimeout(poll, 1000); });
-  }
-  poll();
-
-  // SSE for instant push updates
-  var es = null;
-  function connectSse() {
-    if (es) { try { es.close(); } catch(ignored) { } }
-    es = new EventSource('/events');
-    es.onmessage = function(ev) {
-      try { render(JSON.parse(ev.data)); } catch(err) { }
-    };
-    es.onerror = function() {
-      es.close(); es = null;
-      setTimeout(connectSse, 3000);
-    };
-  }
-  connectSse();
+  };
 }());
 </script>
 </body>

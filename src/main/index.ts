@@ -12,8 +12,6 @@ import { settingsService } from './services/settings.service'
 import { startEmbeddedServer } from './sync/embedded-server'
 
 // ─── Crash logger ─────────────────────────────────────────────────────────────
-// Writes to AppData\Roaming\Kinetix POS\logs\main.log so errors are visible
-// even when DevTools cannot be opened.
 function logError(context: string, err: unknown): void {
   try {
     const logDir = join(app.getPath('userData'), 'logs')
@@ -25,7 +23,6 @@ function logError(context: string, err: unknown): void {
   }
 }
 
-// Catch any errors that escape try/catch blocks
 process.on('uncaughtException', (err) => {
   logError('uncaughtException', err)
   dialog.showErrorBox(
@@ -39,71 +36,36 @@ process.on('unhandledRejection', (reason) => {
   logError('unhandledRejection', reason)
 })
 
-/**
- * Configure and start the auto-updater.
- * Runs silently in the background — the renderer is notified when an update
- * is downloaded and ready so it can show a "Restart to update" prompt.
- */
 function initAutoUpdater(win: BrowserWindow): void {
-  // Skip update checks in dev mode
   if (is.dev) return
-
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
-
-  autoUpdater.on('update-downloaded', () => {
-    // Tell the renderer so it can show a toast / banner
-    win.webContents.send('update:ready')
-  })
-
-  autoUpdater.on('error', (err) => {
-    console.error('[auto-updater] error:', err?.message ?? err)
-  })
-
-  // Check immediately on launch, then every 4 hours
-  autoUpdater.checkForUpdates().catch(() => { /* no network — ignore */ })
-  setInterval(() => {
-    autoUpdater.checkForUpdates().catch(() => { /* no network — ignore */ })
-  }, 4 * 60 * 60 * 1000)
-
-  // Allow renderer to trigger install-and-restart
-  ipcMain.on('update:install', () => {
-    autoUpdater.quitAndInstall(false, true)
-  })
+  autoUpdater.on('update-downloaded', () => { win.webContents.send('update:ready') })
+  autoUpdater.on('error', (err) => { console.error('[auto-updater] error:', err?.message ?? err) })
+  autoUpdater.checkForUpdates().catch(() => {})
+  setInterval(() => { autoUpdater.checkForUpdates().catch(() => {}) }, 4 * 60 * 60 * 1000)
+  ipcMain.on('update:install', () => { autoUpdater.quitAndInstall(false, true) })
 }
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 1280,
-    minHeight: 800,
-    show: false,
-    autoHideMenuBar: true,
-    title: 'Kinetix POS',
+    width: 1400, height: 900, minWidth: 1280, minHeight: 800,
+    show: false, autoHideMenuBar: true, title: 'Kinetix POS',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
-      contextIsolation: true,
-      nodeIntegration: false
+      sandbox: false, contextIsolation: true, nodeIntegration: false
     }
   })
-
-  win.on('ready-to-show', () => {
-    win.show()
-  })
-
+  win.on('ready-to-show', () => { win.show() })
   win.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }
   })
-
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'))
   }
-
   return win
 }
 
@@ -111,63 +73,44 @@ app
   .whenReady()
   .then(() => {
     electronApp.setAppUserModelId('com.kinetix.pos')
+    app.on('browser-window-created', (_, window) => { optimizer.watchWindowShortcuts(window) })
 
-    app.on('browser-window-created', (_, window) => {
-      optimizer.watchWindowShortcuts(window)
-    })
-
-    // Initialize DB and run migrations
     try {
       getDatabase()
     } catch (err) {
       logError('getDatabase', err)
-      dialog.showErrorBox(
-        'Kinetix POS – Database Error',
-        `Failed to initialise the database.\n\n${err instanceof Error ? err.message : String(err)}\n\nDetails saved to:\n%APPDATA%\\Kinetix POS\\logs\\main.log`
-      )
+      dialog.showErrorBox('Kinetix POS – Database Error',
+        `Failed to initialise the database.\n\n${err instanceof Error ? err.message : String(err)}\n\nDetails saved to:\n%APPDATA%\\Kinetix POS\\logs\\main.log`)
       app.exit(1)
       return
     }
 
-    // Seed demo data on first run
-    try {
-      seedDatabase()
-    } catch {
-      // Seed already ran — ignore duplicate key errors
-    }
+    try { seedDatabase() } catch { /* already seeded */ }
 
-    // Register all IPC handlers
     registerIpcHandlers()
 
-    // If this machine is the sync server, start the embedded HTTP server
-    // before initSync() so the sync loop can connect to localhost immediately
     if (settingsService.get('nodeMode') === 'server' && settingsService.get('setupComplete') === 'true') {
       const port = parseInt(settingsService.get('embeddedServerPort') || '3030', 10)
       const apiKey = settingsService.get('embeddedServerApiKey') || ''
       startEmbeddedServer(port, apiKey).catch((err) => logError('startEmbeddedServer', err))
     }
 
-    // Start background sync if configured
     initSync()
 
-    // ── Content-Security-Policy ────────────────────────────────────────────
-    // Applied to every web request served from the renderer session.
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       callback({
         responseHeaders: {
           ...details.responseHeaders,
-          'Content-Security-Policy': [
-            [
-              "default-src 'self'",
-              "script-src 'self' 'unsafe-inline'" + (is.dev ? " 'unsafe-eval'" : ''),
-              "style-src 'self' 'unsafe-inline'",
-              "img-src 'self' data: blob:",
-              "font-src 'self' data:",
-              "connect-src 'self'",
-              "form-action 'none'",
-              "frame-ancestors 'none'"
-            ].join('; ')
-          ]
+          'Content-Security-Policy': [[
+            "default-src 'self'",
+            "script-src 'self' 'unsafe-inline'" + (is.dev ? " 'unsafe-eval'" : ''),
+            "style-src 'self' 'unsafe-inline'",
+            "img-src 'self' data: blob:",
+            "font-src 'self' data:",
+            "connect-src 'self'",
+            "form-action 'none'",
+            "frame-ancestors 'none'"
+          ].join('; ')]
         }
       })
     })
@@ -181,12 +124,9 @@ app
     })
   })
   .catch((err) => {
-    // Catches any unhandled async error thrown inside .then() above
     logError('whenReady', err)
-    dialog.showErrorBox(
-      'Kinetix POS – Startup Error',
-      `The application failed to start.\n\n${err instanceof Error ? err.message : String(err)}\n\nDetails saved to:\n%APPDATA%\\Kinetix POS\\logs\\main.log`
-    )
+    dialog.showErrorBox('Kinetix POS – Startup Error',
+      `The application failed to start.\n\n${err instanceof Error ? err.message : String(err)}\n\nDetails saved to:\n%APPDATA%\\Kinetix POS\\logs\\main.log`)
     app.exit(1)
   })
 

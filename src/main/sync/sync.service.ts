@@ -63,7 +63,6 @@ export function initSync(): void {
 export function startSyncLoop(intervalSeconds = 30): void {
   stopSyncLoop()
   setState({ status: 'idle' })
-  // Run immediately on start, then on the interval
   runSync().catch(() => { /* error already captured in state */ })
   intervalHandle = setInterval(() => {
     runSync().catch(() => { /* error already captured in state */ })
@@ -81,12 +80,6 @@ export function stopSyncLoop(): void {
 
 // ─── Core sync logic ──────────────────────────────────────────────────────────
 
-/**
- * Performs one full sync cycle:
- * 1. Push local changes to server
- * 2. Pull server changes since last sync
- * 3. Update lastSyncAt
- */
 export async function runSync(): Promise<void> {
   const serverUrl = settingsService.get('syncUrl')?.trim()
   const apiKey    = settingsService.get('syncApiKey')?.trim()
@@ -105,7 +98,6 @@ export async function runSync(): Promise<void> {
 
     const now = new Date().toISOString()
     setState({ status: 'synced', lastSyncAt: now, error: null, pendingChanges: 0 })
-    // Persist lastSyncAt so it survives app restarts
     settingsService.set('lastSyncAt', now)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -113,23 +105,61 @@ export async function runSync(): Promise<void> {
   }
 }
 
+// ─── Self-healing column patch ────────────────────────────────────────────────
+function ensureSyncColumns(): void {
+  let db: ReturnType<typeof getSqlite>
+  try {
+    db = getSqlite()
+  } catch (err) {
+    console.error('[sync] ensureSyncColumns: could not get DB handle:', err)
+    return
+  }
+
+  const fixes: Array<{ table: string; ddl: string }> = [
+    {
+      table: 'product_components',
+      ddl: `ALTER TABLE product_components ADD COLUMN created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
+    },
+    {
+      table: 'gift_cards',
+      ddl: `ALTER TABLE gift_cards ADD COLUMN updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
+    }
+  ]
+  for (const { table, ddl } of fixes) {
+    try {
+      db.exec(ddl)
+      console.log(`[sync] ensureSyncColumns: added missing column to ${table}`)
+    } catch (err) {
+      const msg = (err as Error).message ?? ''
+      if (!msg.toLowerCase().includes('duplicate column')) {
+        console.warn(`[sync] ensureSyncColumns: unexpected error patching ${table}:`, msg)
+      }
+    }
+  }
+}
+
 // ─── Push ─────────────────────────────────────────────────────────────────────
 
 async function pushChanges(serverUrl: string, apiKey: string, terminalId: string): Promise<void> {
+  ensureSyncColumns()
+
   const lastSync = settingsService.get('lastSyncAt' as never) || '1970-01-01T00:00:00.000Z'
   const db = getSqlite()
   const records: SyncPayload = {}
 
   for (const table of SYNC_TABLES) {
     const col = HAS_UPDATED_AT.has(table) ? 'updated_at' : 'created_at'
-    // settings table uses key/updated_at, all others use id/updated_at
     const sql = `SELECT * FROM ${table} WHERE ${col} > ? ORDER BY ${col} ASC`
-    const rows = db.prepare(sql).all(lastSync) as SyncRecord[]
-    if (rows.length > 0) records[table] = rows
+    try {
+      const rows = db.prepare(sql).all(lastSync) as SyncRecord[]
+      if (rows.length > 0) records[table] = rows
+    } catch (err) {
+      console.warn(`[sync] skipping table "${table}" — query failed:`, (err as Error).message)
+    }
   }
 
   const totalRows = Object.values(records).reduce((n, r) => n + r.length, 0)
-  if (totalRows === 0) return  // nothing to push
+  if (totalRows === 0) return
 
   setState({ pendingChanges: totalRows })
 
@@ -168,13 +198,6 @@ async function pullChanges(serverUrl: string, apiKey: string, terminalId: string
   applyPulledRecords(json.records)
 }
 
-/**
- * Applies records received from the server into the local SQLite DB.
- * Uses last-write-wins: the incoming row only overwrites a local row if its
- * updated_at is >= the local row's updated_at.
- *
- * Settings rows are keyed by `key` not `id` — handled separately.
- */
 function applyPulledRecords(records: SyncPayload): void {
   const db = getSqlite()
 
@@ -184,7 +207,6 @@ function applyPulledRecords(records: SyncPayload): void {
 
     for (const row of rows) {
       if (isSettings) {
-        // settings: upsert by key, last-write-wins by updated_at
         const existing = db.prepare('SELECT updated_at FROM settings WHERE key = ?').get(row['key']) as { updated_at: string } | undefined
         if (!existing || (row['updated_at'] as string) >= existing.updated_at) {
           db.prepare(`
@@ -210,7 +232,7 @@ function applyPulledRecords(records: SyncPayload): void {
           ON CONFLICT(id) DO UPDATE SET ${setClauses}
         `).run(cols.map((c) => row[c]))
       } catch {
-        // Row may reference a foreign key not yet pulled — skip and it will be retried next cycle
+        // Row may reference a foreign key not yet pulled — skip and retry next cycle
       }
     }
   })

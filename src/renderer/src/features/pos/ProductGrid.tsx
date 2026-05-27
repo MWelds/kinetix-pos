@@ -64,8 +64,10 @@ export function ProductGrid() {
         api.products.byBarcode(code).then((product) => {
           if (product) {
             handleAddProduct(product)
+            setSearch('')
           } else {
             showToast(`No product found for barcode: ${code}`, 'warning')
+            setSearch('')
           }
         })
       } else if (e.key.length === 1) {

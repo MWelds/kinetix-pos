@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { Plus, Search, Edit, Trash2, Package, Layers, FolderOpen, X, Check, ImagePlus, Store, Loader } from 'lucide-react'
+import { Plus, Search, Edit, Trash2, Package, Layers, FolderOpen, X, Check, ImagePlus, Store, Loader, Tag } from 'lucide-react'
 import { api } from '../../lib/api'
 import { CsvImportExportBar } from '../../components/ui/CsvImportExportBar'
 import { Input, Button, Badge, Modal, PageSpinner } from '../../components/ui'
 import { useCurrencyStore } from '../../stores/currency.store'
 import { useUiStore } from '../../stores/ui.store'
 import type { Product, Category, ProductComponent, Vendor } from '../../types'
+import { PriceTagModal } from './PriceTagModal'
 
 // ─── Preset category colours ──────────────────────────────────────────────────
 const PRESET_COLORS = [
@@ -191,6 +192,7 @@ export function ProductsScreen() {
   const [editProduct, setEditProduct] = useState<Product | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [showCatManager, setShowCatManager] = useState(false)
+  const [tagProduct, setTagProduct] = useState<Product | null>(null)
   const showToast = useUiStore((s) => s.showToast)
 
   const load = useCallback(async () => {
@@ -354,6 +356,14 @@ export function ProductsScreen() {
                         <Button
                           size="sm"
                           variant="ghost"
+                          icon={<Tag size={14} />}
+                          onClick={() => setTagProduct(product)}
+                        >
+                          Tag
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
                           icon={<Trash2 size={14} />}
                           onClick={() => handleDelete(product)}
                         >
@@ -389,6 +399,13 @@ export function ProductsScreen() {
         <CategoryManagerModal
           onClose={() => setShowCatManager(false)}
           onChanged={load}
+        />
+      )}
+
+      {tagProduct && (
+        <PriceTagModal
+          product={tagProduct}
+          onClose={() => setTagProduct(null)}
         />
       )}
     </div>

@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 
 /** Schema version — increment whenever tables change */
-const SCHEMA_VERSION = 9
+const SCHEMA_VERSION = 11
 
 /**
  * Runs idempotent DDL migrations on first launch.
@@ -45,6 +45,12 @@ export function runMigrations(sqlite: Database.Database): void {
   }
   if (currentVersion < 9) {
     applyV9(sqlite)
+  }
+  if (currentVersion < 10) {
+    applyV10(sqlite)
+  }
+  if (currentVersion < 11) {
+    applyV11(sqlite)
   }
 
   if (currentVersion < SCHEMA_VERSION) {
@@ -450,4 +456,33 @@ function applyV1(sqlite: Database.Database): void {
       ('currency', 'USD'),
       ('receiptFooter', 'Thank you for your purchase!');
   `)
+}
+
+/**
+ * V11: Seed admin web dashboard settings keys.
+ * - adminWebPort: HTTP port for the admin dashboard (default 3001)
+ * - adminWebToken: auth token (empty string — auto-generated on first start)
+ */
+function applyV11(sqlite: Database.Database): void {
+  const seeds: [string, string][] = [
+    ['adminWebPort', '3001'],
+    ['adminWebToken', '']
+  ]
+  for (const [key, value] of seeds) {
+    sqlite
+      .prepare(`INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)`)
+      .run(key, value, new Date().toISOString())
+  }
+}
+
+/**
+ * V10: Add terminal_id to orders so sales can be broken down by register.
+ * Falls back to 'unknown' for historical orders created before this migration.
+ */
+function applyV10(sqlite: Database.Database): void {
+  try {
+    sqlite.exec(`ALTER TABLE orders ADD COLUMN terminal_id TEXT NOT NULL DEFAULT 'unknown'`)
+  } catch {
+    // Column already exists — idempotent
+  }
 }

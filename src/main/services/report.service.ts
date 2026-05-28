@@ -154,6 +154,41 @@ export const reportService = {
     return Array.from(map.values()).sort((a, b) => b.total - a.total)
   },
 
+
+  /** Revenue broken down by register (terminal). */
+  salesByTerminal(fromDate: string, toDate: string) {
+    const db = getDatabase()
+    const orders = db
+      .select({
+        terminalId: schema.orders.terminalId,
+        total: schema.orders.total,
+        createdAt: schema.orders.createdAt
+      })
+      .from(schema.orders)
+      .where(
+        and(
+          eq(schema.orders.status, 'completed'),
+          gte(schema.orders.createdAt, fromDate),
+          lte(schema.orders.createdAt, toDate)
+        )
+      )
+      .all()
+
+    const map = new Map<string, { terminalId: string; orderCount: number; revenue: number }>()
+
+    for (const o of orders) {
+      const key = o.terminalId ?? 'unknown'
+      const existing = map.get(key)
+      if (existing) {
+        existing.orderCount++
+        existing.revenue += o.total
+      } else {
+        map.set(key, { terminalId: key, orderCount: 1, revenue: o.total })
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) => b.revenue - a.revenue)
+  },
   /** Inventory valuation (cost * quantity) */
   inventoryValuation() {
     const db = getDatabase()

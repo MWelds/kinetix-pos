@@ -86,6 +86,8 @@ const api = {
       ipcRenderer.invoke(IPC.REPORTS_SALES_BY_PRODUCT, from, to),
     salesByStaff: (from: string, to: string) =>
       ipcRenderer.invoke(IPC.REPORTS_SALES_BY_STAFF, from, to),
+    salesByTerminal: (from: string, to: string) =>
+      ipcRenderer.invoke(IPC.REPORTS_SALES_BY_TERMINAL, from, to),
     paymentBreakdown: (from: string, to: string) =>
       ipcRenderer.invoke(IPC.REPORTS_PAYMENT_BREAKDOWN, from, to),
     inventoryValuation: () => ipcRenderer.invoke(IPC.REPORTS_INVENTORY_VALUATION)
@@ -171,7 +173,6 @@ const api = {
     }) => ipcRenderer.invoke(IPC.EMAIL_TEST_CONNECTION, cfg)
   },
 
-
   // Images
   images: {
     pick: () => ipcRenderer.invoke(IPC.IMAGE_PICK)
@@ -233,7 +234,8 @@ const api = {
       ipcRenderer.invoke(IPC.EMBEDDED_SERVER_START, port, apiKey),
     embeddedServerStop: () => ipcRenderer.invoke(IPC.EMBEDDED_SERVER_STOP),
     embeddedServerStatus: () => ipcRenderer.invoke(IPC.EMBEDDED_SERVER_STATUS)
-  }
+  },
+
 }
 
 contextBridge.exposeInMainWorld('api', api)

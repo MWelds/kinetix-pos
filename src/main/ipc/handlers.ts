@@ -140,6 +140,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.REPORTS_SALES_BY_STAFF, (_e, from: string, to: string) =>
     reportService.salesByStaff(from, to)
   )
+  ipcMain.handle(IPC.REPORTS_SALES_BY_TERMINAL, (_e, from: string, to: string) =>
+    reportService.salesByTerminal(from, to)
+  )
   ipcMain.handle(IPC.REPORTS_PAYMENT_BREAKDOWN, (_e, from: string, to: string) =>
     reportService.paymentBreakdown(from, to)
   )
@@ -224,9 +227,6 @@ export function registerIpcHandlers(): void {
       const bgColor = settingsService.get('displayBgColor')
       const bgImage = settingsService.get('displayBgImage')
       const storeName = settingsService.get('storeName') ?? undefined
-      // Merge display settings into the CURRENT lastData so we never clobber an
-      // in-progress shopping session by hardcoding state:'idle' here.
-      // The window's did-finish-load handler will push this merged state to the renderer.
       const current = getLastData()
       pushData({
         ...current,
@@ -263,8 +263,6 @@ export function registerIpcHandlers(): void {
         : (err instanceof Error ? err.message : String(err))
       throw new Error(msg)
     }
-    // Immediately push current cart state so the first client that connects
-    // gets real data rather than the stale idle default.
     forcePushCurrentState().catch(() => { /* renderer not ready — ignore */ })
     return { running: true, port: usePort, ip: getLocalIp() }
   })
@@ -346,6 +344,7 @@ export function registerIpcHandlers(): void {
   }) => {
     return testSmtpConnection(cfg)
   })
+
   // Image pick (open file dialog, return base64 data URL)
   ipcMain.handle(IPC.IMAGE_PICK, async () => {
     const result = await dialog.showOpenDialog({
@@ -451,7 +450,6 @@ export function registerIpcHandlers(): void {
       save('syncUrl', `http://localhost:${port}`)
       save('syncApiKey', apiKey)
       save('syncIntervalSeconds', String(input.syncIntervalSeconds ?? 30))
-      // Start the embedded server and the sync loop
       await startEmbeddedServer(port, apiKey)
       startSyncLoop(input.syncIntervalSeconds ?? 30)
 
@@ -482,4 +480,7 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(IPC.EMBEDDED_SERVER_STATUS, () => getEmbeddedServerStatus())
+
+  // Admin web dashboard
+
 }

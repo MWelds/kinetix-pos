@@ -2,6 +2,7 @@ import { eq, desc, and, gte, lte } from 'drizzle-orm'
 import { getDatabase } from '../database/connection'
 import * as schema from '../database/schema'
 import { generateId } from '../lib/id'
+import { settingsService } from './settings.service'
 
 export interface CartItemInput {
   productId: string
@@ -292,6 +293,7 @@ export const orderService = {
         loyaltyPointsEarned: Math.floor(total),
         loyaltyPointsRedeemed: input.loyaltyPointsRedeemed ?? 0,
         syncStatus: 'pending',
+        terminalId: settingsService.get('terminalId') ?? 'unknown',
         createdAt: now,
         updatedAt: now
       })

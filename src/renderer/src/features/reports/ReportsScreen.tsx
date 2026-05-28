@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { BarChart3, TrendingUp, Download, RefreshCw, Cloud, CloudOff, ChevronDown, Check, AlertCircle } from 'lucide-react'
+import { BarChart3, TrendingUp, Download, RefreshCw, Cloud, ChevronDown, Check, AlertCircle, Monitor } from 'lucide-react'
 import { api } from '../../lib/api'
 import { Button, PageSpinner } from '../../components/ui'
 import { useCurrencyStore } from '../../stores/currency.store'
@@ -45,6 +45,7 @@ export function ReportsScreen() {
   const [summary, setSummary] = useState<SalesSummary | null>(null)
   const [byProduct, setByProduct] = useState<{ productName: string; quantity: number; revenue: number }[]>([])
   const [byStaff, setByStaff] = useState<{ name: string; orderCount: number; revenue: number }[]>([])
+  const [byTerminal, setByTerminal] = useState<{ terminalId: string; orderCount: number; revenue: number }[]>([])
   const [payments, setPayments] = useState<{ method: string; count: number; total: number }[]>([])
 
   // Export dropdown
@@ -81,16 +82,18 @@ export function ReportsScreen() {
     setLoading(true)
     const { from, to } = getDateRange(preset)
     try {
-      const [s, p, st, pay] = await Promise.all([
+      const [s, p, st, pay, term] = await Promise.all([
         api.reports.salesSummary(from, to),
         api.reports.salesByProduct(from, to),
         api.reports.salesByStaff(from, to),
-        api.reports.paymentBreakdown(from, to)
+        api.reports.paymentBreakdown(from, to),
+        api.reports.salesByTerminal(from, to)
       ])
       setSummary(s)
       setByProduct(p as typeof byProduct)
       setByStaff(st as typeof byStaff)
       setPayments(pay as typeof payments)
+      setByTerminal(term as typeof byTerminal)
     } finally { setLoading(false) }
   }
 
@@ -168,6 +171,14 @@ export function ReportsScreen() {
     } finally {
       setSyncing(false)
     }
+  }
+
+  /** Format a raw terminal ID into a readable label. */
+  function terminalLabel(id: string): string {
+    if (!id || id === 'unknown') return 'Unknown Register'
+    // If it looks like a UUID, shorten it
+    if (/^[0-9a-f-]{36}$/i.test(id)) return `Register ${id.slice(0, 8).toUpperCase()}`
+    return id
   }
 
   return (
@@ -313,26 +324,61 @@ export function ReportsScreen() {
               </div>
             </div>
 
-            {/* Sales by staff */}
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <div className="px-4 py-3 border-b border-gray-100">
-                <h2 className="text-sm font-semibold text-gray-700">Sales by Staff</h2>
+            {/* Sales by staff + Sales by register side by side */}
+            <div className="grid grid-cols-2 gap-6">
+
+              {/* Sales by staff */}
+              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                <div className="px-4 py-3 border-b border-gray-100">
+                  <h2 className="text-sm font-semibold text-gray-700">Sales by Staff</h2>
+                </div>
+                <table className="w-full">
+                  <thead className="bg-gray-50"><tr>
+                    {['Staff', 'Orders', 'Revenue'].map(h => <th key={h} className="px-4 py-2 text-left text-xs text-gray-500">{h}</th>)}
+                  </tr></thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {byStaff.map((s) => (
+                      <tr key={s.name} className="hover:bg-gray-50">
+                        <td className="px-4 py-2 text-sm font-medium text-gray-800">{s.name}</td>
+                        <td className="px-4 py-2 text-sm text-gray-600">{s.orderCount}</td>
+                        <td className="px-4 py-2 text-sm font-medium">{fmtRaw(s.revenue)}</td>
+                      </tr>
+                    ))}
+                    {!byStaff.length && <tr><td colSpan={3} className="px-4 py-6 text-center text-gray-400 text-sm">No data</td></tr>}
+                  </tbody>
+                </table>
               </div>
-              <table className="w-full">
-                <thead className="bg-gray-50"><tr>
-                  {['Staff', 'Orders', 'Revenue'].map(h => <th key={h} className="px-4 py-2 text-left text-xs text-gray-500">{h}</th>)}
-                </tr></thead>
-                <tbody className="divide-y divide-gray-100">
-                  {byStaff.map((s) => (
-                    <tr key={s.name} className="hover:bg-gray-50">
-                      <td className="px-4 py-2 text-sm font-medium text-gray-800">{s.name}</td>
-                      <td className="px-4 py-2 text-sm text-gray-600">{s.orderCount}</td>
-                      <td className="px-4 py-2 text-sm font-medium">{fmtRaw(s.revenue)}</td>
-                    </tr>
-                  ))}
-                  {!byStaff.length && <tr><td colSpan={3} className="px-4 py-6 text-center text-gray-400 text-sm">No data</td></tr>}
-                </tbody>
-              </table>
+
+              {/* Sales by register */}
+              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
+                  <Monitor size={16} className="text-indigo-600" />
+                  <h2 className="text-sm font-semibold text-gray-700">Sales by Register</h2>
+                </div>
+                <table className="w-full">
+                  <thead className="bg-gray-50"><tr>
+                    {['Register', 'Orders', 'Revenue'].map(h => <th key={h} className="px-4 py-2 text-left text-xs text-gray-500">{h}</th>)}
+                  </tr></thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {byTerminal.map((t) => (
+                      <tr key={t.terminalId} className="hover:bg-gray-50">
+                        <td className="px-4 py-2 text-sm font-medium text-gray-800">
+                          <span className="flex items-center gap-1.5">
+                            <Monitor size={13} className="text-indigo-400 shrink-0" />
+                            {terminalLabel(t.terminalId)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-sm text-gray-600">{t.orderCount}</td>
+                        <td className="px-4 py-2 text-sm font-medium">{fmtRaw(t.revenue)}</td>
+                      </tr>
+                    ))}
+                    {!byTerminal.length && (
+                      <tr><td colSpan={3} className="px-4 py-6 text-center text-gray-400 text-sm">No data</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
             </div>
           </>
         )}

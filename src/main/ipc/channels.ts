@@ -77,6 +77,7 @@ export const IPC = {
   REPORTS_SALES_SUMMARY: 'reports:salesSummary',
   REPORTS_SALES_BY_PRODUCT: 'reports:salesByProduct',
   REPORTS_SALES_BY_STAFF: 'reports:salesByStaff',
+  REPORTS_SALES_BY_TERMINAL: 'reports:salesByTerminal',
   REPORTS_PAYMENT_BREAKDOWN: 'reports:paymentBreakdown',
   REPORTS_INVENTORY_VALUATION: 'reports:inventoryValuation',
 
@@ -163,7 +164,8 @@ export const IPC = {
   SETUP_RESET: 'setup:reset',
   EMBEDDED_SERVER_START: 'embeddedServer:start',
   EMBEDDED_SERVER_STOP: 'embeddedServer:stop',
-  EMBEDDED_SERVER_STATUS: 'embeddedServer:status'
+  EMBEDDED_SERVER_STATUS: 'embeddedServer:status',
+
 } as const
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC]

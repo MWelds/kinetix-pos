@@ -331,6 +331,7 @@ function InvoicePreviewPane({
   )
 }
 
+
 // ─── Sync Server Section ──────────────────────────────────────────────────────
 
 function SyncServerSection({
@@ -477,7 +478,8 @@ function SyncServerSection({
       {settings.terminalId && (
         <p className="mt-4 text-xs text-gray-400">Terminal ID: {settings.terminalId}</p>
       )}
-    </section>
+
+      {/* Embedded server API key — only visible when this machine runs the sync server */}    </section>
   )
 }
 
@@ -1378,6 +1380,8 @@ export function SettingsScreen() {
 
         {/* Multi-Terminal Sync Server */}
         <SyncServerSection settings={settings} field={field} onSave={handleSave} showToast={showToast} />
+
+        {/* Admin Web Dashboard */}
 
         {/* System */}
         <section className="bg-white rounded-xl border border-gray-200 p-6">

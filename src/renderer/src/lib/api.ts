@@ -93,7 +93,6 @@ export const api = {
       bridge.orders.updateStatus(id, status),
     getForEdit: (id: string): Promise<{ order: Order; items: unknown[]; payments: unknown[] } | null> =>
       bridge.orders.getForEdit(id),
-    /** Edit an existing pending/held order in-place and complete it, preserving the order number. */
     updateAndComplete: (input: unknown): Promise<{ order: Order; items: unknown[]; payments: unknown[] }> =>
       bridge.orders.updateAndComplete(input)
   },
@@ -122,6 +121,8 @@ export const api = {
       bridge.reports.salesByProduct(from, to),
     salesByStaff: (from: string, to: string): Promise<unknown[]> =>
       bridge.reports.salesByStaff(from, to),
+    salesByTerminal: (from: string, to: string): Promise<unknown[]> =>
+      bridge.reports.salesByTerminal(from, to),
     paymentBreakdown: (from: string, to: string): Promise<unknown[]> =>
       bridge.reports.paymentBreakdown(from, to),
     inventoryValuation: (): Promise<unknown[]> => bridge.reports.inventoryValuation()
@@ -210,7 +211,6 @@ export const api = {
       bridge.accounting.dailySummaryCsv(from, to)
   },
 
-
   images: {
     pick: (): Promise<string | null> => bridge.images.pick()
   },
@@ -230,10 +230,8 @@ export const api = {
   },
 
   listeners: {
-    /** Subscribe to display push events from the main process. Returns unsubscribe fn. */
     onDisplayPush: (callback: (data: unknown) => void): (() => void) =>
       bridge.listeners.onDisplayPush(callback),
-    /** Subscribe to auto-update ready events. Returns unsubscribe fn. */
     onUpdateReady: (callback: () => void): (() => void) =>
       typeof bridge.listeners?.onUpdateReady === 'function'
         ? bridge.listeners.onUpdateReady(callback)
@@ -275,5 +273,14 @@ export const api = {
     stop: (): Promise<void> => bridge.sync.stop(),
     onStateChange: (callback: (state: unknown) => void): (() => void) =>
       bridge.sync.onStateChange(callback)
+  },
+
+  adminServer: {
+    start: (): Promise<{ running: boolean; port: number; ip: string; token: string }> =>
+      bridge.adminServer.start(),
+    stop: (): Promise<{ running: boolean; port: number; ip: string; token: string }> =>
+      bridge.adminServer.stop(),
+    status: (): Promise<{ running: boolean; port: number; ip: string; token: string }> =>
+      bridge.adminServer.status()
   }
 }

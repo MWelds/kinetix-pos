@@ -91,7 +91,6 @@ export function ProductGrid() {
       unitPrice: product.basePrice,
       taxRate: product.taxRate
     })
-    showToast(`${product.name} added to cart`, 'success')
   }
 
   return (

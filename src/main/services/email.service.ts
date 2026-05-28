@@ -55,6 +55,8 @@ function buildTransporter(cfg: SmtpConfig): Transporter {
     port: cfg.port,
     secure: cfg.secure,
     auth: { user: cfg.user, pass: cfg.password },
+    // Allow self-signed / business SMTP certificates
+    tls: { rejectUnauthorized: false },
     // 10 s connection timeout — avoids hanging the renderer
     connectionTimeout: 10_000,
     greetingTimeout: 10_000,

@@ -1347,7 +1347,14 @@ export function SettingsScreen() {
                 <p className="text-sm font-medium text-gray-800">Use SSL / TLS</p>
                 <p className="text-xs text-gray-500 mt-0.5">Enable for port 465 (SSL). Leave off for 587 (STARTTLS).</p>
               </div>
-              <Toggle checked={(settings.emailSecure ?? 'false') === 'true'} onChange={(v) => setBool('emailSecure', v)} />
+              <Toggle
+                checked={(settings.emailSecure ?? 'false') === 'true'}
+                onChange={(v) => {
+                  setBool('emailSecure', v)
+                  // Auto-set the standard port when toggling SSL
+                  setSettings((s) => ({ ...s, emailPort: v ? '465' : '587' }))
+                }}
+              />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <Input label="Username / Email" value={settings.emailUser ?? ''} onChange={field('emailUser')} placeholder="you@example.com" />
@@ -1404,8 +1411,8 @@ export function SettingsScreen() {
           </button>
         </section>
 
-        {/* QuickBooks / Accounting Sync */}
-        <section className="bg-white rounded-xl border border-gray-200 p-6">
+        {/* QuickBooks / Accounting Sync — hidden until QBO troubleshooting is complete */}
+        {false && <section className="bg-white rounded-xl border border-gray-200 p-6">
           <h2 className="text-base font-semibold text-gray-900 mb-1 flex items-center gap-2">
             <Link2 size={16} className="text-emerald-600" /> Accounting Sync
           </h2>
@@ -1500,7 +1507,7 @@ export function SettingsScreen() {
               <pre className="whitespace-pre-wrap font-sans">{qboError}</pre>
             </div>
           )}
-        </section>
+        </section>}
 
         {/* Categories */}
         <section className="bg-white rounded-xl border border-gray-200 p-6">

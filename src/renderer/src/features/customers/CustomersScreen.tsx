@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Plus, Search, Edit, User, Star } from 'lucide-react'
+import { Plus, Search, Edit, User, Trash2 } from 'lucide-react'
 import { api } from '../../lib/api'
 import { CsvImportExportBar } from '../../components/ui/CsvImportExportBar'
 import { Input, Button, Badge, Modal, PageSpinner } from '../../components/ui'
@@ -16,6 +16,7 @@ export function CustomersScreen() {
   const [history, setHistory] = useState<Order[]>([])
   const [showForm, setShowForm] = useState(false)
   const [editCustomer, setEditCustomer] = useState<Customer | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const showToast = useUiStore((s) => s.showToast)
 
   async function load() {
@@ -35,6 +36,21 @@ export function CustomersScreen() {
     setSelected(c)
     const h = await api.customers.purchaseHistory(c.id)
     setHistory(h)
+  }
+
+  async function handleDelete(c: Customer) {
+    if (!window.confirm(`Remove ${c.firstName} ${c.lastName}? Their order history will be preserved.`)) return
+    setDeletingId(c.id)
+    try {
+      await api.customers.delete(c.id)
+      showToast(`${c.firstName} ${c.lastName} removed`, 'success')
+      if (selected?.id === c.id) setSelected(null)
+      load()
+    } catch {
+      showToast('Failed to remove customer', 'error')
+    } finally {
+      setDeletingId(null)
+    }
   }
 
   const CUSTOMER_CSV_TEMPLATE = [
@@ -91,9 +107,19 @@ export function CustomersScreen() {
                     <td className="px-4 py-3 text-sm font-medium">{formatCurrency(c.storeCredit)}</td>
                     <td className="px-4 py-3 text-sm text-gray-500">{formatDate(c.createdAt)}</td>
                     <td className="px-4 py-3">
-                      <div className="flex gap-2">
+                      <div className="flex gap-1">
                         <Button size="sm" variant="ghost" icon={<User size={14} />} onClick={() => viewCustomer(c)}>View</Button>
                         <Button size="sm" variant="ghost" icon={<Edit size={14} />} onClick={() => { setEditCustomer(c); setShowForm(true) }}>Edit</Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          icon={<Trash2 size={14} />}
+                          loading={deletingId === c.id}
+                          onClick={() => handleDelete(c)}
+                          className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                        >
+                          Remove
+                        </Button>
                       </div>
                     </td>
                   </tr>

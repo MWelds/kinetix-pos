@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import QRCode from 'qrcode'
 import { Save, RefreshCw, ArrowLeftRight, Monitor, Wifi, WifiOff, ExternalLink, FolderOpen, Plus, Edit2, Trash2, Check, X, ImageIcon, Upload, Link2, Link2Off, AlertCircle, RotateCcw } from 'lucide-react'
 import { api } from '../../lib/api'
-import { Input, Button } from '../../components/ui'
+import { Input, Textarea, Button } from '../../components/ui'
 import { useUiStore } from '../../stores/ui.store'
 import { useCartStore } from '../../stores/cart.store'
 import { useLogoStore } from '../../stores/logo.store'
@@ -1318,8 +1318,8 @@ export function SettingsScreen() {
             <div>
               <p className="text-sm font-semibold text-gray-700 mb-3">Header &amp; Footer Content</p>
               <div className="space-y-3">
-                <Input label="Header Tagline (optional)" value={settings.receiptHeaderMessage ?? ''} onChange={field('receiptHeaderMessage')} placeholder="Your tagline or slogan" />
-                <Input label="Footer Text" value={settings.receiptFooterText ?? ''} onChange={field('receiptFooterText')} placeholder="Thank you for your business!" />
+                <Textarea label="Header Tagline (optional)" value={settings.receiptHeaderMessage ?? ''} onChange={(e) => field('receiptHeaderMessage')(e.target.value)} placeholder="Your tagline or slogan" rows={2} />
+                <Textarea label="Footer Text" value={settings.receiptFooterText ?? ''} onChange={(e) => field('receiptFooterText')(e.target.value)} placeholder="Thank you for your business!" rows={2} />
               </div>
             </div>
             {/* Custom Fields */}
@@ -1423,8 +1423,8 @@ export function SettingsScreen() {
             <div>
               <p className="text-sm font-semibold text-gray-700 mb-3">Header &amp; Footer Content</p>
               <div className="space-y-3">
-                <Input label="Header Tagline (optional)" value={settings.invoiceHeaderMessage ?? ''} onChange={field('invoiceHeaderMessage')} placeholder="e.g. Your trusted local supplier" />
-                <Input label="Footer / Payment Terms" value={settings.invoiceFooterText ?? ''} onChange={field('invoiceFooterText')} placeholder="Payment due on receipt. Thank you!" />
+                <Textarea label="Header Tagline (optional)" value={settings.invoiceHeaderMessage ?? ''} onChange={(e) => field('invoiceHeaderMessage')(e.target.value)} placeholder="e.g. Your trusted local supplier" rows={2} />
+                <Textarea label="Footer / Payment Terms" value={settings.invoiceFooterText ?? ''} onChange={(e) => field('invoiceFooterText')(e.target.value)} placeholder="Payment due on receipt. Thank you!" rows={2} />
               </div>
             </div>
             {/* Custom Fields */}
@@ -1532,6 +1532,28 @@ export function SettingsScreen() {
         <SyncServerSection settings={settings} field={field} onSave={handleSave} showToast={showToast} />
 
         {/* Admin Web Dashboard */}
+        <section className="bg-white rounded-xl border border-gray-200 p-6">
+          <h2 className="text-base font-semibold text-gray-900 mb-1 flex items-center gap-2">
+            <Monitor size={16} className="text-gray-500" /> Web Dashboard
+          </h2>
+          <p className="text-xs text-gray-500 mb-4">
+            Set a PIN to log in to the browser-based admin dashboard (<code className="text-blue-600">http://&lt;this-machine&gt;:3030</code>).
+            Only applies when this machine is running as a <strong>Sync Server</strong>.
+          </p>
+          <div className="max-w-xs">
+            <Input
+              label="Dashboard Admin PIN"
+              type="password"
+              value={settings.dashboardAdminPin ?? ''}
+              onChange={field('dashboardAdminPin')}
+              placeholder="Set a PIN to secure the dashboard"
+              maxLength={8}
+            />
+            <p className="text-xs text-gray-400 mt-1.5">
+              Minimum 4 digits. You can also grant dashboard access per-staff-member in the Staff screen.
+            </p>
+          </div>
+        </section>
 
         {/* System */}
         <section className="bg-white rounded-xl border border-gray-200 p-6">

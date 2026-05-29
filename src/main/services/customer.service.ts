@@ -1,4 +1,4 @@
-import { eq, like, or, desc } from 'drizzle-orm'
+import { eq, like, or, and, desc, isNull } from 'drizzle-orm'
 import { getDatabase } from '../database/connection'
 import * as schema from '../database/schema'
 import { generateId } from '../lib/id'
@@ -6,7 +6,12 @@ import { generateId } from '../lib/id'
 export const customerService = {
   list() {
     const db = getDatabase()
-    return db.select().from(schema.customers).orderBy(schema.customers.firstName).all()
+    return db
+      .select()
+      .from(schema.customers)
+      .where(isNull(schema.customers.deletedAt))
+      .orderBy(schema.customers.firstName)
+      .all()
   },
 
   getById(id: string) {
@@ -21,11 +26,14 @@ export const customerService = {
       .select()
       .from(schema.customers)
       .where(
-        or(
-          like(schema.customers.firstName, like_),
-          like(schema.customers.lastName, like_),
-          like(schema.customers.email, like_),
-          like(schema.customers.phone, like_)
+        and(
+          isNull(schema.customers.deletedAt),
+          or(
+            like(schema.customers.firstName, like_),
+            like(schema.customers.lastName, like_),
+            like(schema.customers.email, like_),
+            like(schema.customers.phone, like_)
+          )
         )
       )
       .limit(20)
@@ -68,6 +76,20 @@ export const customerService = {
       .where(eq(schema.customers.id, id))
       .run()
     return this.getById(id)!
+  },
+
+  /**
+   * Soft-deletes a customer by setting deleted_at.
+   * The record is retained for historical order references.
+   */
+  delete(id: string) {
+    if (!id) throw new Error('id is required')
+    const db = getDatabase()
+    const now = new Date().toISOString()
+    db.update(schema.customers)
+      .set({ deletedAt: now, updatedAt: now })
+      .where(eq(schema.customers.id, id))
+      .run()
   },
 
   getPurchaseHistory(customerId: string) {

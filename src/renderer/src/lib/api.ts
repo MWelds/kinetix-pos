@@ -64,6 +64,7 @@ export const api = {
     create: (input: Partial<Customer>): Promise<Customer> => bridge.customers.create(input),
     update: (id: string, input: Partial<Customer>): Promise<Customer> =>
       bridge.customers.update(id, input),
+    delete: (id: string): Promise<void> => bridge.customers.delete(id),
     purchaseHistory: (customerId: string): Promise<Order[]> =>
       bridge.customers.purchaseHistory(customerId)
   },
@@ -103,7 +104,8 @@ export const api = {
     create: (input: Partial<StaffMember> & { pin: string }): Promise<StaffMember> =>
       bridge.staff.create(input),
     update: (id: string, input: Partial<StaffMember> & { pin?: string }): Promise<StaffMember> =>
-      bridge.staff.update(id, input)
+      bridge.staff.update(id, input),
+    delete: (id: string): Promise<void> => bridge.staff.delete(id)
   },
 
   shifts: {

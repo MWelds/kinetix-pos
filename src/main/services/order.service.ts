@@ -85,14 +85,30 @@ function generateOrderNumber(db: ReturnType<typeof getDatabase>): string {
   return `POS-${String(num + 1).padStart(6, '0')}`
 }
 
+/** Write a single inventory_adjustments record (sale or return). */
+function writeAdjustment(
+  db: ReturnType<typeof getDatabase>,
+  productId: string,
+  delta: number,
+  type: 'sale' | 'return',
+  now: string
+): void {
+  db.insert(schema.inventoryAdjustments)
+    .values({ id: generateId(), productId, type, quantity: delta, createdAt: now })
+    .run()
+}
+
 /**
- * Deduct inventory for a single product.
+ * Deduct inventory for a single product and write a `sale` adjustment record.
  *
  * Three cases are handled:
  * 1. Pack product (unitsPerPack > 1): deducts soldQty x unitsPerPack from
  *    the linked individual product's inventory (the single source of truth).
  * 2. Composite/bundle product: deducts each component's inventory normally.
  * 3. Standard product: deducts soldQty from its own inventory record.
+ *
+ * Writing the adjustment record is what makes multi-terminal inventory safe —
+ * adjustments are additive and never conflict during sync.
  */
 function deductInventory(
   db: ReturnType<typeof getDatabase>,
@@ -127,6 +143,7 @@ function deductInventory(
         .set({ quantity: Math.max(0, indInv.quantity - deductUnits), updatedAt: now })
         .where(eq(schema.inventory.id, indInv.id))
         .run()
+      writeAdjustment(db, product.individualProductId, -deductUnits, 'sale', now)
     }
     return
   }
@@ -142,6 +159,9 @@ function deductInventory(
       .set({ quantity: Math.max(0, inv.quantity - soldQty), updatedAt: now })
       .where(eq(schema.inventory.id, inv.id))
       .run()
+    if (!product?.isComposite) {
+      writeAdjustment(db, productId, -soldQty, 'sale', now)
+    }
   }
 
   // Case 2 extra: also deduct composite components
@@ -164,15 +184,16 @@ function deductInventory(
           .set({ quantity: Math.max(0, compInv.quantity - deduct), updatedAt: now })
           .where(eq(schema.inventory.id, compInv.id))
           .run()
+        writeAdjustment(db, component.componentProductId, -deduct, 'sale', now)
       }
     }
   }
 }
 
 /**
- * Restore inventory for a single product (refund/void).
+ * Restore inventory for a single product (refund/void) and write a `return` adjustment record.
  *
- * Mirrors deductInventory - pack products restore to the individual product's
+ * Mirrors deductInventory — pack products restore to the individual product's
  * inventory pool, composite products restore each component.
  */
 function restoreInventory(
@@ -208,6 +229,7 @@ function restoreInventory(
         .set({ quantity: indInv.quantity + restoreUnits, updatedAt: now })
         .where(eq(schema.inventory.id, indInv.id))
         .run()
+      writeAdjustment(db, product.individualProductId, restoreUnits, 'return', now)
     }
     return
   }
@@ -223,6 +245,9 @@ function restoreInventory(
       .set({ quantity: inv.quantity + qty, updatedAt: now })
       .where(eq(schema.inventory.id, inv.id))
       .run()
+    if (!product?.isComposite) {
+      writeAdjustment(db, productId, qty, 'return', now)
+    }
   }
 
   if (product?.isComposite) {
@@ -239,10 +264,12 @@ function restoreInventory(
         .where(eq(schema.inventory.productId, component.componentProductId))
         .get()
       if (compInv) {
+        const restore = component.quantity * qty
         db.update(schema.inventory)
-          .set({ quantity: compInv.quantity + component.quantity * qty, updatedAt: now })
+          .set({ quantity: compInv.quantity + restore, updatedAt: now })
           .where(eq(schema.inventory.id, compInv.id))
           .run()
+        writeAdjustment(db, component.componentProductId, restore, 'return', now)
       }
     }
   }

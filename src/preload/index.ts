@@ -42,6 +42,7 @@ const api = {
     search: (query: string) => ipcRenderer.invoke(IPC.CUSTOMERS_SEARCH, query),
     create: (input: unknown) => ipcRenderer.invoke(IPC.CUSTOMERS_CREATE, input),
     update: (id: string, input: unknown) => ipcRenderer.invoke(IPC.CUSTOMERS_UPDATE, id, input),
+    delete: (id: string) => ipcRenderer.invoke(IPC.CUSTOMERS_DELETE, id),
     purchaseHistory: (customerId: string) =>
       ipcRenderer.invoke(IPC.CUSTOMERS_PURCHASE_HISTORY, customerId)
   },
@@ -66,7 +67,8 @@ const api = {
     list: () => ipcRenderer.invoke(IPC.STAFF_LIST),
     auth: (pin: string) => ipcRenderer.invoke(IPC.STAFF_AUTH, pin),
     create: (input: unknown) => ipcRenderer.invoke(IPC.STAFF_CREATE, input),
-    update: (id: string, input: unknown) => ipcRenderer.invoke(IPC.STAFF_UPDATE, id, input)
+    update: (id: string, input: unknown) => ipcRenderer.invoke(IPC.STAFF_UPDATE, id, input),
+    delete: (id: string) => ipcRenderer.invoke(IPC.STAFF_DELETE, id)
   },
 
   // Shifts

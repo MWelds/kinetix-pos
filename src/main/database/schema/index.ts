@@ -96,6 +96,7 @@ export const customers = sqliteTable('customers', {
   loyaltyPoints: integer('loyalty_points').notNull().default(0),
   storeCredit: real('store_credit').notNull().default(0),
   notes: text('notes'),
+  deletedAt: text('deleted_at'),
   ...timestamps
 })
 
@@ -108,6 +109,7 @@ export const staff = sqliteTable('staff', {
   pin: text('pin').notNull(), // SHA-256 hashed
   role: text('role').notNull().default('cashier'), // 'cashier'|'manager'|'admin'
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  canAccessDashboard: integer('can_access_dashboard', { mode: 'boolean' }).notNull().default(false),
   ...timestamps
 })
 

@@ -81,6 +81,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.CUSTOMERS_UPDATE, (_e, id: string, input) =>
     customerService.update(id, input)
   )
+  ipcMain.handle(IPC.CUSTOMERS_DELETE, (_e, id: string) => customerService.delete(id))
   ipcMain.handle(IPC.CUSTOMERS_PURCHASE_HISTORY, (_e, customerId: string) =>
     customerService.getPurchaseHistory(customerId)
   )
@@ -118,6 +119,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.STAFF_AUTH, (_e, pin: string) => staffService.authenticate(pin))
   ipcMain.handle(IPC.STAFF_CREATE, (_e, input) => staffService.create(input))
   ipcMain.handle(IPC.STAFF_UPDATE, (_e, id: string, input) => staffService.update(id, input))
+  ipcMain.handle(IPC.STAFF_DELETE, (_e, id: string) => staffService.delete(id))
 
   // Shifts
   ipcMain.handle(IPC.SHIFTS_OPEN, (_e, staffId: string, openingCash: number) =>

@@ -17,6 +17,7 @@ export const staffService = {
         email: schema.staff.email,
         role: schema.staff.role,
         isActive: schema.staff.isActive,
+        canAccessDashboard: schema.staff.canAccessDashboard,
         createdAt: schema.staff.createdAt
       })
       .from(schema.staff)
@@ -82,6 +83,7 @@ export const staffService = {
       pin: string
       role: StaffRole
       isActive: boolean
+      canAccessDashboard: boolean
     }>
   ) {
     if (!id) throw new Error('id is required')
@@ -96,6 +98,20 @@ export const staffService = {
     }
     db.update(schema.staff).set(payload).where(eq(schema.staff.id, id)).run()
     return this.list().find((s) => s.id === id) ?? null
+  },
+
+  /**
+   * Soft-deletes a staff member by setting is_active=false and deleted_at.
+   * The record is retained for audit trail and sync purposes.
+   */
+  delete(id: string) {
+    if (!id) throw new Error('id is required')
+    const db = getDatabase()
+    const now = new Date().toISOString()
+    db.update(schema.staff)
+      .set({ isActive: false, updatedAt: now })
+      .where(eq(schema.staff.id, id))
+      .run()
   },
 
   // ─── Shifts ────────────────────────────────────────────────────────────────

@@ -30,7 +30,8 @@ export const DEFAULT_SETTINGS = {
   emailUser: '',
   emailPassword: '',
   emailFromName: 'Kinetix POS',
-  emailFromAddress: ''
+  emailFromAddress: '',
+  dashboardAdminPin: ''
 }
 
 export type SettingKey = keyof typeof DEFAULT_SETTINGS
@@ -40,7 +41,8 @@ const SENSITIVE_KEYS = new Set([
   'qboRefreshToken',
   'qboTokenExpiry',
   'pinSalt',
-  'emailPassword'
+  'emailPassword',
+  'dashboardAdminPin'
 ])
 
 /** Maximum payload size for any single setting value (2 MB). */

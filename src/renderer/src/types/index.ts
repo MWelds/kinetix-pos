@@ -80,6 +80,7 @@ export interface StaffMember {
   email: string | null
   role: 'cashier' | 'manager' | 'admin'
   isActive: boolean
+  canAccessDashboard: boolean
   createdAt: string
 }
 

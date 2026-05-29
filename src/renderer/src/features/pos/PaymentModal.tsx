@@ -21,6 +21,8 @@ interface PaymentLine {
   method: PaymentMethod
   currency: CurrencyCode
   amount: number
+  /** Integer cents used for the numpad-style formatted amount input. */
+  rawCents: number
   reference: string
   giftCardCode: string
 }
@@ -271,7 +273,7 @@ export function PaymentModal({ isOpen, onClose, onComplete }: PaymentModalProps)
   const altCode = altCurrency()
 
   const [payments, setPayments] = useState<PaymentLine[]>([
-    { method: 'cash', currency: storeCurrency, amount: orderTotal, reference: '', giftCardCode: '' }
+    { method: 'cash', currency: storeCurrency, amount: orderTotal, rawCents: Math.round(orderTotal * 100), reference: '', giftCardCode: '' }
   ])
   const [processing, setProcessing] = useState(false)
   const [completed, setCompleted] = useState(false)
@@ -294,7 +296,7 @@ export function PaymentModal({ isOpen, onClose, onComplete }: PaymentModalProps)
 
   useEffect(() => {
     if (isOpen) {
-      setPayments([{ method: 'cash', currency: storeCurrency, amount: orderTotal, reference: '', giftCardCode: '' }])
+      setPayments([{ method: 'cash', currency: storeCurrency, amount: orderTotal, rawCents: Math.round(orderTotal * 100), reference: '', giftCardCode: '' }])
       setCompleted(false)
       setReceiptSnapshot(null)
       // Load which payment methods are enabled in Settings
@@ -353,14 +355,23 @@ export function PaymentModal({ isOpen, onClose, onComplete }: PaymentModalProps)
   const changeInCurrency = fromStore(changeStore, changeCurrency)
 
   function addPaymentLine() {
+    const amt = fromStore(remainingStore, storeCurrency)
     setPayments((prev) => [
       ...prev,
-      { method: 'cash', currency: storeCurrency, amount: fromStore(remainingStore, storeCurrency), reference: '', giftCardCode: '' }
+      { method: 'cash', currency: storeCurrency, amount: amt, rawCents: Math.round(amt * 100), reference: '', giftCardCode: '' }
     ])
   }
 
   function updatePayment(index: number, updates: Partial<PaymentLine>) {
-    setPayments((prev) => prev.map((p, i) => (i === index ? { ...p, ...updates } : p)))
+    setPayments((prev) => prev.map((p, i) => {
+      if (i !== index) return p
+      const merged = { ...p, ...updates }
+      // When amount is set programmatically (quick buttons), sync rawCents automatically.
+      if ('amount' in updates && !('rawCents' in updates)) {
+        merged.rawCents = Math.round((updates.amount ?? 0) * 100)
+      }
+      return merged
+    }))
   }
 
   function removePayment(index: number) {
@@ -857,19 +868,30 @@ ${footer || customFooter ? `<div class="footer">${esc(footer)}${customFooter}</d
                     ))}
                   </div>
 
-                  {/* Amount input */}
+                  {/* Amount input — cents-first numpad format */}
                   <div className="flex-1">
                     <div className="flex">
                       <span className="bg-gray-50 border border-r-0 border-gray-300 rounded-l-lg px-3 py-2 text-sm text-gray-600 flex items-center min-h-[44px]">
                         {sym}
                       </span>
                       <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={payment.amount}
-                        onChange={(e) => updatePayment(index, { amount: parseFloat(e.target.value) || 0 })}
-                        className="flex-1 border border-gray-300 rounded-r-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px]"
+                        type="text"
+                        inputMode="numeric"
+                        value={(payment.rawCents / 100).toFixed(2)}
+                        onChange={() => {/* controlled via onKeyDown */}}
+                        onFocus={(e) => e.target.select()}
+                        onKeyDown={(e) => {
+                          if (e.key >= '0' && e.key <= '9') {
+                            e.preventDefault()
+                            const newCents = Math.min(payment.rawCents * 10 + parseInt(e.key), 99999999)
+                            updatePayment(index, { rawCents: newCents, amount: newCents / 100 })
+                          } else if (e.key === 'Backspace' || e.key === 'Delete') {
+                            e.preventDefault()
+                            const newCents = Math.floor(payment.rawCents / 10)
+                            updatePayment(index, { rawCents: newCents, amount: newCents / 100 })
+                          }
+                        }}
+                        className="flex-1 border border-gray-300 rounded-r-lg px-3 py-2 text-sm text-right font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px]"
                       />
                     </div>
                     {/* Alt currency hint */}

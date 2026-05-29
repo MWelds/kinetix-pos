@@ -242,6 +242,38 @@ function applyPulledRecords(records: SyncPayload): void {
       applyTable(table, rows)
     }
   }
+
+  // ── Delta inventory recompute ──────────────────────────────────────────────
+  // If adjustment records were pulled, recompute inventory.quantity from the
+  // full adjustment history so both terminals converge to the correct value
+  // rather than fighting over the absolute quantity via last-write-wins.
+  const pulledAdjustments = records['inventory_adjustments']
+  if (Array.isArray(pulledAdjustments) && pulledAdjustments.length > 0) {
+    const affectedProductIds = [...new Set(pulledAdjustments.map((r) => r['product_id'] as string).filter(Boolean))]
+    recomputeInventoryFromAdjustments(db, affectedProductIds)
+  }
+}
+
+/**
+ * Recompute inventory.quantity for the given products by summing all
+ * inventory_adjustments. This is the source of truth for multi-terminal setups.
+ */
+function recomputeInventoryFromAdjustments(
+  db: ReturnType<typeof getSqlite>,
+  productIds: string[]
+): void {
+  if (productIds.length === 0) return
+  const now = new Date().toISOString()
+  for (const productId of productIds) {
+    const result = db.prepare(
+      `SELECT COALESCE(SUM(quantity), 0) as total FROM inventory_adjustments WHERE product_id = ?`
+    ).get(productId) as { total: number } | undefined
+    if (result == null) continue
+    const computed = Math.max(0, result.total)
+    db.prepare(
+      `UPDATE inventory SET quantity = ?, updated_at = ? WHERE product_id = ?`
+    ).run(computed, now, productId)
+  }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

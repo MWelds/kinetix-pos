@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 
 /** Schema version — increment whenever tables change */
-const SCHEMA_VERSION = 11
+const SCHEMA_VERSION = 13
 
 /**
  * Runs idempotent DDL migrations on first launch.
@@ -51,6 +51,12 @@ export function runMigrations(sqlite: Database.Database): void {
   }
   if (currentVersion < 11) {
     applyV11(sqlite)
+  }
+  if (currentVersion < 12) {
+    applyV12(sqlite)
+  }
+  if (currentVersion < 13) {
+    applyV13(sqlite)
   }
 
   if (currentVersion < SCHEMA_VERSION) {
@@ -472,6 +478,29 @@ function applyV11(sqlite: Database.Database): void {
     sqlite
       .prepare(`INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)`)
       .run(key, value, new Date().toISOString())
+  }
+}
+
+/**
+ * V13: Add deleted_at column to customers table for soft-delete support.
+ */
+function applyV13(sqlite: Database.Database): void {
+  try {
+    sqlite.exec(`ALTER TABLE customers ADD COLUMN deleted_at TEXT`)
+  } catch {
+    // Column already exists — idempotent
+  }
+}
+
+/**
+ * V12: Add can_access_dashboard flag to staff table.
+ * Staff with this flag set can log into the browser-based admin dashboard.
+ */
+function applyV12(sqlite: Database.Database): void {
+  try {
+    sqlite.exec(`ALTER TABLE staff ADD COLUMN can_access_dashboard INTEGER NOT NULL DEFAULT 0`)
+  } catch {
+    // Column already exists — idempotent
   }
 }
 

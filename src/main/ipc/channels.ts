@@ -32,6 +32,7 @@ export const IPC = {
   CUSTOMERS_GET: 'customers:get',
   CUSTOMERS_CREATE: 'customers:create',
   CUSTOMERS_UPDATE: 'customers:update',
+  CUSTOMERS_DELETE: 'customers:delete',
   CUSTOMERS_SEARCH: 'customers:search',
   CUSTOMERS_PURCHASE_HISTORY: 'customers:purchaseHistory',
 
@@ -56,6 +57,7 @@ export const IPC = {
   STAFF_GET: 'staff:get',
   STAFF_CREATE: 'staff:create',
   STAFF_UPDATE: 'staff:update',
+  STAFF_DELETE: 'staff:delete',
   STAFF_AUTH: 'staff:auth',
 
   // Shifts

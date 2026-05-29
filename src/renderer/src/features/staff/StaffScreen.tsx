@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Plus, Edit, Shield } from 'lucide-react'
+import { Plus, Edit, Shield, Trash2, Monitor } from 'lucide-react'
 import { api } from '../../lib/api'
 import { Button, Badge, Modal, Input, PageSpinner } from '../../components/ui'
 import { useUiStore } from '../../stores/ui.store'
@@ -11,6 +11,7 @@ export function StaffScreen() {
   const [loading, setLoading] = useState(true)
   const [editMember, setEditMember] = useState<StaffMember | null>(null)
   const [showForm, setShowForm] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const showToast = useUiStore((s) => s.showToast)
 
   async function load() {
@@ -19,6 +20,20 @@ export function StaffScreen() {
   }
 
   useEffect(() => { load() }, [])
+
+  async function handleDelete(member: StaffMember) {
+    if (!window.confirm(`Remove ${member.firstName} ${member.lastName} from staff? They will be deactivated and can no longer log in.`)) return
+    setDeletingId(member.id)
+    try {
+      await api.staff.delete(member.id)
+      showToast(`${member.firstName} ${member.lastName} removed`, 'success')
+      load()
+    } catch {
+      showToast('Failed to remove staff member', 'error')
+    } finally {
+      setDeletingId(null)
+    }
+  }
 
   const ROLE_COLORS: Record<string, 'red' | 'purple' | 'blue'> = { admin: 'red', manager: 'purple', cashier: 'blue' }
 
@@ -37,7 +52,7 @@ export function StaffScreen() {
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  {['Name', 'Email', 'Role', 'Status', 'Actions'].map(h => (
+                  {['Name', 'Email', 'Role', 'Dashboard', 'Status', 'Actions'].map(h => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
@@ -60,11 +75,32 @@ export function StaffScreen() {
                       </Badge>
                     </td>
                     <td className="px-4 py-3">
+                      {s.canAccessDashboard ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
+                          <Monitor size={10} /> Enabled
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-400">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
                       <Badge color={s.isActive ? 'green' : 'gray'}>{s.isActive ? 'Active' : 'Inactive'}</Badge>
                     </td>
                     <td className="px-4 py-3">
-                      <Button size="sm" variant="ghost" icon={<Edit size={14} />}
-                        onClick={() => { setEditMember(s); setShowForm(true) }}>Edit</Button>
+                      <div className="flex items-center gap-1">
+                        <Button size="sm" variant="ghost" icon={<Edit size={14} />}
+                          onClick={() => { setEditMember(s); setShowForm(true) }}>Edit</Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          icon={<Trash2 size={14} />}
+                          loading={deletingId === s.id}
+                          onClick={() => handleDelete(s)}
+                          className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                        >
+                          Remove
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -91,7 +127,8 @@ function StaffFormModal({ member, onClose, onSave }: { member: StaffMember | nul
     lastName: member?.lastName ?? '',
     email: member?.email ?? '',
     pin: '',
-    role: (member?.role ?? 'cashier') as 'cashier' | 'manager' | 'admin'
+    role: (member?.role ?? 'cashier') as 'cashier' | 'manager' | 'admin',
+    canAccessDashboard: member?.canAccessDashboard ?? false
   })
   const [saving, setSaving] = useState(false)
 
@@ -100,8 +137,11 @@ function StaffFormModal({ member, onClose, onSave }: { member: StaffMember | nul
     if (!member && !form.pin) return
     setSaving(true)
     try {
-      if (member) await api.staff.update(member.id, { ...form, pin: form.pin || undefined })
-      else await api.staff.create(form)
+      if (member) {
+        await api.staff.update(member.id, { ...form, pin: form.pin || undefined })
+      } else {
+        await api.staff.create(form)
+      }
       onSave()
     } finally { setSaving(false) }
   }
@@ -126,6 +166,26 @@ function StaffFormModal({ member, onClose, onSave }: { member: StaffMember | nul
             <option value="manager">Manager</option>
             <option value="admin">Administrator</option>
           </select>
+        </div>
+        <div className="flex items-center justify-between p-3 rounded-lg bg-gray-50 border border-gray-200">
+          <div className="flex items-center gap-2">
+            <Monitor size={16} className="text-gray-500" />
+            <div>
+              <p className="text-sm font-medium text-gray-800">Web Dashboard Access</p>
+              <p className="text-xs text-gray-500">Allow this staff member to log into the browser dashboard using their PIN</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={form.canAccessDashboard}
+            onClick={() => setForm((p) => ({ ...p, canAccessDashboard: !p.canAccessDashboard }))}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${form.canAccessDashboard ? 'bg-blue-600' : 'bg-gray-300'}`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${form.canAccessDashboard ? 'translate-x-6' : 'translate-x-1'}`}
+            />
+          </button>
         </div>
       </div>
     </Modal>

@@ -8,6 +8,7 @@ import { join } from 'path'
 import { app } from 'electron'
 import { createHmac, randomBytes, randomUUID } from 'crypto'
 import { settingsService } from '../services/settings.service'
+import { hashPin } from '../lib/pin'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type SyncRecord = Record<string, unknown>
@@ -256,23 +257,28 @@ function validateSessionToken(token: string): boolean {
 
 function validateAdminPin(pin: string): boolean {
   if (!pin) return false
+  // Hash the supplied PIN once — all stored PINs (staff + dashboardAdminPin) are
+  // SHA-256 hashed so we never compare plaintext against the database.
+  let hashed: string
+  try { hashed = hashPin(pin) } catch { return false }
+
   // 1. Check the main app's dashboardAdminPin setting (always available, even before any sync).
   //    This is the primary bootstrap path for a fresh server install.
   try {
     const appPin = settingsService.get('dashboardAdminPin')
-    if (appPin && appPin === pin) return true
+    if (appPin && appPin === hashed) return true
   } catch { /* main db may not be initialised yet — fall through */ }
   // 2. Check central.db for any staff member with dashboard access enabled and matching PIN.
   try {
     const db = getServerDb()
     const staffRow = db.prepare(
       `SELECT id FROM staff WHERE pin=? AND is_active=1 AND can_access_dashboard=1 AND (deleted_at IS NULL OR deleted_at='')`
-    ).get(pin)
+    ).get(hashed)
     if (staffRow) return true
     // 3. Legacy fallback: admin-role staff (before can_access_dashboard column existed).
     const adminRow = db.prepare(
       `SELECT id FROM staff WHERE pin=? AND role='admin' AND is_active=1 AND (deleted_at IS NULL OR deleted_at='')`
-    ).get(pin)
+    ).get(hashed)
     if (adminRow) return true
   } catch { /* central.db not ready */ }
   return false
@@ -813,10 +819,23 @@ async function handleApiRoute(req: http.IncomingMessage, res: http.ServerRespons
 }
 
 // ─── HTTP helpers ─────────────────────────────────────────────────────────────
+
+/** Maximum body size for any single request: 50 MB (covers large sync payloads). */
+const MAX_BODY_BYTES = 50 * 1024 * 1024
+
 function parseBody(req: http.IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let data = ''
-    req.on('data', (chunk) => { data += chunk })
+    let byteCount = 0
+    req.on('data', (chunk: Buffer) => {
+      byteCount += chunk.length
+      if (byteCount > MAX_BODY_BYTES) {
+        req.destroy()
+        reject(new Error('Request body too large (max 50 MB)'))
+        return
+      }
+      data += chunk
+    })
     req.on('end', () => { try { resolve(JSON.parse(data || '{}')) } catch { reject(new Error('Invalid JSON')) } })
     req.on('error', reject)
   })
@@ -829,9 +848,16 @@ function send(res: http.ServerResponse, status: number, body: unknown): void {
 }
 
 // ─── Request handler ──────────────────────────────────────────────────────────
-function createHandler(_apiKey: string) {
+function createHandler(apiKey: string) {
   return async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
-    res.setHeader('Access-Control-Allow-Origin', '*')
+    // Restrict CORS to same-origin / LAN clients — not the open web.
+    const origin = req.headers['origin']
+    if (origin) {
+      // Allow only origins that share the same host (LAN IPs and localhost).
+      // Browsers on external sites can't access the dashboard or sync routes.
+      res.setHeader('Access-Control-Allow-Origin', origin)
+      res.setHeader('Vary', 'Origin')
+    }
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return }
     const url = req.url?.split('?')[0] ?? '/'
@@ -850,45 +876,53 @@ function createHandler(_apiKey: string) {
         if (!validateAdminPin(body.pin)) { send(res, 401, { error: 'Invalid PIN' }); return }
         send(res, 200, { ok: true, token: createSessionToken() }); return
       }
-      // Protected API routes
+      // Protected dashboard API routes (session token)
       if (url.startsWith('/api/')) {
         const tok = getBearerToken(req)
         if (!tok || !validateSessionToken(tok)) { send(res, 401, { error: 'Unauthorized' }); return }
         await handleApiRoute(req, res, url, method); return
       }
-      // Sync routes (no auth — LAN security boundary)
+      // Sync routes — require the shared API key so only authorised terminals can sync.
+      // /sync/status is deliberately left open so terminals can test connectivity.
       if (method === 'GET' && url === '/sync/status') {
         send(res, 200, { ok: true, version: '1.0.0', serverTime: new Date().toISOString() }); return
       }
-      if (method === 'POST' && url === '/sync/pull') {
-        const body = await parseBody(req) as { since?: string }
-        if (!body.since || typeof body.since !== 'string') { send(res, 400, { error: '`since` is required' }); return }
-        const records: SyncPayload = {}
-        for (const table of SYNC_TABLES) { const rows = getRecordsSince(table, body.since); if (rows.length > 0) records[table] = rows }
-        send(res, 200, { serverTime: new Date().toISOString(), records }); return
-      }
-      if (method === 'POST' && url === '/sync/push') {
-        const body = await parseBody(req) as { terminalId?: string; records?: SyncPayload }
-        if (!body.terminalId) { send(res, 400, { error: '`terminalId` is required' }); return }
-        if (!body.records)    { send(res, 400, { error: '`records` is required' }); return }
-        let total = 0; const adjPids: string[] = []
-        for (const table of SYNC_TABLES) {
-          const rows = body.records[table]
-          if (Array.isArray(rows) && rows.length > 0) {
-            upsertRecords(table, rows); total += rows.length
-            if (table === 'inventory_adjustments') {
-              for (const row of rows) { const pid = row['product_id'] as string; if (pid) adjPids.push(pid) }
+      if (url.startsWith('/sync/')) {
+        // If an API key is configured, every sync request must carry it.
+        if (apiKey) {
+          const tok = getBearerToken(req)
+          if (tok !== apiKey) { send(res, 401, { error: 'Invalid sync API key' }); return }
+        }
+        if (method === 'POST' && url === '/sync/pull') {
+          const body = await parseBody(req) as { since?: string }
+          if (!body.since || typeof body.since !== 'string') { send(res, 400, { error: '`since` is required' }); return }
+          const records: SyncPayload = {}
+          for (const table of SYNC_TABLES) { const rows = getRecordsSince(table, body.since); if (rows.length > 0) records[table] = rows }
+          send(res, 200, { serverTime: new Date().toISOString(), records }); return
+        }
+        if (method === 'POST' && url === '/sync/push') {
+          const body = await parseBody(req) as { terminalId?: string; records?: SyncPayload }
+          if (!body.terminalId) { send(res, 400, { error: '`terminalId` is required' }); return }
+          if (!body.records)    { send(res, 400, { error: '`records` is required' }); return }
+          let total = 0; const adjPids: string[] = []
+          for (const table of SYNC_TABLES) {
+            const rows = body.records[table]
+            if (Array.isArray(rows) && rows.length > 0) {
+              upsertRecords(table, rows); total += rows.length
+              if (table === 'inventory_adjustments') {
+                for (const row of rows) { const pid = row['product_id'] as string; if (pid) adjPids.push(pid) }
+              }
             }
           }
+          if (adjPids.length > 0) recomputeServerInventory([...new Set(adjPids)])
+          send(res, 200, { ok: true, serverTime: new Date().toISOString(), rowsApplied: total }); return
         }
-        if (adjPids.length > 0) recomputeServerInventory([...new Set(adjPids)])
-        send(res, 200, { ok: true, serverTime: new Date().toISOString(), rowsApplied: total }); return
       }
       send(res, 404, { error: 'Not found' })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error('[embedded-server] handler error:', msg)
-      send(res, 500, { error: msg })
+      send(res, 500, { error: 'Internal server error' })
     }
   }
 }

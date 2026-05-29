@@ -151,7 +151,16 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.REPORTS_INVENTORY_VALUATION, () => reportService.inventoryValuation())
 
   // Settings
-  ipcMain.handle(IPC.SETTINGS_GET, (_e, key: string) => settingsService.get(key as never))
+  // SECURITY: sensitive keys (tokens, passwords, hashed PINs) are never returned to the
+  // renderer — the renderer has no legitimate need to read back a stored password.
+  const RENDERER_BLOCKED_SETTINGS = new Set([
+    'emailPassword', 'qboAccessToken', 'qboRefreshToken', 'qboTokenExpiry',
+    'pinSalt', 'dashboardAdminPin', 'embeddedServerApiKey', 'syncApiKey'
+  ])
+  ipcMain.handle(IPC.SETTINGS_GET, (_e, key: string) => {
+    if (RENDERER_BLOCKED_SETTINGS.has(key)) return ''
+    return settingsService.get(key as never)
+  })
   ipcMain.handle(IPC.SETTINGS_SET, (_e, key: string, value: string) =>
     settingsService.set(key, value)
   )

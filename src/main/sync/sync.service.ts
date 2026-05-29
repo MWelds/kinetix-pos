@@ -238,6 +238,12 @@ function applyPulledRecords(records: SyncPayload): void {
   })
 
   for (const [table, rows] of Object.entries(records)) {
+    // Reject any table name not in the known-good allowlist to prevent SQL injection
+    // from a compromised or malicious sync server.
+    if (!SYNC_TABLES.includes(table as SyncTable)) {
+      console.warn(`[sync] applyPulledRecords: ignoring unknown table "${table}"`)
+      continue
+    }
     if (Array.isArray(rows) && rows.length > 0) {
       applyTable(table, rows)
     }

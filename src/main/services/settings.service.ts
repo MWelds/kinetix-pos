@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm'
 import { getDatabase } from '../database/connection'
 import * as schema from '../database/schema'
+import { hashPin } from '../lib/pin'
 
 export const DEFAULT_SETTINGS = {
   storeName: 'My Store',
@@ -59,11 +60,17 @@ export const settingsService = {
     if (Buffer.byteLength(value, 'utf8') > MAX_VALUE_BYTES) {
       throw new Error(`Setting '${key}' exceeds the maximum allowed size (2 MB)`)
     }
+    // Hash the dashboard admin PIN before storage so it is never persisted in plaintext.
+    // An empty string means "no PIN set" — don't hash that.
+    let storedValue = value
+    if (key === 'dashboardAdminPin' && value.length > 0) {
+      storedValue = hashPin(value)
+    }
     const db = getDatabase()
     const now = new Date().toISOString()
     db.insert(schema.settings)
-      .values({ key, value, updatedAt: now })
-      .onConflictDoUpdate({ target: schema.settings.key, set: { value, updatedAt: now } })
+      .values({ key, value: storedValue, updatedAt: now })
+      .onConflictDoUpdate({ target: schema.settings.key, set: { value: storedValue, updatedAt: now } })
       .run()
   },
 

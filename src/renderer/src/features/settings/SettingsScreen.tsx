@@ -375,7 +375,7 @@ function SyncServerSection({
     try {
       const result = await api.sync.testConnection(
         settings.syncUrl?.trim() ?? '',
-        settings.syncApiKey?.trim() ?? ''
+        ''
       )
       showToast(result.message, result.ok ? 'success' : 'error')
     } finally {
@@ -434,13 +434,6 @@ function SyncServerSection({
           value={settings.syncUrl ?? ''}
           onChange={field('syncUrl')}
           placeholder="http://192.168.1.100:3030"
-        />
-        <Input
-          label="API Key"
-          type="password"
-          value={settings.syncApiKey ?? ''}
-          onChange={field('syncApiKey')}
-          placeholder="Leave blank if API key is not set on the server"
         />
         <div className="flex items-center gap-2">
           <label className="text-sm font-medium text-gray-700 w-32">Sync interval</label>

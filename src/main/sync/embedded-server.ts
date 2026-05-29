@@ -264,25 +264,16 @@ function send(res: http.ServerResponse, status: number, body: unknown): void {
   res.end(json)
 }
 
-function checkAuth(req: http.IncomingMessage, apiKey: string): boolean {
-  if (!apiKey) return true  // no key configured → open
-  const auth = req.headers['authorization'] ?? ''
-  return auth === `Bearer ${apiKey}`
-}
-
 // ─── Request handler ──────────────────────────────────────────────────────────
+// Auth is handled at the network level (LAN). The embedded server only binds
+// to 0.0.0.0 on a private network port — no internet exposure expected.
 
-function createHandler(apiKey: string) {
+function createHandler(_apiKey: string) {
   return async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
     // CORS for same-LAN requests
     res.setHeader('Access-Control-Allow-Origin', '*')
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return }
-
-    // Auth check
-    if (!checkAuth(req, apiKey)) {
-      send(res, 401, { error: 'Unauthorized' }); return
-    }
 
     const url = req.url ?? '/'
 

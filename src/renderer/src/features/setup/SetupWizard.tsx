@@ -4,16 +4,6 @@ import { api } from '../../lib/api'
 
 type NodeMode = 'standalone' | 'server' | 'terminal'
 
-interface SetupState {
-  setupComplete: string
-  nodeMode: string
-  embeddedServerPort: string
-  embeddedServerApiKey: string
-  terminalId: string
-  syncUrl: string
-  syncApiKey: string
-}
-
 interface Props {
   onComplete: () => void
 }
@@ -59,16 +49,13 @@ function CopyButton({ value }: { value: string }) {
 export function SetupWizard({ onComplete }: Props) {
   const [step, setStep] = useState(0)
   const [mode, setMode] = useState<NodeMode | null>(null)
-  const [initialData, setInitialData] = useState<SetupState | null>(null)
 
   // Server mode fields
   const [serverPort, setServerPort] = useState(3030)
-  const [serverApiKey, setServerApiKey] = useState('')
   const [localIp, setLocalIp] = useState('...')
 
   // Terminal mode fields
   const [terminalUrl, setTerminalUrl] = useState('')
-  const [terminalApiKey, setTerminalApiKey] = useState('')
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle')
   const [testMessage, setTestMessage] = useState('')
 
@@ -77,29 +64,18 @@ export function SetupWizard({ onComplete }: Props) {
 
   useEffect(() => {
     api.setup.get().then((data) => {
-      setInitialData(data)
-      setServerApiKey(data.embeddedServerApiKey || generateKey())
       setServerPort(parseInt(data.embeddedServerPort || '3030', 10))
       if (data.syncUrl) setTerminalUrl(data.syncUrl)
-      if (data.syncApiKey) setTerminalApiKey(data.syncApiKey)
-    }).catch(() => {
-      setServerApiKey(generateKey())
-    })
+    }).catch(() => {})
 
-    // Get local IP for display
     api.setup.embeddedServerStatus().then((s) => setLocalIp(s.ip)).catch(() => {})
   }, [])
-
-  function generateKey() {
-    const chars = 'abcdef0123456789'
-    return Array.from({ length: 48 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
-  }
 
   async function handleTestConnection() {
     setTestStatus('testing')
     setTestMessage('')
     try {
-      const result = await api.sync.testConnection(terminalUrl, terminalApiKey)
+      const result = await api.sync.testConnection(terminalUrl, '')
       setTestStatus(result.ok ? 'ok' : 'error')
       setTestMessage(result.message)
     } catch {
@@ -116,9 +92,9 @@ export function SetupWizard({ onComplete }: Props) {
       await api.setup.complete({
         nodeMode: mode,
         embeddedServerPort: serverPort,
-        embeddedServerApiKey: serverApiKey,
+        embeddedServerApiKey: '',
         syncUrl: terminalUrl,
-        syncApiKey: terminalApiKey,
+        syncApiKey: '',
         syncIntervalSeconds: 30
       })
       onComplete()
@@ -246,21 +222,7 @@ export function SetupWizard({ onComplete }: Props) {
                   onChange={(e) => setServerPort(parseInt(e.target.value) || 3030)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-                <p className="text-xs text-gray-400 mt-1">Make sure this port is not blocked by your firewall.</p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">API Key</label>
-                <div className="flex items-center border border-gray-300 rounded-lg overflow-hidden">
-                  <input
-                    type="text"
-                    value={serverApiKey}
-                    onChange={(e) => setServerApiKey(e.target.value)}
-                    className="flex-1 px-3 py-2 text-sm font-mono focus:outline-none"
-                  />
-                  <CopyButton value={serverApiKey} />
-                </div>
-                <p className="text-xs text-gray-400 mt-1">Share this key with each Terminal machine you connect.</p>
+                <p className="text-xs text-gray-400 mt-1">Make sure this port is open in your firewall.</p>
               </div>
 
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
@@ -293,17 +255,6 @@ export function SetupWizard({ onComplete }: Props) {
                   value={terminalUrl}
                   onChange={(e) => { setTerminalUrl(e.target.value); setTestStatus('idle') }}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">API Key</label>
-                <input
-                  type="text"
-                  placeholder="Paste the API key from the Server machine"
-                  value={terminalApiKey}
-                  onChange={(e) => { setTerminalApiKey(e.target.value); setTestStatus('idle') }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 

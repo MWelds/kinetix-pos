@@ -111,6 +111,7 @@ export const IPC = {
   // App
   APP_GET_VERSION: 'app:getVersion',
   APP_OPEN_CASH_DRAWER: 'app:openCashDrawer',
+  APP_GET_LOCAL_IPS: 'app:getLocalIps',
 
   // QuickBooks Online sync
   QBO_STATUS: 'qbo:status',

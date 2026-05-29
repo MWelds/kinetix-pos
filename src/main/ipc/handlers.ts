@@ -1,7 +1,7 @@
 import { ipcMain, IpcMainInvokeEvent, BrowserWindow, dialog, app, WebContents } from 'electron'
 import { readFileSync, writeFileSync, unlinkSync, mkdirSync, copyFileSync, existsSync } from 'fs'
 import { extname, join } from 'path'
-import { tmpdir } from 'os'
+import { tmpdir, networkInterfaces } from 'os'
 import { randomBytes } from 'crypto'
 import {
   openDisplayWindow,
@@ -299,6 +299,19 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.APP_OPEN_CASH_DRAWER, () => {
     // TODO: send ESC/POS pulse command to cash drawer port
     return { success: true }
+  })
+  /** Returns all non-loopback IPv4 addresses on this machine for the server URL helper. */
+  ipcMain.handle(IPC.APP_GET_LOCAL_IPS, (): string[] => {
+    const nets = networkInterfaces()
+    const ips: string[] = []
+    for (const list of Object.values(nets)) {
+      for (const iface of list ?? []) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+          ips.push(iface.address)
+        }
+      }
+    }
+    return ips
   })
 
   // QuickBooks Online

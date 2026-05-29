@@ -348,11 +348,14 @@ function SyncServerSection({
   const [syncState, setSyncState] = useState<{ status: string; lastSyncAt: string | null; error: string | null } | null>(null)
   const [testing, setTesting] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [localIps, setLocalIps] = useState<string[]>([])
   const enabled = settings.syncEnabled === 'true'
 
   useEffect(() => {
     api.sync.getState().then(setSyncState).catch(() => {})
     const unsub = api.sync.onStateChange((s: unknown) => setSyncState(s as typeof syncState))
+    // Fetch this machine's LAN IPs for the auto-detect helper
+    api.app.getLocalIps().then(setLocalIps).catch(() => {})
     return unsub
   }, [])
 
@@ -429,6 +432,40 @@ function SyncServerSection({
       </p>
 
       <div className="space-y-4">
+        {/* Auto-detected IPs */}
+        {localIps.length > 0 && (
+          <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
+            <p className="text-xs font-semibold text-blue-700 mb-2 flex items-center gap-1.5">
+              <Wifi size={12} /> This machine&apos;s detected IP{localIps.length > 1 ? 's' : ''}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {localIps.map((ip) => {
+                const port = settings.embeddedServerPort || '3030'
+                const url = `http://${ip}:${port}`
+                const active = settings.syncUrl?.trim() === url
+                return (
+                  <button
+                    key={ip}
+                    type="button"
+                    onClick={() => field('syncUrl')(url)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-semibold border transition-all ${
+                      active
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                        : 'bg-white text-blue-700 border-blue-200 hover:border-blue-400 hover:bg-blue-50'
+                    }`}
+                  >
+                    {ip}
+                    {active && <span className="text-blue-100">✓</span>}
+                  </button>
+                )
+              })}
+            </div>
+            <p className="text-xs text-blue-500 mt-2">
+              Click an IP to use it as the Server URL, or type one manually below.
+            </p>
+          </div>
+        )}
+
         <Input
           label="Server URL"
           value={settings.syncUrl ?? ''}

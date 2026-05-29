@@ -194,7 +194,8 @@ export const api = {
 
   app: {
     getVersion: (): Promise<string> => bridge.app.getVersion(),
-    openCashDrawer: (): Promise<{ success: boolean }> => bridge.app.openCashDrawer()
+    openCashDrawer: (): Promise<{ success: boolean }> => bridge.app.openCashDrawer(),
+    getLocalIps: (): Promise<string[]> => bridge.app.getLocalIps()
   },
 
   qbo: {

@@ -151,7 +151,8 @@ const api = {
   // App
   app: {
     getVersion: () => ipcRenderer.invoke(IPC.APP_GET_VERSION),
-    openCashDrawer: () => ipcRenderer.invoke(IPC.APP_OPEN_CASH_DRAWER)
+    openCashDrawer: () => ipcRenderer.invoke(IPC.APP_OPEN_CASH_DRAWER),
+    getLocalIps: () => ipcRenderer.invoke(IPC.APP_GET_LOCAL_IPS)
   },
 
   // QuickBooks Online

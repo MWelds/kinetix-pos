@@ -339,7 +339,7 @@ export function PriceTagModal({ product, onClose }: PriceTagModalProps) {
     setPrinting(true)
     try {
       const html   = buildTagsHtml(product, barcode, qty, paper, fmtRaw)
-      const result = await api.invoice.print(html)
+      const result = await api.tag.print(html)
       if (result.success) {
         showToast(`${qty} price tag${qty > 1 ? 's' : ''} sent to printer`, 'success')
         onClose()

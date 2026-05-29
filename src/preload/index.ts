@@ -116,6 +116,16 @@ const api = {
     print: (html: string) => ipcRenderer.invoke(IPC.INVOICE_PRINT, html)
   },
 
+  // Price tags (routes to the tag printer, not the invoice printer)
+  tag: {
+    print: (html: string) => ipcRenderer.invoke(IPC.TAG_PRINT, html)
+  },
+
+  // Hardware / Printers
+  printers: {
+    list: () => ipcRenderer.invoke(IPC.PRINTERS_LIST)
+  },
+
   // Display (customer-facing screen)
   display: {
     open: () => ipcRenderer.invoke(IPC.DISPLAY_OPEN),

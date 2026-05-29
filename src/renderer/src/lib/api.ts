@@ -147,6 +147,15 @@ export const api = {
     print: (html: string): Promise<{ success: boolean }> => bridge.invoice.print(html)
   },
 
+  tag: {
+    print: (html: string): Promise<{ success: boolean }> => bridge.tag.print(html)
+  },
+
+  printers: {
+    list: (): Promise<Array<{ name: string; displayName: string; isDefault: boolean }>> =>
+      bridge.printers.list()
+  },
+
   email: {
     sendReceipt: (to: string, html: string, orderNumber: string): Promise<{ success: boolean; error?: string }> =>
       bridge.email.sendReceipt(to, html, orderNumber),

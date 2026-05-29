@@ -125,6 +125,12 @@ export const IPC = {
   // Invoice printing
   INVOICE_PRINT: 'invoice:print',
 
+  // Price tag printing (separate channel so it routes to the tag printer)
+  TAG_PRINT: 'tag:print',
+
+  // Hardware / Printers
+  PRINTERS_LIST: 'printers:list',
+
   // CSV bulk import / export
   CSV_IMPORT_PRODUCTS: 'csv:importProducts',
   CSV_EXPORT_PRODUCTS: 'csv:exportProducts',

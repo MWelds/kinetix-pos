@@ -159,64 +159,81 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.AUDIT_LOG, (_e, input) => staffService.logAction(input))
   ipcMain.handle(IPC.AUDIT_LIST, (_e, limit?: number) => staffService.listAuditLog(limit))
 
+  // ─── Shared print helper ───────────────────────────────────────────────────
+  /**
+   * Opens a hidden BrowserWindow, loads HTML from a temp file, then calls
+   * webContents.print(). When `printerName` is set the job goes silently to
+   * that printer; otherwise the Windows print dialog is shown.
+   */
+  async function printHtml(
+    html: string,
+    prefix: string,
+    printerName: string,
+    color: boolean
+  ): Promise<{ success: boolean; error?: string }> {
+    if (typeof html !== 'string' || Buffer.byteLength(html, 'utf8') > 5_000_000) {
+      return { success: false, error: 'Print payload too large (max 5 MB)' }
+    }
+    const tmpFile = join(tmpdir(), `${prefix}-${randomBytes(8).toString('hex')}.html`)
+    try {
+      writeFileSync(tmpFile, html, 'utf8')
+    } catch {
+      return { success: false, error: 'Failed to write temp file for printing' }
+    }
+    return new Promise<{ success: boolean }>((resolve) => {
+      const win = new BrowserWindow({
+        show: false,
+        webPreferences: { nodeIntegration: false, contextIsolation: true }
+      })
+      win.loadFile(tmpFile)
+      win.webContents.once('did-finish-load', () => {
+        const opts: Electron.WebContentsPrintOptions = {
+          silent: !!printerName,   // silent when a specific printer is chosen
+          printBackground: true,
+          color,
+          ...(printerName ? { deviceName: printerName } : {})
+        }
+        win.webContents.print(opts, (success) => {
+          win.destroy()
+          try { unlinkSync(tmpFile) } catch { /* ignore cleanup errors */ }
+          resolve({ success })
+        })
+      })
+    })
+  }
+
   // Receipt
   ipcMain.handle(IPC.RECEIPT_PRINT, async (_e, html: string) => {
-    if (typeof html !== 'string' || Buffer.byteLength(html, 'utf8') > 5_000_000) {
-      return { success: false, error: 'Receipt HTML payload too large (max 5 MB)' }
-    }
-    const tmpFile = join(tmpdir(), `receipt-${randomBytes(8).toString('hex')}.html`)
-    try {
-      writeFileSync(tmpFile, html, 'utf8')
-    } catch {
-      return { success: false, error: 'Failed to write temp file for printing' }
-    }
-    return new Promise<{ success: boolean }>((resolve) => {
-      const win = new BrowserWindow({
-        show: false,
-        webPreferences: { nodeIntegration: false, contextIsolation: true }
-      })
-      win.loadFile(tmpFile)
-      win.webContents.once('did-finish-load', () => {
-        win.webContents.print(
-          { silent: false, printBackground: true, color: false },
-          (success) => {
-            win.destroy()
-            try { unlinkSync(tmpFile) } catch { /* ignore cleanup errors */ }
-            resolve({ success })
-          }
-        )
-      })
-    })
+    const printerName = settingsService.get('receiptPrinterName')?.trim() ?? ''
+    return printHtml(html, 'receipt', printerName, false)
   })
 
-  // Invoice print
+  // Invoice
   ipcMain.handle(IPC.INVOICE_PRINT, async (_e, html: string) => {
-    if (typeof html !== 'string' || Buffer.byteLength(html, 'utf8') > 5_000_000) {
-      return { success: false, error: 'Invoice HTML payload too large (max 5 MB)' }
-    }
-    const tmpFile = join(tmpdir(), `invoice-${randomBytes(8).toString('hex')}.html`)
+    const printerName = settingsService.get('invoicePrinterName')?.trim() ?? ''
+    return printHtml(html, 'invoice', printerName, true)
+  })
+
+  // Price tag (separate channel → separate printer setting)
+  ipcMain.handle(IPC.TAG_PRINT, async (_e, html: string) => {
+    const printerName = settingsService.get('tagPrinterName')?.trim() ?? ''
+    return printHtml(html, 'tag', printerName, false)
+  })
+
+  // List available Windows printers
+  ipcMain.handle(IPC.PRINTERS_LIST, async () => {
     try {
-      writeFileSync(tmpFile, html, 'utf8')
+      const wins = BrowserWindow.getAllWindows()
+      if (!wins.length) return []
+      const printers = await wins[0].webContents.getPrintersAsync()
+      return printers.map((p) => ({
+        name: p.name,
+        displayName: p.displayName || p.name,
+        isDefault: p.isDefault
+      }))
     } catch {
-      return { success: false, error: 'Failed to write temp file for printing' }
+      return []
     }
-    return new Promise<{ success: boolean }>((resolve) => {
-      const win = new BrowserWindow({
-        show: false,
-        webPreferences: { nodeIntegration: false, contextIsolation: true }
-      })
-      win.loadFile(tmpFile)
-      win.webContents.once('did-finish-load', () => {
-        win.webContents.print(
-          { silent: false, printBackground: true, color: true },
-          (success) => {
-            win.destroy()
-            try { unlinkSync(tmpFile) } catch { /* ignore cleanup errors */ }
-            resolve({ success })
-          }
-        )
-      })
-    })
   })
 
   // Display (customer-facing screen)

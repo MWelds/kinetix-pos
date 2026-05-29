@@ -476,6 +476,154 @@ function SyncServerSection({
   )
 }
 
+// ─── Hardware / Printers Section ─────────────────────────────────────────────
+
+interface PrinterInfo { name: string; displayName: string; isDefault: boolean }
+
+function PrinterSection({
+  settings,
+  onSave,
+  showToast
+}: {
+  settings: Record<string, string>
+  onSave: (patches: Record<string, string>) => Promise<void>
+  showToast: (msg: string, type?: string) => void
+}) {
+  const [printers, setPrinters] = useState<PrinterInfo[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const [receiptPrinter, setReceiptPrinter] = useState(settings.receiptPrinterName ?? '')
+  const [invoicePrinter, setInvoicePrinter] = useState(settings.invoicePrinterName ?? '')
+  const [tagPrinter, setTagPrinter] = useState(settings.tagPrinterName ?? '')
+
+  useEffect(() => {
+    loadPrinters()
+  }, [])
+
+  // Keep local state in sync if parent settings reload
+  useEffect(() => {
+    setReceiptPrinter(settings.receiptPrinterName ?? '')
+    setInvoicePrinter(settings.invoicePrinterName ?? '')
+    setTagPrinter(settings.tagPrinterName ?? '')
+  }, [settings.receiptPrinterName, settings.invoicePrinterName, settings.tagPrinterName])
+
+  async function loadPrinters() {
+    setLoading(true)
+    try {
+      const list = await api.printers.list()
+      setPrinters(list)
+    } catch {
+      setPrinters([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleSave() {
+    try {
+      await onSave({
+        receiptPrinterName: receiptPrinter,
+        invoicePrinterName: invoicePrinter,
+        tagPrinterName: tagPrinter,
+      })
+      showToast('Printer settings saved', 'success')
+    } catch {
+      showToast('Failed to save printer settings', 'error')
+    }
+  }
+
+  const DIALOG_OPTION = '-- System print dialog --'
+
+  function PrinterSelect({
+    label,
+    description,
+    value,
+    onChange
+  }: {
+    label: string
+    description: string
+    value: string
+    onChange: (v: string) => void
+  }) {
+    return (
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-0.5">{label}</label>
+        <p className="text-xs text-gray-400 mb-1.5">{description}</p>
+        <div className="flex items-center gap-2">
+          <select
+            className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+            value={value}
+            onChange={(e) => onChange(e.target.value === DIALOG_OPTION ? '' : e.target.value)}
+            disabled={loading}
+          >
+            <option value="">{loading ? 'Loading printers…' : DIALOG_OPTION}</option>
+            {printers.map((p) => (
+              <option key={p.name} value={p.name}>
+                {p.displayName}{p.isDefault ? ' (default)' : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <section className="bg-white rounded-xl border border-gray-200 p-6">
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="text-base font-semibold text-gray-900">Hardware / Printers</h2>
+        <button
+          onClick={loadPrinters}
+          className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-blue-600 transition-colors px-2 py-1 rounded-lg hover:bg-blue-50"
+          title="Refresh printer list"
+        >
+          <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+          Refresh
+        </button>
+      </div>
+      <p className="text-xs text-gray-500 mb-5">
+        Choose which Windows printer handles each document type. When no printer is selected the
+        Windows print dialog opens and you choose manually each time.
+      </p>
+
+      <div className="space-y-5">
+        <PrinterSelect
+          label="Receipt Printer"
+          description="Used when printing receipts and end-of-day reports"
+          value={receiptPrinter}
+          onChange={setReceiptPrinter}
+        />
+        <PrinterSelect
+          label="Invoice Printer"
+          description="Used when printing A4 invoices from the Orders screen"
+          value={invoicePrinter}
+          onChange={setInvoicePrinter}
+        />
+        <PrinterSelect
+          label="Price Tag Printer"
+          description="Used when printing product price tags from the Products screen"
+          value={tagPrinter}
+          onChange={setTagPrinter}
+        />
+      </div>
+
+      <div className="mt-5 pt-4 border-t border-gray-100">
+        <button
+          onClick={handleSave}
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
+        >
+          Save Printer Settings
+        </button>
+        {(receiptPrinter || invoicePrinter || tagPrinter) && (
+          <p className="mt-2 text-xs text-gray-400">
+            Jobs will print silently to the selected printer — no dialog will appear.
+          </p>
+        )}
+      </div>
+    </section>
+  )
+}
+
 export function SettingsScreen() {
   const [settings, setSettings] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -771,6 +919,12 @@ export function SettingsScreen() {
     } finally {
       setSaving(false)
     }
+  }
+
+  /** Save a specific set of key/value pairs immediately (used by sub-sections with their own Save button). */
+  async function savePatches(patches: Record<string, string>) {
+    await Promise.all(Object.entries(patches).map(([k, v]) => api.settings.set(k, v)))
+    setSettings((s) => ({ ...s, ...patches }))
   }
 
   function field(key: string) {
@@ -1270,7 +1424,6 @@ export function SettingsScreen() {
               <p className="text-sm font-semibold text-gray-700 mb-3">Header &amp; Footer Content</p>
               <div className="space-y-3">
                 <Input label="Header Tagline (optional)" value={settings.invoiceHeaderMessage ?? ''} onChange={field('invoiceHeaderMessage')} placeholder="e.g. Your trusted local supplier" />
-                <Input label="Invoice Printer Port (leave blank to use system print dialog)" value={settings.invoicePrinterPort ?? ''} onChange={field('invoicePrinterPort')} placeholder="Leave blank for system print dialog" />
                 <Input label="Footer / Payment Terms" value={settings.invoiceFooterText ?? ''} onChange={field('invoiceFooterText')} placeholder="Payment due on receipt. Thank you!" />
               </div>
             </div>
@@ -1303,14 +1456,11 @@ export function SettingsScreen() {
           </div>
         </section>
 
-        <section className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-base font-semibold text-gray-900 mb-4">Receipts</h2>
-          <div className="space-y-4">
-            <Input label="Receipt Footer Text" value={settings.receiptFooter ?? ''} onChange={field('receiptFooter')} />
-            <Input label="Receipt Printer Port (e.g. COM3)" value={settings.receiptPrinterPort ?? ''} onChange={field('receiptPrinterPort')} />
-            <Input label="Cash Drawer Port (e.g. COM4)" value={settings.cashDrawerPort ?? ''} onChange={field('cashDrawerPort')} />
-          </div>
-        </section>
+        <PrinterSection
+          settings={settings}
+          onSave={savePatches}
+          showToast={showToast}
+        />
 
         {/* Loyalty */}
         <section className="bg-white rounded-xl border border-gray-200 p-6">

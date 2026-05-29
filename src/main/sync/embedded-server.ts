@@ -239,8 +239,24 @@ function upsertRecords(table: SyncTable, records: SyncRecord[]): void {
     INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders})
     ON CONFLICT(id) DO UPDATE SET ${setClauses}
   `)
+
+  // Wrap each record individually so a UNIQUE constraint on a secondary column
+  // (e.g. products.sku when two terminals independently created the same SKU)
+  // skips that one record without aborting the entire batch.
   const upsertMany = db.transaction((rows: SyncRecord[]) => {
-    for (const row of rows) stmt.run(cols.map((c) => row[c]))
+    for (const row of rows) {
+      try {
+        stmt.run(cols.map((c) => row[c]))
+      } catch (err) {
+        const msg = (err as Error).message ?? ''
+        // Only swallow secondary UNIQUE constraint violations; re-throw everything else
+        if (msg.includes('UNIQUE constraint failed') && !msg.includes(`${table}.id`)) {
+          console.warn(`[embedded-server] skipping ${table} record (secondary unique conflict): ${msg}`)
+        } else {
+          throw err
+        }
+      }
+    }
   })
   upsertMany(records)
 }

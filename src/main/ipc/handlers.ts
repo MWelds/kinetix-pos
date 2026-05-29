@@ -446,12 +446,13 @@ export function registerIpcHandlers(): void {
       const apiKey = input.embeddedServerApiKey ?? ''
       save('embeddedServerPort', String(port))
       save('embeddedServerApiKey', apiKey)
-      save('syncEnabled', 'true')
-      save('syncUrl', `http://localhost:${port}`)
-      save('syncApiKey', apiKey)
-      save('syncIntervalSeconds', String(input.syncIntervalSeconds ?? 30))
+      // Server hosts data — it does NOT sync to itself.
+      // Clear any stale terminal-sync settings so initSync() stays disabled.
+      save('syncEnabled', 'false')
+      save('syncUrl', '')
+      save('syncApiKey', '')
       await startEmbeddedServer(port, apiKey)
-      startSyncLoop(input.syncIntervalSeconds ?? 30)
+      // No sync loop — terminals push/pull TO this server
 
     } else if (input.nodeMode === 'terminal') {
       save('syncEnabled', 'true')

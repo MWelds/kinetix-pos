@@ -194,6 +194,7 @@ export function OrdersScreen() {
 <html><head><meta charset="utf-8"><title>Receipt #${order.orderNumber}</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
+  @page{size:auto;margin:0}
   body{font-family:'Courier New',monospace;font-size:12px;width:300px;margin:0 auto;padding:12px}
   h1{font-size:16px;text-align:center;margin-bottom:4px}
   .center{text-align:center} .divider{border-top:1px dashed #000;margin:8px 0}
@@ -201,7 +202,7 @@ export function OrdersScreen() {
   .total-row td{font-weight:bold;border-top:1px solid #000;padding-top:4px}
   .meta{font-size:11px;color:#555} .footer{text-align:center;margin-top:12px;font-size:11px}
   .change{color:#059669}
-  @media print{body{width:100%}}
+  @media print{body{width:100%;padding:6px}}
 </style></head><body>
   ${logoHtml}
   <h1>${esc(storeName)}</h1>
@@ -240,6 +241,7 @@ export function OrdersScreen() {
       return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Receipt #${order.orderNumber}</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
+  @page{size:auto;margin:0}
   body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;width:380px;margin:0 auto;background:#fff}
   .header{background:#1e293b;color:#fff;padding:20px 24px;text-align:center}
   .header h1{font-size:20px;font-weight:800}
@@ -255,7 +257,7 @@ export function OrdersScreen() {
   .payment-section{background:#f8fafc;border-radius:8px;padding:12px 16px;margin-top:16px}
   .payment-row{display:flex;justify-content:space-between;font-size:13px;color:#475569;padding:3px 0}
   .footer{text-align:center;padding:20px 24px;font-size:12px;color:#94a3b8;border-top:1px solid #e2e8f0;margin-top:16px}
-  @media print{body{width:100%}}
+  @media print{body{width:100%;margin:0}}
 </style></head><body>
   <div class="header">
     ${cfg.showLogo && cfg.logoBase64 ? `<img src="${cfg.logoBase64}" style="max-height:50px;max-width:180px;object-fit:contain;margin-bottom:8px;display:block;margin-left:auto;margin-right:auto" alt="Logo"/>` : ''}
@@ -286,9 +288,10 @@ export function OrdersScreen() {
     // ── Minimal template ──────────────────────────────────────────────────────
     if (cfg.template === 'minimal') {
       return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+      @page{size:auto;margin:0}
       body{font-family:'Courier New',monospace;font-size:11px;width:260px;margin:0 auto;padding:8px}
       pre{white-space:pre-wrap;margin:0}
-      @media print{body{width:100%}}
+      @media print{body{width:100%;padding:4px}}
     </style></head><body>${logoHtml}<pre>${esc(storeName)}
 REPRINT #${order.orderNumber} ${new Date(order.createdAt).toLocaleDateString()}
 ${'='.repeat(32)}

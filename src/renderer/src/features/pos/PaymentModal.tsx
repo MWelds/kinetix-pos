@@ -142,6 +142,7 @@ function buildReceiptHtml(snap: ReceiptSnapshot, storeName: string, cfg?: Receip
 <html><head><meta charset="utf-8"><title>Receipt #${snap.orderNumber}</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
+  @page{size:auto;margin:0}
   body{font-family:${fontStack};font-size:12px;width:300px;margin:0 auto;padding:12px}
   h1{font-size:16px;text-align:center;margin-bottom:4px;color:${primaryColor}}
   .center{text-align:center} .divider{border-top:1px dashed #000;margin:8px 0}
@@ -149,7 +150,7 @@ function buildReceiptHtml(snap: ReceiptSnapshot, storeName: string, cfg?: Receip
   .total-row td{font-weight:bold;border-top:1px solid ${primaryColor};padding-top:4px;color:${primaryColor}}
   .discount-row td{color:${accentColor}}
   .meta{font-size:11px;color:#555} .footer{text-align:center;margin-top:12px;font-size:11px}
-  @media print{body{width:100%}}
+  @media print{body{width:100%;padding:6px}}
 </style></head><body>
   ${logoHtml}
   <h1>${esc(storeName)}</h1>
@@ -185,6 +186,7 @@ function buildReceiptHtml(snap: ReceiptSnapshot, storeName: string, cfg?: Receip
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Receipt #${snap.orderNumber}</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
+  @page{size:auto;margin:0}
   body{font-family:${fontStack};font-size:13px;width:380px;margin:0 auto;background:#fff}
   .header{background:${primaryColor};color:#fff;padding:20px 24px;text-align:center}
   .header h1{font-size:20px;font-weight:800}
@@ -203,7 +205,7 @@ function buildReceiptHtml(snap: ReceiptSnapshot, storeName: string, cfg?: Receip
   .payment-row{display:flex;justify-content:space-between;font-size:13px;color:#475569;padding:3px 0}
   .footer{text-align:center;padding:16px 24px 4px;font-size:12px;color:#94a3b8;border-top:1px solid #e2e8f0;margin-top:16px}
   .custom-fields{text-align:center;padding:4px 24px 16px;font-size:11px;color:#94a3b8}
-  @media print{body{width:100%}}
+  @media print{body{width:100%;margin:0}}
 </style></head><body>
   <div class="header">
     ${cfg?.showLogo && cfg?.logoBase64 ? `<img src="${cfg.logoBase64}" style="max-height:50px;max-width:180px;object-fit:contain;margin-bottom:8px;display:block;margin-left:auto;margin-right:auto" alt="Logo"/>` : ''}
@@ -242,9 +244,10 @@ function buildReceiptHtml(snap: ReceiptSnapshot, storeName: string, cfg?: Receip
     const taxLine = showTaxLine && snap.taxAmount > 0 ? `Tax: ${fmtR(snap.taxAmount)}\n` : ''
     const notesLine = showNotes && snap.notes ? `Note: ${esc(snap.notes)}\n` : ''
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+      @page{size:auto;margin:0}
       body{font-family:${fontStack};font-size:11px;width:260px;margin:0 auto;padding:8px}
       pre{white-space:pre-wrap;margin:0}
-      @media print{body{width:100%}}
+      @media print{body{width:100%;padding:4px}}
     </style></head><body>${logoHtml}<pre>${esc(storeName)}
 ${headerMessage ? esc(headerMessage) + '\n' : ''}#${snap.orderNumber} ${new Date().toLocaleDateString()}
 ${'\u2014'.repeat(0)}${'-'.repeat(32)}

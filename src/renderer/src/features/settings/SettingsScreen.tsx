@@ -532,6 +532,7 @@ function PrinterSection({
   const [receiptPrinter, setReceiptPrinter] = useState(settings.receiptPrinterName ?? '')
   const [invoicePrinter, setInvoicePrinter] = useState(settings.invoicePrinterName ?? '')
   const [tagPrinter, setTagPrinter] = useState(settings.tagPrinterName ?? '')
+  const [receiptPaperSize, setReceiptPaperSize] = useState(settings.receiptPaperSize ?? 'auto')
 
   useEffect(() => {
     loadPrinters()
@@ -542,7 +543,8 @@ function PrinterSection({
     setReceiptPrinter(settings.receiptPrinterName ?? '')
     setInvoicePrinter(settings.invoicePrinterName ?? '')
     setTagPrinter(settings.tagPrinterName ?? '')
-  }, [settings.receiptPrinterName, settings.invoicePrinterName, settings.tagPrinterName])
+    setReceiptPaperSize(settings.receiptPaperSize ?? 'auto')
+  }, [settings.receiptPrinterName, settings.invoicePrinterName, settings.tagPrinterName, settings.receiptPaperSize])
 
   async function loadPrinters() {
     setLoading(true)
@@ -562,6 +564,7 @@ function PrinterSection({
         receiptPrinterName: receiptPrinter,
         invoicePrinterName: invoicePrinter,
         tagPrinterName: tagPrinter,
+        receiptPaperSize
       })
       showToast('Printer settings saved', 'success')
     } catch {
@@ -642,6 +645,30 @@ function PrinterSection({
           value={tagPrinter}
           onChange={setTagPrinter}
         />
+
+        {/* Receipt / Tag paper size */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-0.5">
+            Receipt &amp; Tag Paper Size
+          </label>
+          <p className="text-xs text-gray-400 mb-1.5">
+            Match this to the roll paper loaded in your receipt / tag printer. &quot;Auto&quot; lets
+            the Windows printer driver decide — recommended if your driver already has the correct
+            paper configured.
+          </p>
+          <select
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+            value={receiptPaperSize}
+            onChange={(e) => setReceiptPaperSize(e.target.value)}
+          >
+            <option value="auto">Auto — use printer driver default (recommended)</option>
+            <option value="80mm">80 mm roll — most thermal receipt printers</option>
+            <option value="72mm">72 mm roll</option>
+            <option value="58mm">58 mm roll — compact thermal printers</option>
+            <option value="Letter">US Letter (8.5 × 11 in)</option>
+            <option value="A4">A4 (210 × 297 mm)</option>
+          </select>
+        </div>
       </div>
 
       <div className="mt-5 pt-4 border-t border-gray-100">

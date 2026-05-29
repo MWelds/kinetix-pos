@@ -32,7 +32,8 @@ export const DEFAULT_SETTINGS = {
   emailPassword: '',
   emailFromName: 'Kinetix POS',
   emailFromAddress: '',
-  dashboardAdminPin: ''
+  dashboardAdminPin: '',
+  receiptPaperSize: 'auto'
 }
 
 export type SettingKey = keyof typeof DEFAULT_SETTINGS

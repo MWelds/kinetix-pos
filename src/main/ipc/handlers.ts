@@ -174,13 +174,15 @@ export function registerIpcHandlers(): void {
   /**
    * Opens a hidden BrowserWindow, loads HTML from a temp file, then calls
    * webContents.print(). When `printerName` is set the job goes silently to
-   * that printer; otherwise the Windows print dialog is shown.
+   * that printer; otherwise the Windows print dialog is shown so the user can
+   * select paper size, orientation, and other driver settings manually.
    */
   async function printHtml(
     html: string,
     prefix: string,
     printerName: string,
-    color: boolean
+    color: boolean,
+    extraOpts?: Partial<Electron.WebContentsPrintOptions>
   ): Promise<{ success: boolean; error?: string }> {
     if (typeof html !== 'string' || Buffer.byteLength(html, 'utf8') > 5_000_000) {
       return { success: false, error: 'Print payload too large (max 5 MB)' }
@@ -199,10 +201,11 @@ export function registerIpcHandlers(): void {
       win.loadFile(tmpFile)
       win.webContents.once('did-finish-load', () => {
         const opts: Electron.WebContentsPrintOptions = {
-          silent: !!printerName,   // silent when a specific printer is chosen
+          silent: !!printerName,   // silent when a specific printer is chosen; shows dialog otherwise
           printBackground: true,
           color,
-          ...(printerName ? { deviceName: printerName } : {})
+          ...(printerName ? { deviceName: printerName } : {}),
+          ...extraOpts
         }
         win.webContents.print(opts, (success) => {
           win.destroy()
@@ -213,22 +216,51 @@ export function registerIpcHandlers(): void {
     })
   }
 
+  /**
+   * Convert a paper-size setting string into Electron WebContentsPrintOptions
+   * fields (margins + optional pageSize). Used for receipts and price tags.
+   *
+   * Values:
+   *   'auto'   – rely entirely on the printer driver (recommended for thermal printers)
+   *   '58mm'   – 58 mm roll paper  (width = 58 000 µm)
+   *   '72mm'   – 72 mm roll paper  (width = 72 000 µm)
+   *   '80mm'   – 80 mm roll paper  (width = 80 000 µm, most common)
+   *   'A4'     – ISO A4 full page
+   *   'Letter' – US Letter full page
+   */
+  function receiptPrintOpts(paperSize: string): Partial<Electron.WebContentsPrintOptions> {
+    const base: Partial<Electron.WebContentsPrintOptions> = {
+      margins: { marginType: 'none' }
+    }
+    const mmWidths: Record<string, number> = { '58mm': 58000, '72mm': 72000, '80mm': 80000 }
+    if (mmWidths[paperSize]) {
+      // Very tall height (999 mm) lets the content determine the actual printed length.
+      return { ...base, pageSize: { width: mmWidths[paperSize], height: 999000 } }
+    }
+    if (paperSize === 'A4')     return { ...base, pageSize: 'A4' }
+    if (paperSize === 'Letter') return { ...base, pageSize: 'Letter' }
+    // 'auto' — send no pageSize; printer driver controls paper dimensions
+    return base
+  }
+
   // Receipt
   ipcMain.handle(IPC.RECEIPT_PRINT, async (_e, html: string) => {
     const printerName = settingsService.get('receiptPrinterName')?.trim() ?? ''
-    return printHtml(html, 'receipt', printerName, false)
+    const paperSize   = settingsService.get('receiptPaperSize')?.trim() || 'auto'
+    return printHtml(html, 'receipt', printerName, false, receiptPrintOpts(paperSize))
   })
 
-  // Invoice
+  // Invoice — always full-page, no custom margins (driver/dialog handles it)
   ipcMain.handle(IPC.INVOICE_PRINT, async (_e, html: string) => {
     const printerName = settingsService.get('invoicePrinterName')?.trim() ?? ''
     return printHtml(html, 'invoice', printerName, true)
   })
 
-  // Price tag (separate channel → separate printer setting)
+  // Price tag — treated the same as receipts (narrow paper, no margins)
   ipcMain.handle(IPC.TAG_PRINT, async (_e, html: string) => {
     const printerName = settingsService.get('tagPrinterName')?.trim() ?? ''
-    return printHtml(html, 'tag', printerName, false)
+    const paperSize   = settingsService.get('receiptPaperSize')?.trim() || 'auto'
+    return printHtml(html, 'tag', printerName, false, receiptPrintOpts(paperSize))
   })
 
   // List available Windows printers

@@ -427,6 +427,15 @@ function SyncServerSection({
     return unsub
   }, [])
 
+  // Server machines must never run the sync client — stop any runaway loop immediately
+  useEffect(() => {
+    if (nodeMode === 'server' && syncState && syncState.status !== 'disabled') {
+      api.sync.stop().catch(() => {})
+      api.settings.set('syncEnabled', 'false').catch(() => {})
+      field('syncEnabled')('false')
+    }
+  }, [nodeMode, syncState?.status])
+
   async function handleToggleEnabled(val: boolean) {
     field('syncEnabled')(val ? 'true' : 'false')
     if (val) {
@@ -532,10 +541,16 @@ function SyncServerSection({
           Multi-Terminal Sync Server
         </h2>
         <div className="flex items-center gap-3">
-          {syncState && (
-            <span className={`text-xs font-medium ${statusColor}`}>{statusLabel}</span>
+          {nodeMode === 'server' ? (
+            <span className="text-xs font-medium text-emerald-600">Server active</span>
+          ) : (
+            <>
+              {syncState && (
+                <span className={`text-xs font-medium ${statusColor}`}>{statusLabel}</span>
+              )}
+              <Toggle checked={enabled} onChange={handleToggleEnabled} />
+            </>
           )}
-          <Toggle checked={enabled} onChange={handleToggleEnabled} />
         </div>
       </div>
 
@@ -698,24 +713,27 @@ function SyncServerSection({
           </>
         )}
 
-        <div className="flex items-center gap-2">
-          <label className="text-sm font-medium text-gray-700 w-32">Sync interval</label>
-          <select
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            value={settings.syncIntervalSeconds ?? '30'}
-            onChange={(e) => field('syncIntervalSeconds')(e.target.value)}
-          >
-            <option value="5">Every 5 seconds</option>
-            <option value="10">Every 10 seconds</option>
-            <option value="15">Every 15 seconds</option>
-            <option value="30">Every 30 seconds</option>
-            <option value="60">Every minute</option>
-            <option value="300">Every 5 minutes</option>
-          </select>
-        </div>
+        {nodeMode !== 'server' && (
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-gray-700 w-32">Sync interval</label>
+            <select
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              value={settings.syncIntervalSeconds ?? '30'}
+              onChange={(e) => field('syncIntervalSeconds')(e.target.value)}
+            >
+              <option value="5">Every 5 seconds</option>
+              <option value="10">Every 10 seconds</option>
+              <option value="15">Every 15 seconds</option>
+              <option value="30">Every 30 seconds</option>
+              <option value="60">Every minute</option>
+              <option value="300">Every 5 minutes</option>
+            </select>
+          </div>
+        )}
       </div>
 
-      {syncState?.status === 'error' && syncState.error && (
+      {/* Only show sync errors when this machine is actually a sync client */}
+      {nodeMode !== 'server' && syncState?.status === 'error' && syncState.error && (
         <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
           {syncState.error}
         </div>

@@ -602,6 +602,10 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC.SYNC_START, (e, intervalSeconds?: number) => {
     requireRole(e, 'admin')
+    // Server machines must never run the sync client
+    if (settingsService.get('nodeMode') === 'server') {
+      return getSyncState()
+    }
     startSyncLoop(intervalSeconds)
     return getSyncState()
   })
@@ -630,6 +634,10 @@ export function registerIpcHandlers(): void {
   /**
    * Called when the user finishes the setup wizard.
    * Persists settings, then auto-starts sync / embedded server as appropriate.
+   *
+   * Auth strategy:
+   *  - First run  (setupComplete !== 'true'): no user exists yet — skip auth check.
+   *  - Re-run from Settings (setupComplete === 'true'): enforce admin role.
    */
   ipcMain.handle(IPC.SETUP_COMPLETE, async (e, input: {
     nodeMode: 'standalone' | 'server' | 'terminal'
@@ -639,7 +647,10 @@ export function registerIpcHandlers(): void {
     syncApiKey?: string
     syncIntervalSeconds?: number
   }) => {
-    requireRole(e, 'admin')
+    const alreadySetUp = settingsService.get('setupComplete') === 'true'
+    if (alreadySetUp) {
+      requireRole(e, 'admin')
+    }
     const now = new Date().toISOString()
     const save = (key: string, value: string) =>
       settingsService.set(key, value)

@@ -49,6 +49,13 @@ export function getSyncState(): SyncState {
 
 /** Called on app startup — reads settings and starts the interval if sync is enabled. */
 export function initSync(): void {
+  // Server machines ARE the sync target — they never run the sync client
+  const nodeMode = settingsService.get('nodeMode')
+  if (nodeMode === 'server') {
+    setState({ status: 'disabled' })
+    return
+  }
+
   const enabled = settingsService.get('syncEnabled') === 'true'
   if (!enabled) {
     setState({ status: 'disabled' })

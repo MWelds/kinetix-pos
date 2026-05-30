@@ -31,6 +31,17 @@ const TABLES_WITH_UPDATED_AT = new Set<SyncTable>([
   'staff', 'vendors', 'settings', 'inventory'
 ])
 
+/**
+ * Settings keys that are machine-specific and must NEVER cross machine
+ * boundaries via sync. The server must not send these to terminals (pull),
+ * and the server must not accept them from terminals (push).
+ */
+const MACHINE_SPECIFIC_SETTINGS = new Set([
+  'nodeMode', 'setupComplete', 'terminalId',
+  'syncEnabled', 'syncUrl', 'syncApiKey', 'syncIntervalSeconds', 'lastSyncAt',
+  'embeddedServerPort', 'embeddedServerApiKey', 'dashboardAdminPin'
+])
+
 // ─── State ────────────────────────────────────────────────────────────────────
 let server: http.Server | null = null
 
@@ -59,6 +70,8 @@ function upsertRecords(table: SyncTable, records: SyncRecord[]): void {
   if (table === 'settings') {
     const upsertSettings = db.transaction((rows: SyncRecord[]) => {
       for (const row of rows) {
+        // Never let a terminal overwrite machine-specific settings on the server
+        if (MACHINE_SPECIFIC_SETTINGS.has(row['key'] as string)) continue
         const existing = db.prepare('SELECT updated_at FROM settings WHERE key = ?').get(row['key']) as { updated_at: string } | undefined
         if (!existing || (row['updated_at'] as string) >= existing.updated_at) {
           db.prepare(`INSERT INTO settings (key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`)
@@ -764,7 +777,12 @@ function createHandler(apiKey: string) {
           const body = await parseBody(req) as { since?: string }
           if (!body.since || typeof body.since !== 'string') { send(res, 400, { error: '`since` is required' }); return }
           const records: SyncPayload = {}
-          for (const table of SYNC_TABLES) { const rows = getRecordsSince(table, body.since); if (rows.length > 0) records[table] = rows }
+          for (const table of SYNC_TABLES) {
+            let rows = getRecordsSince(table, body.since)
+            // Never send machine-specific settings keys to terminals
+            if (table === 'settings') rows = rows.filter((r) => !MACHINE_SPECIFIC_SETTINGS.has(r['key'] as string))
+            if (rows.length > 0) records[table] = rows
+          }
           send(res, 200, { serverTime: new Date().toISOString(), records }); return
         }
         if (method === 'POST' && url === '/sync/push') {
@@ -813,7 +831,9 @@ export function startEmbeddedServer(port: number, apiKey: string): Promise<Embed
 export function stopEmbeddedServer(): Promise<void> {
   return new Promise((resolve) => {
     if (!server) { resolve(); return }
-    server.close(() => { server = null; serverDb?.close(); serverDb = null; resolve() })
+    // The server shares getSqlite() — do NOT close that handle here;
+    // it is owned by the POS app and must stay open.
+    server.close(() => { server = null; resolve() })
   })
 }
 

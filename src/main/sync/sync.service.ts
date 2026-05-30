@@ -20,6 +20,20 @@ const HAS_UPDATED_AT = new Set<SyncTable>([
   'staff', 'vendors', 'settings', 'inventory'
 ])
 
+/**
+ * Settings keys that are machine-specific and must NEVER cross machine
+ * boundaries via sync.  Syncing these would overwrite a terminal's sync
+ * URL with the server's blank value (or vice-versa), breaking future syncs.
+ *
+ * Only business-level settings (store name, tax rates, receipt templates,
+ * currency config, loyalty rules, etc.) should travel between machines.
+ */
+const MACHINE_SPECIFIC_SETTINGS = new Set([
+  'nodeMode', 'setupComplete', 'terminalId',
+  'syncEnabled', 'syncUrl', 'syncApiKey', 'syncIntervalSeconds', 'lastSyncAt',
+  'embeddedServerPort', 'embeddedServerApiKey', 'dashboardAdminPin'
+])
+
 // ─── State ────────────────────────────────────────────────────────────────────
 let state: SyncState = {
   status: 'disabled',
@@ -159,7 +173,11 @@ async function pushChanges(serverUrl: string, apiKey: string, terminalId: string
     const sql = `SELECT * FROM ${table} WHERE ${col} > ? ORDER BY ${col} ASC`
     try {
       const rows = db.prepare(sql).all(lastSync) as SyncRecord[]
-      if (rows.length > 0) records[table] = rows
+      // Never push machine-specific settings keys — they must stay local
+      const filteredRows = table === 'settings'
+        ? rows.filter((r) => !MACHINE_SPECIFIC_SETTINGS.has(r['key'] as string))
+        : rows
+      if (filteredRows.length > 0) records[table] = filteredRows
     } catch (err) {
       console.warn(`[sync] skipping table "${table}" — query failed:`, (err as Error).message)
     }
@@ -214,6 +232,8 @@ function applyPulledRecords(records: SyncPayload): void {
 
     for (const row of rows) {
       if (isSettings) {
+        // Never overwrite machine-specific settings with values from another machine
+        if (MACHINE_SPECIFIC_SETTINGS.has(row['key'] as string)) continue
         const existing = db.prepare('SELECT updated_at FROM settings WHERE key = ?').get(row['key']) as { updated_at: string } | undefined
         if (!existing || (row['updated_at'] as string) >= existing.updated_at) {
           db.prepare(`

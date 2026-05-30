@@ -93,9 +93,7 @@ app
       const port = parseInt(settingsService.get('embeddedServerPort') || '3030', 10)
       const apiKey = settingsService.get('embeddedServerApiKey') || ''
       startEmbeddedServer(port, apiKey).catch((err) => logError('startEmbeddedServer', err))
-      // Ensure stale sync settings from old builds don't start a loop on the server
-      settingsService.set('syncEnabled', 'false')
-      settingsService.set('syncUrl', '')
+      // initSync() checks nodeMode === 'server' and returns early — no writes needed here
     }
 
     initSync() // no-op on server (syncEnabled=false), active on terminal

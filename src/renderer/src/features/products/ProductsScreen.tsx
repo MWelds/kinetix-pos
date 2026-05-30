@@ -339,15 +339,23 @@ export function ProductsScreen() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
-                        <div
-                          className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-                          style={{ backgroundColor: product.categoryColor ? `${product.categoryColor}20` : '#f1f5f9' }}
-                        >
-                          {product.isComposite
-                            ? <Layers size={14} style={{ color: product.categoryColor ?? '#94a3b8' }} />
-                            : <Package size={14} style={{ color: product.categoryColor ?? '#94a3b8' }} />
-                          }
-                        </div>
+                        {product.imageUrl ? (
+                          <img
+                            src={product.imageUrl}
+                            alt={product.name}
+                            className="w-8 h-8 rounded-lg object-cover shrink-0 border border-gray-100"
+                          />
+                        ) : (
+                          <div
+                            className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                            style={{ backgroundColor: product.categoryColor ? `${product.categoryColor}20` : '#f1f5f9' }}
+                          >
+                            {product.isComposite
+                              ? <Layers size={14} style={{ color: product.categoryColor ?? '#94a3b8' }} />
+                              : <Package size={14} style={{ color: product.categoryColor ?? '#94a3b8' }} />
+                            }
+                          </div>
+                        )}
                         <div>
                           <span className="text-sm font-medium text-gray-900">{product.name}</span>
                           {product.isComposite && (
@@ -646,7 +654,7 @@ function ProductFormModal({ product, categories, onClose, onSave }: ProductFormM
         description: form.description || undefined,
         isComposite: form.isComposite,
         unitsPerPack: (!isNaN(parsedUnitsPerPack) && parsedUnitsPerPack > 1) ? parsedUnitsPerPack : 1,
-        imageUrl: form.imageUrl || undefined,
+        imageUrl: form.imageUrl || null,
         vendorId: form.vendorId || undefined,
         vendorCost: form.vendorId && form.vendorCost ? parseFloat(form.vendorCost) : undefined,
         trackStock: form.trackStock

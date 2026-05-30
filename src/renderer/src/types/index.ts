@@ -147,7 +147,20 @@ export interface InventoryItem {
   variantId: string | null
   /** Raw quantity in individual units (always individual units, regardless of product type) */
   quantity: number
-  lowStockTh
+  lowStockThreshold: number
+  productName: string | null
+  sku: string | null
+  categoryName: string | null
+  imageUrl: string | null
+  /** 1 for standalone/individual products; >1 for pack products */
+  unitsPerPack: number
+  /** ID of the auto-created individual product linked to this pack (null for non-pack products) */
+  individualProductId: string | null
+  /** ID of the parent pack product if this is an auto-created individual (null otherwise) */
+  packProductId: string | null
+  /** unitsPerPack of the parent pack (used for pack-stock display); null when not a pack individual */
+  packUnitsPerPack: number | null
+}
 
 export interface Vendor {
   id: string

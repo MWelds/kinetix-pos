@@ -23,6 +23,7 @@ export const inventoryService = {
     productName: string | null
     sku: string | null
     categoryName: string | null
+    imageUrl: string | null
     unitsPerPack: number
     individualProductId: string | null
     packProductId: string | null
@@ -39,6 +40,7 @@ export const inventoryService = {
         productName: schema.products.name,
         sku: schema.products.sku,
         categoryName: schema.categories.name,
+        imageUrl: schema.products.imageUrl,
         unitsPerPack: schema.products.unitsPerPack,
         individualProductId: schema.products.individualProductId,
         packProductId: schema.products.packProductId,

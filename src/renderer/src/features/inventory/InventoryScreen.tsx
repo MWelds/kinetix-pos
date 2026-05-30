@@ -267,14 +267,27 @@ export function InventoryScreen() {
                   return (
                     <tr key={item.id} className={`hover:bg-gray-50 ${packInd ? 'bg-indigo-50/30' : ''}`}>
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-1.5">
-                          {packInd && <Package size={13} className="text-indigo-500 shrink-0" />}
-                          <span className="font-medium text-gray-900">{item.productName}</span>
-                          {packInd && (
-                            <span className="text-xs text-indigo-600 bg-indigo-100 rounded px-1 py-0.5 shrink-0">
-                              pack-linked
-                            </span>
+                        <div className="flex items-center gap-2">
+                          {item.imageUrl ? (
+                            <img
+                              src={item.imageUrl}
+                              alt={item.productName ?? ''}
+                              className="w-8 h-8 rounded-lg object-cover shrink-0 border border-gray-100"
+                            />
+                          ) : (
+                            <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center shrink-0">
+                              <Package size={13} className="text-gray-400" />
+                            </div>
                           )}
+                          <div className="flex items-center gap-1.5">
+                            {packInd && <Package size={13} className="text-indigo-500 shrink-0" />}
+                            <span className="font-medium text-gray-900">{item.productName}</span>
+                            {packInd && (
+                              <span className="text-xs text-indigo-600 bg-indigo-100 rounded px-1 py-0.5 shrink-0">
+                                pack-linked
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </td>
                       <td className="px-4 py-3 text-gray-500 font-mono text-xs">{item.sku}</td>

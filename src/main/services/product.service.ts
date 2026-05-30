@@ -11,7 +11,7 @@ export interface CreateProductInput {
   categoryId?: string
   basePrice: number
   costPrice?: number
-  imageUrl?: string
+  imageUrl?: string | null
   isComposite?: boolean
   taxRate?: number
   /**

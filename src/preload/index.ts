@@ -235,7 +235,9 @@ const api = {
       const handler = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state)
       ipcRenderer.on(IPC.SYNC_STATE_PUSH, handler)
       return () => ipcRenderer.removeListener(IPC.SYNC_STATE_PUSH, handler)
-    }
+    },
+    /** Scan local subnet for running Kinetix POS server nodes. */
+    discover: () => ipcRenderer.invoke(IPC.SYNC_DISCOVER)
   },
 
   // Setup wizard + embedded server

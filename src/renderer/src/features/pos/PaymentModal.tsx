@@ -97,7 +97,13 @@ const RECEIPT_FONT_MAP: Record<string, string> = {
   serif:  `Georgia, 'Times New Roman', serif`,
 }
 
-function buildReceiptHtml(snap: ReceiptSnapshot, storeName: string, cfg?: ReceiptConfig): string {
+function buildReceiptHtml(
+  snap: ReceiptSnapshot,
+  storeName: string,
+  cfg?: ReceiptConfig,
+  storeAddress = '',
+  storePhone = ''
+): string {
   const template        = cfg?.template         ?? 'classic'
   const showLogo        = cfg?.showLogo         ?? false
   const footer          = cfg?.footer           ?? 'Thank you for your business!'
@@ -154,6 +160,8 @@ function buildReceiptHtml(snap: ReceiptSnapshot, storeName: string, cfg?: Receip
 </style></head><body>
   ${logoHtml}
   <h1>${esc(storeName)}</h1>
+  ${storeAddress ? `<p class="center meta">${esc(storeAddress)}</p>` : ''}
+  ${storePhone   ? `<p class="center meta">${esc(storePhone)}</p>`   : ''}
   ${headerMessage ? `<p class="center meta" style="font-style:italic;margin-bottom:4px">${esc(headerMessage)}</p>` : ''}
   <p class="center meta">Order #${snap.orderNumber}</p>
   <p class="center meta">${new Date().toLocaleString()}</p>
@@ -210,7 +218,8 @@ function buildReceiptHtml(snap: ReceiptSnapshot, storeName: string, cfg?: Receip
   <div class="header">
     ${cfg?.showLogo && cfg?.logoBase64 ? `<img src="${cfg.logoBase64}" style="max-height:50px;max-width:180px;object-fit:contain;margin-bottom:8px;display:block;margin-left:auto;margin-right:auto" alt="Logo"/>` : ''}
     <h1>${esc(storeName)}</h1>
-    ${headerMessage ? `<div class="tagline">${esc(headerMessage)}</div>` : ''}
+    ${storeAddress || storePhone ? `<div class="tagline">${[storeAddress, storePhone].filter(Boolean).map(esc).join(' &bull; ')}</div>` : ''}
+    ${headerMessage ? `<div class="tagline" style="font-style:italic">${esc(headerMessage)}</div>` : ''}
     <div class="meta">Order #${snap.orderNumber} &bull; ${new Date().toLocaleString()}</div>
   </div>
   <div class="body">
@@ -249,7 +258,7 @@ function buildReceiptHtml(snap: ReceiptSnapshot, storeName: string, cfg?: Receip
       pre{white-space:pre-wrap;margin:0}
       @media print{body{width:100%;padding:4px}}
     </style></head><body>${logoHtml}<pre>${esc(storeName)}
-${headerMessage ? esc(headerMessage) + '\n' : ''}#${snap.orderNumber} ${new Date().toLocaleDateString()}
+${storeAddress ? esc(storeAddress) + '\n' : ''}${storePhone ? esc(storePhone) + '\n' : ''}${headerMessage ? esc(headerMessage) + '\n' : ''}#${snap.orderNumber} ${new Date().toLocaleDateString()}
 ${'\u2014'.repeat(0)}${'-'.repeat(32)}
 ${snap.items.map((i) => `${i.quantity}x ${esc(i.productName)}${i.variantName ? ` (${esc(i.variantName)})` : ''} ${fmtR((i.unitPrice - i.discountAmount) * i.quantity)}`).join('\n')}
 ${'-'.repeat(32)}
@@ -483,8 +492,10 @@ export function PaymentModal({ isOpen, onClose, onComplete }: PaymentModalProps)
       setCompleted(true)
 
       try {
-        const storeName = (await api.settings.get('storeName')) || 'POS System'
-        const builtReceiptHtml = buildReceiptHtml(snap, storeName, receiptConfig)
+        const storeName    = (await api.settings.get('storeName'))    || 'POS System'
+        const storeAddr    = (await api.settings.get('storeAddress')) || ''
+        const storePhoneNo = (await api.settings.get('storePhone'))   || ''
+        const builtReceiptHtml = buildReceiptHtml(snap, storeName, receiptConfig, storeAddr, storePhoneNo)
         await api.display.update({
           state: 'complete',
           change: changeInCurrency,
@@ -504,8 +515,10 @@ export function PaymentModal({ isOpen, onClose, onComplete }: PaymentModalProps)
 
       if (printReceipt) {
         try {
-          const storeName = (await api.settings.get('storeName')) || 'POS System'
-          await api.receipt.print(buildReceiptHtml(snap, storeName, receiptConfig))
+          const storeName    = (await api.settings.get('storeName'))    || 'POS System'
+          const storeAddr    = (await api.settings.get('storeAddress')) || ''
+          const storePhoneNo = (await api.settings.get('storePhone'))   || ''
+          await api.receipt.print(buildReceiptHtml(snap, storeName, receiptConfig, storeAddr, storePhoneNo))
         } catch {
           showToast('Auto-print failed — use Print Receipt to retry', 'warning')
         }
@@ -523,8 +536,10 @@ export function PaymentModal({ isOpen, onClose, onComplete }: PaymentModalProps)
     if (!receiptSnapshot) return
     setPrinting(true)
     try {
-      const storeName = (await api.settings.get('storeName')) || 'POS System'
-      await api.receipt.print(buildReceiptHtml(receiptSnapshot, storeName, receiptConfig))
+      const storeName    = (await api.settings.get('storeName'))    || 'POS System'
+      const storeAddr    = (await api.settings.get('storeAddress')) || ''
+      const storePhoneNo = (await api.settings.get('storePhone'))   || ''
+      await api.receipt.print(buildReceiptHtml(receiptSnapshot, storeName, receiptConfig, storeAddr, storePhoneNo))
       showToast('Receipt printed', 'success')
     } catch {
       showToast('Print failed', 'error')
@@ -633,9 +648,11 @@ ${footer || customFooter ? `<div class="footer">${esc(footer)}${customFooter}</d
     }
     setEmailSending(true)
     try {
-      const storeName = storeSettings.storeName ?? 'POS System'
+      const storeName = storeSettings.storeName    ?? 'POS System'
+      const storeAddr = storeSettings.storeAddress ?? ''
+      const storePhN  = storeSettings.storePhone   ?? ''
       const html = type === 'receipt'
-        ? buildReceiptHtml(receiptSnapshot, storeName, receiptConfig)
+        ? buildReceiptHtml(receiptSnapshot, storeName, receiptConfig, storeAddr, storePhN)
         : buildInvoiceHtmlFromSnap(receiptSnapshot)
       const result = type === 'receipt'
         ? await api.email.sendReceipt(email, html, receiptSnapshot.orderNumber)

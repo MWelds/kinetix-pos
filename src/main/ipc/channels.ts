@@ -167,6 +167,9 @@ export const IPC = {
   /** Push channel — main → renderer, fires on every state change */
   SYNC_STATE_PUSH: 'sync:statePush',
 
+  /** Scan the local subnet for running Kinetix POS server nodes. Returns found server URLs. */
+  SYNC_DISCOVER: 'sync:discover',
+
   // Setup wizard + embedded server
   SETUP_GET: 'setup:get',
   SETUP_COMPLETE: 'setup:complete',

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import QRCode from 'qrcode'
-import { Save, RefreshCw, ArrowLeftRight, Monitor, Wifi, WifiOff, ExternalLink, FolderOpen, Plus, Edit2, Trash2, Check, X, ImageIcon, Upload, Link2, Link2Off, AlertCircle, RotateCcw } from 'lucide-react'
+import { Save, RefreshCw, ArrowLeftRight, Monitor, Wifi, WifiOff, ExternalLink, FolderOpen, Plus, Edit2, Trash2, Check, X, ImageIcon, Upload, Link2, Link2Off, AlertCircle, RotateCcw, ChevronDown, Search } from 'lucide-react'
 import { api } from '../../lib/api'
 import { Input, Textarea, Button } from '../../components/ui'
 import { useUiStore } from '../../stores/ui.store'
@@ -63,6 +63,67 @@ function Toggle({
   )
 }
 
+
+// ─── Collapsible accordion section wrapper ────────────────────────────────────
+
+/**
+ * Wraps a settings section in a collapsible accordion. The open/closed state
+ * is persisted in localStorage so the user's preference survives navigation.
+ */
+function SectionAccordion({
+  id,
+  title,
+  icon,
+  defaultOpen = false,
+  children
+}: {
+  id: string
+  title: string
+  icon?: React.ReactNode
+  defaultOpen?: boolean
+  children: React.ReactNode
+}) {
+  const storageKey = `settings_accordion_${id}`
+  const [open, setOpen] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem(storageKey)
+      return stored !== null ? stored === 'true' : defaultOpen
+    } catch {
+      return defaultOpen
+    }
+  })
+
+  function toggle() {
+    const next = !open
+    setOpen(next)
+    try { localStorage.setItem(storageKey, String(next)) } catch { /* ignore */ }
+  }
+
+  return (
+    <section className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <button
+        type="button"
+        onClick={toggle}
+        className="w-full flex items-center justify-between px-6 py-4 text-left hover:bg-gray-50 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
+        aria-expanded={open}
+      >
+        <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+          {icon}
+          {title}
+        </h2>
+        <ChevronDown
+          size={18}
+          className={`text-gray-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {open && (
+        <div className="px-6 pb-6 border-t border-gray-100">
+          <div className="pt-5">{children}</div>
+        </div>
+      )}
+    </section>
+  )
+}
 
 // ─── Category preset colours (shared with ProductsScreen) ────────────────────
 const PRESET_COLORS = [
@@ -349,7 +410,10 @@ function SyncServerSection({
   const [testing, setTesting] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [localIps, setLocalIps] = useState<string[]>([])
+  const [discovering, setDiscovering] = useState(false)
+  const [discovered, setDiscovered] = useState<string[]>([])
   const enabled = settings.syncEnabled === 'true'
+  const nodeMode = settings.nodeMode ?? ''
 
   useEffect(() => {
     api.sync.getState().then(setSyncState).catch(() => {})
@@ -398,6 +462,20 @@ function SyncServerSection({
     }
   }
 
+  async function handleDiscoverLan() {
+    setDiscovering(true)
+    setDiscovered([])
+    try {
+      const found = await api.sync.discover() as string[]
+      setDiscovered(found)
+      if (found.length === 0) showToast('No Kinetix POS servers found on this network', 'info')
+    } catch {
+      showToast('LAN scan failed', 'error')
+    } finally {
+      setDiscovering(false)
+    }
+  }
+
   const statusColor =
     syncState?.status === 'synced'   ? 'text-green-600'  :
     syncState?.status === 'syncing'  ? 'text-blue-600'   :
@@ -432,8 +510,95 @@ function SyncServerSection({
       </p>
 
       <div className="space-y-4">
-        {/* Auto-detected IPs */}
-        {localIps.length > 0 && (
+        {/* ── SERVER MODE: show dashboard URL ──────────────────────────────── */}
+        {nodeMode === 'server' && localIps.length > 0 && (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4">
+            <p className="text-xs font-semibold text-emerald-700 mb-3 flex items-center gap-1.5">
+              <Monitor size={13} /> This machine is running as a Sync Server
+            </p>
+            <div className="space-y-2">
+              {localIps.map((ip) => {
+                const port = settings.embeddedServerPort || '3030'
+                const dashUrl = `http://${ip}:${port}/dashboard`
+                return (
+                  <div key={ip} className="flex items-center gap-2">
+                    <code className="flex-1 text-xs font-mono text-emerald-900 bg-white border border-emerald-200 rounded-lg px-3 py-1.5 truncate">
+                      {dashUrl}
+                    </code>
+                    <a
+                      href={dashUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="p-1.5 rounded-lg hover:bg-emerald-100 text-emerald-600 shrink-0"
+                      title="Open dashboard"
+                    >
+                      <ExternalLink size={14} />
+                    </a>
+                  </div>
+                )
+              })}
+            </div>
+            <p className="text-xs text-emerald-600 mt-2">
+              Share this URL with your manager to access the web admin dashboard. Terminals should
+              point their Sync Server URL to the base address (without /dashboard).
+            </p>
+          </div>
+        )}
+
+        {/* ── TERMINAL MODE: LAN scan ───────────────────────────────────────── */}
+        {nodeMode === 'terminal' && (
+          <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold text-blue-700 flex items-center gap-1.5">
+                <Search size={12} /> Auto-discover Server on LAN
+              </p>
+              <button
+                type="button"
+                onClick={handleDiscoverLan}
+                disabled={discovering}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60 transition-colors"
+              >
+                {discovering
+                  ? <><RefreshCw size={11} className="animate-spin" /> Scanning…</>
+                  : <><Search size={11} /> Scan LAN</>
+                }
+              </button>
+            </div>
+            {discovered.length > 0 && (
+              <>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {discovered.map((url) => {
+                    const active = settings.syncUrl?.trim() === url
+                    return (
+                      <button
+                        key={url}
+                        type="button"
+                        onClick={() => field('syncUrl')(url)}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-semibold border transition-all ${
+                          active
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                            : 'bg-white text-blue-700 border-blue-200 hover:border-blue-400 hover:bg-blue-50'
+                        }`}
+                      >
+                        {url}
+                        {active && <span className="text-blue-100 ml-1">✓</span>}
+                      </button>
+                    )
+                  })}
+                </div>
+                <p className="text-xs text-blue-500 mt-2">Click a server to set it as your Sync Server URL.</p>
+              </>
+            )}
+            {!discovering && discovered.length === 0 && (
+              <p className="text-xs text-blue-500 mt-1">
+                Click Scan LAN to probe for Kinetix POS servers on this network.
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Auto-detected IPs (always shown for reference / manual setup) */}
+        {localIps.length > 0 && nodeMode !== 'server' && (
           <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
             <p className="text-xs font-semibold text-blue-700 mb-2 flex items-center gap-1.5">
               <Wifi size={12} /> This machine&apos;s detected IP{localIps.length > 1 ? 's' : ''}
@@ -479,6 +644,8 @@ function SyncServerSection({
             value={settings.syncIntervalSeconds ?? '30'}
             onChange={(e) => field('syncIntervalSeconds')(e.target.value)}
           >
+            <option value="5">Every 5 seconds</option>
+            <option value="10">Every 10 seconds</option>
             <option value="15">Every 15 seconds</option>
             <option value="30">Every 30 seconds</option>
             <option value="60">Every minute</option>
@@ -533,6 +700,7 @@ function PrinterSection({
   const [invoicePrinter, setInvoicePrinter] = useState(settings.invoicePrinterName ?? '')
   const [tagPrinter, setTagPrinter] = useState(settings.tagPrinterName ?? '')
   const [receiptPaperSize, setReceiptPaperSize] = useState(settings.receiptPaperSize ?? 'auto')
+  const [tagPaperSize, setTagPaperSize] = useState(settings.tagPaperSize ?? 'auto')
 
   useEffect(() => {
     loadPrinters()
@@ -544,7 +712,8 @@ function PrinterSection({
     setInvoicePrinter(settings.invoicePrinterName ?? '')
     setTagPrinter(settings.tagPrinterName ?? '')
     setReceiptPaperSize(settings.receiptPaperSize ?? 'auto')
-  }, [settings.receiptPrinterName, settings.invoicePrinterName, settings.tagPrinterName, settings.receiptPaperSize])
+    setTagPaperSize(settings.tagPaperSize ?? 'auto')
+  }, [settings.receiptPrinterName, settings.invoicePrinterName, settings.tagPrinterName, settings.receiptPaperSize, settings.tagPaperSize])
 
   async function loadPrinters() {
     setLoading(true)
@@ -564,7 +733,8 @@ function PrinterSection({
         receiptPrinterName: receiptPrinter,
         invoicePrinterName: invoicePrinter,
         tagPrinterName: tagPrinter,
-        receiptPaperSize
+        receiptPaperSize,
+        tagPaperSize
       })
       showToast('Printer settings saved', 'success')
     } catch {
@@ -646,15 +816,14 @@ function PrinterSection({
           onChange={setTagPrinter}
         />
 
-        {/* Receipt / Tag paper size */}
+        {/* Receipt paper size */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-0.5">
-            Receipt &amp; Tag Paper Size
+            Receipt Paper Size
           </label>
           <p className="text-xs text-gray-400 mb-1.5">
-            Match this to the roll paper loaded in your receipt / tag printer. &quot;Auto&quot; lets
-            the Windows printer driver decide — recommended if your driver already has the correct
-            paper configured.
+            Match this to the roll paper in your receipt printer. &quot;Auto&quot; lets the Windows
+            driver decide — recommended if the driver already has the correct paper configured.
           </p>
           <select
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
@@ -665,6 +834,29 @@ function PrinterSection({
             <option value="80mm">80 mm roll — most thermal receipt printers</option>
             <option value="72mm">72 mm roll</option>
             <option value="58mm">58 mm roll — compact thermal printers</option>
+            <option value="Letter">US Letter (8.5 × 11 in)</option>
+            <option value="A4">A4 (210 × 297 mm)</option>
+          </select>
+        </div>
+
+        {/* Tag / label paper size */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-0.5">
+            Price Tag Paper Size
+          </label>
+          <p className="text-xs text-gray-400 mb-1.5">
+            Match this to the label stock loaded in your tag / label printer. Can differ from the
+            receipt paper size if you use a separate label printer.
+          </p>
+          <select
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+            value={tagPaperSize}
+            onChange={(e) => setTagPaperSize(e.target.value)}
+          >
+            <option value="auto">Auto — use printer driver default (recommended)</option>
+            <option value="80mm">80 mm roll</option>
+            <option value="72mm">72 mm roll</option>
+            <option value="58mm">58 mm roll — compact label printers</option>
             <option value="Letter">US Letter (8.5 × 11 in)</option>
             <option value="A4">A4 (210 × 297 mm)</option>
           </select>
@@ -1023,10 +1215,7 @@ export function SettingsScreen() {
       <div className="flex-1 overflow-y-auto p-6 space-y-6 max-w-2xl">
 
         {/* Store Logo */}
-        <section className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-base font-semibold text-gray-900 mb-1 flex items-center gap-2">
-            <ImageIcon size={16} className="text-blue-500" /> Store Logo
-          </h2>
+        <SectionAccordion id="logo" title="Store Logo" icon={<ImageIcon size={16} className="text-blue-500" />} defaultOpen>
           <p className="text-xs text-gray-500 mb-4">
             Shown on the login screen, sidebar, customer display, and printed receipts. PNG or JPG, max 500 KB.
           </p>
@@ -1064,22 +1253,20 @@ export function SettingsScreen() {
               <p className="text-xs text-gray-400">Recommended: PNG with transparent background, at least 200px wide.</p>
             </div>
           </div>
-        </section>
+        </SectionAccordion>
 
         {/* Store Information */}
-        <section className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-base font-semibold text-gray-900 mb-4">Store Information</h2>
+        <SectionAccordion id="store_info" title="Store Information" defaultOpen>
           <div className="space-y-4">
             <Input label="Store Name" value={settings.storeName ?? ''} onChange={field('storeName')} />
             <Input label="Address" value={settings.storeAddress ?? ''} onChange={field('storeAddress')} />
             <Input label="Phone" value={settings.storePhone ?? ''} onChange={field('storePhone')} />
             <Input label="Terminal Name (e.g. Terminal 1, Register A)" value={settings.terminalName ?? ''} onChange={field('terminalName')} placeholder="Terminal 1" />
           </div>
-        </section>
+        </SectionAccordion>
 
         {/* Tax Settings */}
-        <section className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-base font-semibold text-gray-900 mb-4">Tax Settings</h2>
+        <SectionAccordion id="tax" title="Tax Settings">
           <div className="space-y-4">
             <div className="flex items-center justify-between py-1">
               <div>
@@ -1110,11 +1297,10 @@ export function SettingsScreen() {
               />
             </div>
           </div>
-        </section>
+        </SectionAccordion>
 
         {/* Payment Methods */}
-        <section className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-base font-semibold text-gray-900 mb-1">Payment Methods</h2>
+        <SectionAccordion id="payment_methods" title="Payment Methods">
           <p className="text-xs text-gray-500 mb-4">Choose which payment methods appear on the checkout screen.</p>
           <div className="space-y-3">
             {([
@@ -1152,11 +1338,10 @@ export function SettingsScreen() {
               )
             })}
           </div>
-        </section>
+        </SectionAccordion>
 
         {/* Currency */}
-        <section className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-base font-semibold text-gray-900 mb-1">Currency</h2>
+        <SectionAccordion id="currency" title="Currency">
           <p className="text-xs text-gray-500 mb-4">
             Choose the default display currency. All product prices will be shown in this currency.
           </p>
@@ -1252,12 +1437,10 @@ export function SettingsScreen() {
               Rate: 1 KYD = {rate.toFixed(4)} USD | 1 USD = {(1 / rate).toFixed(4)} KYD
             </p>
           </div>
-        </section>
+        </SectionAccordion>
 
-        {/* Receipts */}
         {/* Receipt Templates */}
-        <section className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-base font-semibold text-gray-900 mb-1">Receipt Templates</h2>
+        <SectionAccordion id="receipts" title="Receipt Templates">
           <p className="text-xs text-gray-500 mb-4">Choose how printed receipts look.</p>
           <div className="space-y-4">
             <div>
@@ -1415,11 +1598,10 @@ export function SettingsScreen() {
               />
             </div>
           </div>
-        </section>
+        </SectionAccordion>
 
         {/* Invoice Settings */}
-        <section className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-base font-semibold text-gray-900 mb-1">Invoice Settings</h2>
+        <SectionAccordion id="invoices" title="Invoice Settings">
           <p className="text-xs text-gray-500 mb-4">Invoices are formal A4 documents printed from the Orders screen.</p>
           <div className="space-y-4">
             {/* Colors & Branding */}
@@ -1518,17 +1700,18 @@ export function SettingsScreen() {
               />
             </div>
           </div>
-        </section>
+        </SectionAccordion>
 
+        <SectionAccordion id="printers" title="Hardware / Printers">
         <PrinterSection
           settings={settings}
           onSave={savePatches}
           showToast={showToast}
         />
+        </SectionAccordion>
 
         {/* Loyalty */}
-        <section className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-base font-semibold text-gray-900 mb-4">Loyalty Program</h2>
+        <SectionAccordion id="loyalty" title="Loyalty Program">
           <Input
             label="Points earned per dollar spent"
             value={settings.loyaltyPointsPerDollar ?? ''}
@@ -1536,11 +1719,10 @@ export function SettingsScreen() {
             type="number"
             min="0"
           />
-        </section>
+        </SectionAccordion>
 
         {/* Email Settings */}
-        <section className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-base font-semibold text-gray-900 mb-1">Email Settings</h2>
+        <SectionAccordion id="email" title="Email Settings">
           <p className="text-xs text-gray-500 mb-4">
             Configure SMTP to email receipts and invoices to customers. Works with Gmail, Outlook, SendGrid, or any SMTP server.
           </p>
@@ -1590,16 +1772,13 @@ export function SettingsScreen() {
               For Gmail: use an <a href="https://myaccount.google.com/apppasswords" className="text-blue-500 underline" target="_blank" rel="noreferrer">App Password</a> with 2FA enabled.
             </p>
           </div>
-        </section>
+        </SectionAccordion>
 
         {/* Multi-Terminal Sync Server */}
         <SyncServerSection settings={settings} field={field} onSave={handleSave} showToast={showToast} />
 
         {/* Admin Web Dashboard */}
-        <section className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-base font-semibold text-gray-900 mb-1 flex items-center gap-2">
-            <Monitor size={16} className="text-gray-500" /> Web Dashboard
-          </h2>
+        <SectionAccordion id="dashboard" title="Web Dashboard" icon={<Monitor size={16} className="text-gray-500" />}>
           <p className="text-xs text-gray-500 mb-4">
             Set a PIN to log in to the browser-based admin dashboard (<code className="text-blue-600">http://&lt;this-machine&gt;:3030</code>).
             Only applies when this machine is running as a <strong>Sync Server</strong>.
@@ -1617,13 +1796,10 @@ export function SettingsScreen() {
               Minimum 4 digits. You can also grant dashboard access per-staff-member in the Staff screen.
             </p>
           </div>
-        </section>
+        </SectionAccordion>
 
         {/* System */}
-        <section className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-base font-semibold text-gray-900 mb-1 flex items-center gap-2">
-            <RotateCcw size={16} className="text-gray-500" /> System
-          </h2>
+        <SectionAccordion id="system" title="System" icon={<RotateCcw size={16} className="text-gray-500" />}>
           <p className="text-xs text-gray-500 mb-4">
             Re-run the initial setup wizard to change this machine's role (Standalone, Sync Server, or Terminal).
           </p>
@@ -1638,7 +1814,7 @@ export function SettingsScreen() {
           >
             <RotateCcw size={14} /> Re-run Setup Wizard
           </button>
-        </section>
+        </SectionAccordion>
 
         {/* QuickBooks / Accounting Sync — hidden until QBO troubleshooting is complete */}
         {false && <section className="bg-white rounded-xl border border-gray-200 p-6">
@@ -1739,11 +1915,9 @@ export function SettingsScreen() {
         </section>}
 
         {/* Categories */}
-        <section className="bg-white rounded-xl border border-gray-200 p-6">
+        <SectionAccordion id="categories" title="Categories" icon={<FolderOpen size={16} className="text-blue-500" />}>
           <div className="flex items-center justify-between mb-1">
-            <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
-              <FolderOpen size={16} className="text-blue-500" /> Categories
-            </h2>
+            <p className="text-xs text-gray-500">Organise products into categories for easier browsing.</p>
             {!catAdding && (
               <button
                 type="button"
@@ -1754,7 +1928,7 @@ export function SettingsScreen() {
               </button>
             )}
           </div>
-          <p className="text-xs text-gray-500 mb-4">Organise products into categories for easier browsing.</p>
+          <div className="mb-4" />
 
           <div className="space-y-2">
             {categories.map((cat) => (
@@ -1833,11 +2007,10 @@ export function SettingsScreen() {
               <p className="text-sm text-gray-400 text-center py-4">No categories yet — add one above.</p>
             )}
           </div>
-        </section>
+        </SectionAccordion>
 
         {/* Peripherals */}
-        <section className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-base font-semibold text-gray-900 mb-1">Peripherals</h2>
+        <SectionAccordion id="peripherals" title="Peripherals">
           <p className="text-xs text-gray-500 mb-5">
             Customer-facing displays show cart contents and totals in real time.
           </p>
@@ -1987,7 +2160,7 @@ export function SettingsScreen() {
               </div>
             )}
           </div>
-        </section>
+        </SectionAccordion>
 
       </div>
     </div>

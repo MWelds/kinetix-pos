@@ -256,10 +256,10 @@ export function registerIpcHandlers(): void {
     return printHtml(html, 'invoice', printerName, true)
   })
 
-  // Price tag — treated the same as receipts (narrow paper, no margins)
+  // Price tag — uses its own paper size setting (independent of receipt paper size)
   ipcMain.handle(IPC.TAG_PRINT, async (_e, html: string) => {
     const printerName = settingsService.get('tagPrinterName')?.trim() ?? ''
-    const paperSize   = settingsService.get('receiptPaperSize')?.trim() || 'auto'
+    const paperSize   = settingsService.get('tagPaperSize')?.trim() || 'auto'
     return printHtml(html, 'tag', printerName, false, receiptPrintOpts(paperSize))
   })
 
@@ -556,5 +556,85 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.EMBEDDED_SERVER_STATUS, () => getEmbeddedServerStatus())
 
   // Admin web dashboard
+
+  /**
+   * Scan the local subnet for running Kinetix POS server nodes.
+   *
+   * Strategy: find the first non-loopback IPv4 address, derive the /24 subnet,
+   * then race HTTP probes to each host:port combination in parallel with a short
+   * timeout. Returns an array of discovered server base URLs.
+   *
+   * Common ports checked: the configured embeddedServerPort plus 3030–3035
+   * so we find servers even if they run on a non-default port.
+   */
+  ipcMain.handle(IPC.SYNC_DISCOVER, async (): Promise<string[]> => {
+    const { get } = await import('http')
+
+    // 1. Find our LAN IP to determine the subnet
+    const nets = networkInterfaces()
+    let localIp = ''
+    for (const list of Object.values(nets)) {
+      for (const iface of list ?? []) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+          localIp = iface.address
+          break
+        }
+      }
+      if (localIp) break
+    }
+    if (!localIp) return []
+
+    // 2. Build the /24 host list (exclude .0 and .255)
+    const parts = localIp.split('.')
+    const prefix = parts.slice(0, 3).join('.')
+    const ownLast = parseInt(parts[3], 10)
+
+    // Ports to probe — configured port + the default range
+    const configuredPort = parseInt(settingsService.get('embeddedServerPort') || '3030', 10)
+    const ports = [...new Set([configuredPort, 3030, 3031, 3032])]
+
+    /**
+     * Probe a single host:port. Resolves to the URL string if a Kinetix POS
+     * server is detected, or null if not reachable within the timeout.
+     */
+    function probe(host: string, port: number): Promise<string | null> {
+      return new Promise((resolve) => {
+        const url = `http://${host}:${port}/sync/status`
+        const req = get(url, { timeout: 400 }, (res) => {
+          // Any 2xx from /sync/status is good enough — collect body to confirm
+          let body = ''
+          res.on('data', (chunk: Buffer) => { body += chunk.toString() })
+          res.on('end', () => {
+            try {
+              const json = JSON.parse(body) as Record<string, unknown>
+              // Kinetix POS servers return { ok: true, mode: 'server' }
+              if (json.ok === true) {
+                resolve(`http://${host}:${port}`)
+              } else {
+                resolve(null)
+              }
+            } catch {
+              resolve(null)
+            }
+          })
+        })
+        req.on('error', () => resolve(null))
+        req.on('timeout', () => { req.destroy(); resolve(null) })
+      })
+    }
+
+    // 3. Build all probes — skip our own IP to avoid discovering ourselves
+    const probes: Promise<string | null>[] = []
+    for (let last = 1; last <= 254; last++) {
+      if (last === ownLast) continue
+      const host = `${prefix}.${last}`
+      for (const port of ports) {
+        probes.push(probe(host, port))
+      }
+    }
+
+    const results = await Promise.all(probes)
+    return [...new Set(results.filter((r): r is string => r !== null))]
+  })
 
 }

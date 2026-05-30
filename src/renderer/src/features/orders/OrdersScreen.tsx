@@ -149,7 +149,9 @@ export function OrdersScreen() {
     items: OrderItem[],
     payments: Payment[],
     storeName: string,
-    cfg: { template: string; showLogo: boolean; footer: string; logoBase64: string }
+    cfg: { template: string; showLogo: boolean; footer: string; logoBase64: string },
+    storeAddress = '',
+    storePhone = ''
   ): string {
     const METHOD_LABELS: Record<string, string> = {
       cash: 'Cash', card: 'Card',
@@ -206,6 +208,7 @@ export function OrdersScreen() {
 </style></head><body>
   ${logoHtml}
   <h1>${esc(storeName)}</h1>
+  ${storeAddress || storePhone ? `<p class="center meta">${[storeAddress, storePhone].filter(Boolean).map(esc).join(' &bull; ')}</p>` : ''}
   <p class="center meta">*** REPRINT ***</p>
   <p class="center meta">Order #${order.orderNumber}</p>
   <p class="center meta">${new Date(order.createdAt).toLocaleString()}</p>
@@ -262,6 +265,7 @@ export function OrdersScreen() {
   <div class="header">
     ${cfg.showLogo && cfg.logoBase64 ? `<img src="${cfg.logoBase64}" style="max-height:50px;max-width:180px;object-fit:contain;margin-bottom:8px;display:block;margin-left:auto;margin-right:auto" alt="Logo"/>` : ''}
     <h1>${esc(storeName)}</h1>
+    ${storeAddress || storePhone ? `<p style="font-size:11px;color:#94a3b8;margin-top:2px">${[storeAddress, storePhone].filter(Boolean).map(esc).join(' &bull; ')}</p>` : ''}
     <p>REPRINT &bull; Order #${order.orderNumber} &bull; ${new Date(order.createdAt).toLocaleString()}</p>
   </div>
   <div class="body">
@@ -293,7 +297,7 @@ export function OrdersScreen() {
       pre{white-space:pre-wrap;margin:0}
       @media print{body{width:100%;padding:4px}}
     </style></head><body>${logoHtml}<pre>${esc(storeName)}
-REPRINT #${order.orderNumber} ${new Date(order.createdAt).toLocaleDateString()}
+${storeAddress ? esc(storeAddress) + '\n' : ''}${storePhone ? esc(storePhone) + '\n' : ''}REPRINT #${order.orderNumber} ${new Date(order.createdAt).toLocaleDateString()}
 ${'='.repeat(32)}
 ${items.map((i) => `${i.quantity}x ${esc(i.productName)}${i.variantName ? ` (${esc(i.variantName)})` : ''} ${fmtKyd((i.unitPrice - i.discountAmount) * i.quantity)}`).join('\n')}
 ${'-'.repeat(32)}
@@ -318,7 +322,7 @@ ${esc(cfg.footer)}</pre></body></html>`
         logoBase64: s.logoBase64 ?? '',
       }
       const storeName = s.storeName ?? 'Kinetix POS'
-      const html = buildReprintReceiptHtml(order, items, payments, storeName, cfg)
+      const html = buildReprintReceiptHtml(order, items, payments, storeName, cfg, s.storeAddress ?? '', s.storePhone ?? '')
       const result = await api.receipt.print(html)
       if (result?.success) {
         showToast('Receipt reprinted', 'success')

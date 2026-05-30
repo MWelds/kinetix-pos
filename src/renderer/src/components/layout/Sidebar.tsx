@@ -12,9 +12,10 @@ import { ROUTES, ROLE_LEVEL } from '../../constants'
 import { ShiftModal } from '../../features/staff/ShiftModal'
 import { EndOfDayModal } from '../../features/staff/EndOfDayModal'
 
-/** Small sync-status pill shown at the bottom of the sidebar. */
+/** Sync status bar + manual Sync Now button shown at the bottom of the sidebar. */
 function SyncIndicator() {
   const [syncState, setSyncState] = useState<{ status: string; error: string | null; lastSyncAt: string | null } | null>(null)
+  const [syncing, setSyncing] = useState(false)
 
   useEffect(() => {
     api.sync.getState().then(setSyncState).catch(() => {})
@@ -26,26 +27,49 @@ function SyncIndicator() {
 
   if (!syncState || syncState.status === 'disabled') return null
 
+  const isSyncing = syncState.status === 'syncing' || syncing
+
   const icon =
-    syncState.status === 'syncing'  ? <RefreshCw size={11} className="animate-spin" /> :
+    isSyncing                       ? <RefreshCw size={11} className="animate-spin" /> :
     syncState.status === 'synced'   ? <CheckCircle2 size={11} /> :
     syncState.status === 'error'    ? <AlertCircle size={11} /> :
     <WifiOff size={11} />
 
   const color =
     syncState.status === 'synced'  ? 'text-green-400' :
-    syncState.status === 'syncing' ? 'text-blue-400'  :
+    isSyncing                      ? 'text-blue-400'  :
     syncState.status === 'error'   ? 'text-red-400'   : 'text-gray-400'
 
   const label =
-    syncState.status === 'syncing' ? 'Syncing\u2026' :
-    syncState.status === 'synced'  ? 'Synced'   :
+    isSyncing                      ? 'Syncing\u2026' :
+    syncState.status === 'synced'  ? `Synced${syncState.lastSyncAt ? ' ' + new Date(syncState.lastSyncAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}` :
     syncState.status === 'error'   ? 'Sync error' : 'Offline'
 
+  async function handleSyncNow() {
+    if (isSyncing) return
+    setSyncing(true)
+    try {
+      await api.sync.runNow()
+    } catch { /* error state shown via onStateChange */ }
+    finally { setSyncing(false) }
+  }
+
   return (
-    <div className={`flex items-center gap-1.5 px-2 py-1 ${color} text-xs`} title={syncState.error ?? label}>
-      {icon}
-      <span>{label}</span>
+    <div className="border-t border-gray-800 px-3 py-2 flex items-center justify-between gap-2">
+      <div className={`flex items-center gap-1.5 ${color} text-xs min-w-0`} title={syncState.error ?? label}>
+        {icon}
+        <span className="truncate">{label}</span>
+      </div>
+      <button
+        type="button"
+        onClick={handleSyncNow}
+        disabled={isSyncing}
+        title="Sync now"
+        className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      >
+        <RefreshCw size={10} className={isSyncing ? 'animate-spin' : ''} />
+        Sync
+      </button>
     </div>
   )
 }

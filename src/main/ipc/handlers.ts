@@ -89,6 +89,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.PRODUCTS_GET_COMPONENTS, (_e, compositeProductId: string) =>
     productService.getComponents(compositeProductId)
   )
+  ipcMain.handle(IPC.PRODUCTS_IMAGE_URL, (_e, id: string) =>
+    productService.getImageUrl(id)
+  )
   ipcMain.handle(
     IPC.PRODUCTS_SET_COMPONENTS,
     (

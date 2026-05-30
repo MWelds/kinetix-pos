@@ -17,7 +17,8 @@ const api = {
     setComponents: (
       compositeProductId: string,
       components: Array<{ componentProductId: string; quantity: number }>
-    ) => ipcRenderer.invoke(IPC.PRODUCTS_SET_COMPONENTS, compositeProductId, components)
+    ) => ipcRenderer.invoke(IPC.PRODUCTS_SET_COMPONENTS, compositeProductId, components),
+    imageUrl: (id: string) => ipcRenderer.invoke(IPC.PRODUCTS_IMAGE_URL, id)
   },
 
   // Categories

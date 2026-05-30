@@ -10,6 +10,7 @@ export const IPC = {
   PRODUCTS_BY_BARCODE: 'products:byBarcode',
   PRODUCTS_GET_COMPONENTS: 'products:getComponents',
   PRODUCTS_SET_COMPONENTS: 'products:setComponents',
+  PRODUCTS_IMAGE_URL: 'products:imageUrl',
 
   // Categories
   CATEGORIES_LIST: 'categories:list',

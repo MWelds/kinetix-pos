@@ -34,7 +34,9 @@ export const api = {
     setComponents: (
       compositeProductId: string,
       components: Array<{ componentProductId: string; quantity: number }>
-    ): Promise<void> => bridge.products.setComponents(compositeProductId, components)
+    ): Promise<void> => bridge.products.setComponents(compositeProductId, components),
+    /** Fetch only the imageUrl for a product — used for lazy loading base64 images */
+    imageUrl: (id: string): Promise<string | null> => bridge.products.imageUrl(id)
   },
 
   categories: {

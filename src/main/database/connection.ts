@@ -28,6 +28,12 @@ export function getDatabase(): ReturnType<typeof drizzle<typeof schema>> {
   sqlite.pragma('journal_mode = WAL')
   sqlite.pragma('foreign_keys = ON')
   sqlite.pragma('synchronous = NORMAL')
+  // 64 MB page cache — negative value = KB; reduces disk I/O on large product catalogs
+  sqlite.pragma('cache_size = -65536')
+  // Temp tables stay in memory rather than being spilled to disk
+  sqlite.pragma('temp_store = MEMORY')
+  // Memory-mapped I/O for fast sequential reads (256 MB window)
+  sqlite.pragma('mmap_size = 268435456')
 
   db = drizzle(sqlite, { schema })
   runMigrations(sqlite)

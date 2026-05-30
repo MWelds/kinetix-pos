@@ -1,7 +1,22 @@
 import { eq, like, or, and, inArray } from 'drizzle-orm'
-import { getDatabase } from '../database/connection'
+import { getDatabase, getSqlite } from '../database/connection'
 import * as schema from '../database/schema'
 import { generateId } from '../lib/id'
+
+/**
+ * Sentinel value placed in `imageUrl` on list responses when a product has a
+ * locally-stored base64 image.  Sending the full data URI over IPC for every
+ * product in a large catalog would serialize megabytes of JSON on every category
+ * switch.  The renderer detects this sentinel and fetches the real URL lazily
+ * via the PRODUCTS_IMAGE_URL channel.
+ */
+export const LOCAL_IMAGE_SENTINEL = '__local__'
+
+/** Strip large base64 data-URIs from a row before serialising over IPC. */
+function slimImageUrl(url: string | null | undefined): string | null {
+  if (!url) return null
+  return url.startsWith('data:') ? LOCAL_IMAGE_SENTINEL : url
+}
 
 export interface CreateProductInput {
   name: string
@@ -153,6 +168,7 @@ export const productService = {
       .all()
     const base = rows.map((r) => ({
       ...r,
+      imageUrl: slimImageUrl(r.imageUrl),
       unitsPerPack: r.unitsPerPack ?? 1,
       individualProductId: r.individualProductId ?? null,
       packProductId: r.packProductId ?? null,
@@ -185,6 +201,7 @@ export const productService = {
       .all()
     const base = rows.map((r) => ({
       ...r,
+      imageUrl: slimImageUrl(r.imageUrl),
       unitsPerPack: r.unitsPerPack ?? 1,
       individualProductId: r.individualProductId ?? null,
       packProductId: r.packProductId ?? null,
@@ -216,7 +233,7 @@ export const productService = {
     return applyPackQuantities(db, base)[0]
   },
 
-  /** Get a single product by ID */
+  /** Get a single product by ID (includes full imageUrl) */
   getById(id: string): ProductWithInventory | null {
     const db = getDatabase()
     const rows = db
@@ -236,6 +253,19 @@ export const productService = {
       quantity: rows[0].quantity ?? 0
     }]
     return applyPackQuantities(db, base)[0]
+  },
+
+  /**
+   * Return only the imageUrl for a single product.
+   * Used by the renderer to lazily load large base64 images after the product
+   * grid has already painted — avoids serialising megabytes of base64 over IPC
+   * on every category switch.
+   */
+  getImageUrl(id: string): string | null {
+    const row = getSqlite()
+      .prepare('SELECT image_url FROM products WHERE id = ?')
+      .get(id) as { image_url: string | null } | undefined
+    return row?.image_url ?? null
   },
 
   /**

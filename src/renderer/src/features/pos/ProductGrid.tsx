@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, memo } from 'react'
 import { Search, Grid, Tag } from 'lucide-react'
 import { api } from '../../lib/api'
 import { useCartStore } from '../../stores/cart.store'
@@ -7,6 +7,32 @@ import { Input, Spinner, Badge } from '../../components/ui'
 import { useCurrencyStore } from '../../stores/currency.store'
 import type { Product, Category } from '../../types'
 import { BARCODE_SCAN_TIMEOUT_MS } from '../../constants'
+
+/** Sentinel placed in imageUrl when the actual data is a large base64 blob stored locally. */
+const LOCAL_IMAGE_SENTINEL = '__local__'
+
+/**
+ * Module-level cache for product lists.
+ * Key: category id (or '' for "All"). Value: { data, fetchedAt }.
+ * Entries expire after CACHE_TTL_MS. Call invalidateProductCache() after mutations.
+ */
+const CACHE_TTL_MS = 60_000 // 1 minute
+interface CacheEntry { data: Product[]; fetchedAt: number }
+const productCache = new Map<string, CacheEntry>()
+
+export function invalidateProductCache(): void {
+  productCache.clear()
+}
+
+function getCached(key: string): Product[] | null {
+  const entry = productCache.get(key)
+  if (!entry) return null
+  if (Date.now() - entry.fetchedAt > CACHE_TTL_MS) {
+    productCache.delete(key)
+    return null
+  }
+  return entry.data
+}
 
 export function ProductGrid() {
   const [products, setProducts] = useState<Product[]>([])
@@ -22,9 +48,17 @@ export function ProductGrid() {
   const barcodeTimer = useRef<ReturnType<typeof setTimeout>>()
 
   const loadProducts = useCallback(async () => {
+    const cacheKey = selectedCategory ?? ''
+    const cached = getCached(cacheKey)
+    if (cached) {
+      setProducts(cached)
+      setLoading(false)
+      return
+    }
     setLoading(true)
     try {
       const data = await api.products.list(selectedCategory ?? undefined)
+      productCache.set(cacheKey, { data, fetchedAt: Date.now() })
       setProducts(data)
     } catch {
       showToast('Failed to load products', 'error')
@@ -57,7 +91,6 @@ export function ProductGrid() {
   // Global barcode scanner listener
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      // Scanner sends chars faster than BARCODE_SCAN_TIMEOUT_MS between each
       if (e.key === 'Enter' && barcodeBuffer.current.length > 3) {
         const code = barcodeBuffer.current
         barcodeBuffer.current = ''
@@ -160,10 +193,38 @@ export function ProductGrid() {
   )
 }
 
-function ProductCard({ product, onAdd }: { product: Product; onAdd: () => void }) {
+interface ProductCardProps {
+  product: Product
+  onAdd: () => void
+}
+
+/**
+ * Memoised product card — only re-renders when its own product data changes.
+ *
+ * Base64 images are stripped from the list IPC response to keep payloads small.
+ * When the card detects the LOCAL_IMAGE_SENTINEL it fetches the real image lazily
+ * so the grid paints immediately and images trickle in afterwards.
+ */
+const ProductCard = memo(function ProductCard({ product, onAdd }: ProductCardProps) {
   const fmtRaw = useCurrencyStore((s) => s.fmtRaw)
-  // Service products (trackStock=false) are always available — no out-of-stock state
   const isOutOfStock = product.trackStock && product.quantity <= 0
+
+  // Start with whatever the list gave us. If it's the sentinel, we'll fetch lazily.
+  const [imgSrc, setImgSrc] = useState<string | null>(
+    product.imageUrl === LOCAL_IMAGE_SENTINEL ? null : product.imageUrl
+  )
+
+  useEffect(() => {
+    if (product.imageUrl !== LOCAL_IMAGE_SENTINEL) {
+      setImgSrc(product.imageUrl)
+      return
+    }
+    let cancelled = false
+    api.products.imageUrl(product.id).then((url) => {
+      if (!cancelled) setImgSrc(url)
+    })
+    return () => { cancelled = true }
+  }, [product.id, product.imageUrl])
 
   return (
     <button
@@ -176,13 +237,19 @@ function ProductCard({ product, onAdd }: { product: Product; onAdd: () => void }
         'min-h-[120px] disabled:opacity-50 disabled:cursor-not-allowed'
       ].join(' ')}
     >
-      {/* Product image / color swatch */}
+      {/* Product image / colour swatch */}
       <div
-        className="w-full h-16 rounded-lg mb-2 flex items-center justify-center"
+        className="w-full h-16 rounded-lg mb-2 flex items-center justify-center overflow-hidden"
         style={{ backgroundColor: product.categoryColor ? `${product.categoryColor}20` : '#f1f5f9' }}
       >
-        {product.imageUrl ? (
-          <img src={product.imageUrl} alt={product.name} className="w-full h-full object-contain rounded-lg" />
+        {imgSrc ? (
+          <img
+            src={imgSrc}
+            alt={product.name}
+            loading="lazy"
+            decoding="async"
+            className="w-full h-full object-contain rounded-lg"
+          />
         ) : (
           <Tag size={24} style={{ color: product.categoryColor ?? '#94a3b8' }} />
         )}
@@ -196,17 +263,16 @@ function ProductCard({ product, onAdd }: { product: Product; onAdd: () => void }
         {fmtRaw(product.basePrice)}
       </p>
 
-      {/* Stock badge (only for tracked products) */}
+      {/* Stock badge — only for tracked products */}
       {product.trackStock && product.quantity <= 5 && product.quantity > 0 && (
         <Badge color="yellow" className="mt-1 text-[10px]">
           Low: {product.quantity} left
         </Badge>
       )}
 
-      {/* Out-of-stock overlay (only for tracked products) */}
       {isOutOfStock && (
         <Badge color="red" className="mt-1 text-[10px]">Out of stock</Badge>
       )}
     </button>
   )
-}
+})

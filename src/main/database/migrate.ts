@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 
 /** Schema version — increment whenever tables change */
-const SCHEMA_VERSION = 13
+const SCHEMA_VERSION = 14
 
 /**
  * Runs idempotent DDL migrations on first launch.
@@ -57,6 +57,9 @@ export function runMigrations(sqlite: Database.Database): void {
   }
   if (currentVersion < 13) {
     applyV13(sqlite)
+  }
+  if (currentVersion < 14) {
+    applyV14(sqlite)
   }
 
   if (currentVersion < SCHEMA_VERSION) {
@@ -514,4 +517,54 @@ function applyV10(sqlite: Database.Database): void {
   } catch {
     // Column already exists — idempotent
   }
+}
+
+/**
+ * V14: Add performance indexes for common query patterns.
+ *
+ * Before this migration every product list query performed a full table scan.
+ * These indexes reduce category-filtered product lookups, barcode scans, text
+ * searches, inventory joins, and report-range queries from O(n) to O(log n).
+ * All are created with IF NOT EXISTS so the migration is fully idempotent.
+ */
+function applyV14(sqlite: Database.Database): void {
+  sqlite.exec(`
+    -- Product list: filter active products, optionally by category
+    CREATE INDEX IF NOT EXISTS idx_products_active_category
+      ON products (is_active, category_id);
+
+    -- Barcode lookup (byBarcode / scanner flow)
+    CREATE INDEX IF NOT EXISTS idx_products_barcode
+      ON products (barcode)
+      WHERE barcode IS NOT NULL;
+
+    -- Text search on name and SKU
+    CREATE INDEX IF NOT EXISTS idx_products_name
+      ON products (name);
+    CREATE INDEX IF NOT EXISTS idx_products_sku
+      ON products (sku);
+
+    -- Inventory join: product_id is the FK used in every product SELECT
+    CREATE INDEX IF NOT EXISTS idx_inventory_product_id
+      ON inventory (product_id);
+
+    -- Order queries filtered by status + date range (reports, EOD)
+    CREATE INDEX IF NOT EXISTS idx_orders_status_created
+      ON orders (status, created_at);
+
+    -- Order items join used by reports and receipt reprints
+    CREATE INDEX IF NOT EXISTS idx_order_items_order_id
+      ON order_items (order_id);
+    CREATE INDEX IF NOT EXISTS idx_order_items_product_id
+      ON order_items (product_id);
+
+    -- Payments join used by payment breakdown report
+    CREATE INDEX IF NOT EXISTS idx_payments_order_id
+      ON payments (order_id);
+
+    -- Customer lookup by email / phone (customer search)
+    CREATE INDEX IF NOT EXISTS idx_customers_email
+      ON customers (email)
+      WHERE email IS NOT NULL;
+  `)
 }

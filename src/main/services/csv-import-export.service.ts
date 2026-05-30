@@ -13,6 +13,68 @@ import { eq } from 'drizzle-orm'
 import { getDatabase } from '../database/connection'
 import * as schema from '../database/schema'
 import { generateId } from '../lib/id'
+import { readFileSync, existsSync } from 'fs'
+import { extname } from 'path'
+import * as http from 'http'
+import * as https from 'https'
+
+// ─── Image helpers ────────────────────────────────────────────────────────────
+
+/** Map of common image extensions → MIME types. */
+const MIME: Record<string, string> = {
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.png': 'image/png', '.gif': 'image/gif',
+  '.webp': 'image/webp', '.bmp': 'image/bmp',
+  '.svg': 'image/svg+xml'
+}
+
+/**
+ * Converts an image source to a base64 data URI suitable for storage.
+ * Accepts:
+ *  - Existing data URIs  (data:image/...)
+ *  - HTTP / HTTPS URLs   (fetched from the network)
+ *  - Local file paths    (read from disk — Windows or POSIX paths)
+ *
+ * Returns null (non-fatal) if the source is empty or cannot be loaded.
+ */
+async function fetchImageAsBase64(source: string): Promise<string | null> {
+  const s = source.trim()
+  if (!s) return null
+
+  // Already a data URI — accept as-is
+  if (s.startsWith('data:')) return s
+
+  // HTTP / HTTPS URL — fetch and convert
+  if (s.startsWith('http://') || s.startsWith('https://')) {
+    return new Promise((resolve) => {
+      const mod = s.startsWith('https://') ? https : http
+      const req = mod.get(s, { timeout: 10_000 }, (res) => {
+        if ((res.statusCode ?? 0) >= 300) { resolve(null); return }
+        const mime = res.headers['content-type']?.split(';')[0] ?? 'image/jpeg'
+        const chunks: Buffer[] = []
+        res.on('data', (c: Buffer) => chunks.push(c))
+        res.on('end', () => {
+          const b64 = Buffer.concat(chunks).toString('base64')
+          resolve(`data:${mime};base64,${b64}`)
+        })
+        res.on('error', () => resolve(null))
+      })
+      req.on('error', () => resolve(null))
+      req.on('timeout', () => { req.destroy(); resolve(null) })
+    })
+  }
+
+  // Local file path — read from disk
+  try {
+    if (!existsSync(s)) return null
+    const buf = readFileSync(s)
+    const ext = extname(s).toLowerCase()
+    const mime = MIME[ext] ?? 'image/jpeg'
+    return `data:${mime};base64,${buf.toString('base64')}`
+  } catch {
+    return null
+  }
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -122,9 +184,11 @@ function parseCsvLine(line: string): string[] {
  *
  * Optional columns:
  * barcode, description, category_name, cost_price, tax_rate,
- * stock_quantity, low_stock_threshold, is_active
+ * stock_quantity, low_stock_threshold, is_active,
+ * image_url (http/https URL, local file path, or data URI),
+ * image_path (alias for image_url — accepts local file paths)
  */
-export function importProductsCsv(csvText: string): ImportResult {
+export async function importProductsCsv(csvText: string): Promise<ImportResult> {
   const db = getDatabase()
   const rows = parseCsv(csvText)
   const result: ImportResult = { imported: 0, updated: 0, failed: 0, errors: [] }
@@ -143,6 +207,10 @@ export function importProductsCsv(csvText: string): ImportResult {
       if (isNaN(price) || price < 0) { result.failed++; result.errors.push(`${rowLabel}: invalid price`); continue }
 
       const now = new Date().toISOString()
+
+      // Resolve image — image_url takes precedence over image_path
+      const imageSource = row['image_url'] || row['image_path'] || ''
+      const imageUrl = imageSource ? await fetchImageAsBase64(imageSource) : null
 
       // Resolve category by name
       let categoryId: string | null = null
@@ -172,7 +240,7 @@ export function importProductsCsv(csvText: string): ImportResult {
       const isActive = row['is_active'] ? row['is_active'].toLowerCase() !== 'false' && row['is_active'] !== '0' : true
 
       if (existing) {
-        // Update existing product
+        // Update existing product — only overwrite image if a new one was supplied
         db.update(schema.products)
           .set({
             name,
@@ -183,6 +251,7 @@ export function importProductsCsv(csvText: string): ImportResult {
             costPrice: isNaN(costPrice ?? NaN) ? existing.costPrice : costPrice,
             taxRate: isNaN(taxRate ?? NaN) ? existing.taxRate : taxRate,
             isActive,
+            ...(imageUrl !== null ? { imageUrl } : {}),
             updatedAt: now
           })
           .where(eq(schema.products.id, existing.id))
@@ -223,6 +292,7 @@ export function importProductsCsv(csvText: string): ImportResult {
             taxRate: (!taxRate || isNaN(taxRate)) ? 0 : taxRate,
             isComposite: false,
             isActive,
+            imageUrl: imageUrl ?? null,
             createdAt: now, updatedAt: now
           })
           .run()
@@ -248,7 +318,7 @@ export function importProductsCsv(csvText: string): ImportResult {
   return result
 }
 
-/** Export all active products to a CSV string. */
+/** Export all active products to a CSV string (includes image_url column). */
 export function exportProductsCsv(): string {
   const db = getDatabase()
 
@@ -263,6 +333,7 @@ export function exportProductsCsv(): string {
       costPrice: schema.products.costPrice,
       taxRate: schema.products.taxRate,
       isActive: schema.products.isActive,
+      imageUrl: schema.products.imageUrl,
     })
     .from(schema.products)
     .leftJoin(schema.categories, eq(schema.products.categoryId, schema.categories.id))
@@ -278,7 +349,12 @@ export function exportProductsCsv(): string {
     if (prod) inventoryMap.set(prod.sku, { quantity: inv.quantity, lowStockThreshold: inv.lowStockThreshold })
   }
 
-  const headers = ['name', 'sku', 'barcode', 'description', 'category_name', 'price', 'cost_price', 'tax_rate', 'stock_quantity', 'low_stock_threshold', 'is_active']
+  const headers = [
+    'name', 'sku', 'barcode', 'description', 'category_name',
+    'price', 'cost_price', 'tax_rate',
+    'stock_quantity', 'low_stock_threshold', 'is_active',
+    'image_url'
+  ]
   const rows = [headers.join(',')]
 
   for (const p of products) {
@@ -287,7 +363,8 @@ export function exportProductsCsv(): string {
       p.name, p.sku, p.barcode ?? '', p.description ?? '',
       p.categoryName ?? '', p.basePrice, p.costPrice ?? '',
       p.taxRate, inv?.quantity ?? 0, inv?.lowStockThreshold ?? 5,
-      p.isActive ? 'true' : 'false'
+      p.isActive ? 'true' : 'false',
+      p.imageUrl ?? ''
     ]))
   }
 

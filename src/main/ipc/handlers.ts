@@ -495,7 +495,7 @@ export function registerIpcHandlers(): void {
   })
 
   // CSV bulk import / export
-  ipcMain.handle(IPC.CSV_IMPORT_PRODUCTS, (e, csvText: string) => {
+  ipcMain.handle(IPC.CSV_IMPORT_PRODUCTS, async (e, csvText: string) => {
     requireRole(e, 'manager')
     return csvImportExportService.importProducts(csvText)
   })

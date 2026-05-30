@@ -247,8 +247,8 @@ export function ProductsScreen() {
   })
 
   const PRODUCT_CSV_TEMPLATE = [
-    'name,sku,barcode,description,category_name,price,cost_price,tax_rate,stock_quantity,low_stock_threshold',
-    'Example Product,PROD-001,123456789,A sample product,General,9.99,4.00,0.08,50,5'
+    'name,sku,barcode,description,category_name,price,cost_price,tax_rate,stock_quantity,low_stock_threshold,is_active,image_url',
+    'Example Product,PROD-001,123456789,A sample product,General,9.99,4.00,0.08,50,5,true,https://example.com/image.jpg'
   ].join('\n')
 
   return (

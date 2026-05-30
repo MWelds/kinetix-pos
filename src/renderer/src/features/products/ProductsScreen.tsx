@@ -184,10 +184,17 @@ function ColorPicker({ value, onChange }: { value: string; onChange: (c: string)
 
 export function ProductsScreen() {
   const fmtRaw = useCurrencyStore((s) => s.fmtRaw)
+  const showToast = useUiStore((s) => s.showToast)
+
+  /** Current page of products (server-returned slice). */
   const [products, setProducts] = useState<Product[]>([])
+  /** Total matching rows in the DB — used for pagination math. */
+  const [total, setTotal] = useState(0)
   const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  /** Debounced copy of search — avoids a DB hit on every keypress. */
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [filterCategory, setFilterCategory] = useState('')
   const [editProduct, setEditProduct] = useState<Product | null>(null)
   const [showForm, setShowForm] = useState(false)
@@ -195,16 +202,62 @@ export function ProductsScreen() {
   const [tagProduct, setTagProduct] = useState<Product | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [batchTagProducts, setBatchTagProducts] = useState<Product[] | null>(null)
-  const showToast = useUiStore((s) => s.showToast)
+  const [page, setPage] = useState(0)
 
+  const PAGE_SIZE = 50
+
+  // ─── Debounce search input (250 ms) ─────────────────────────────────────────
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 250)
+    return () => clearTimeout(t)
+  }, [search])
+
+  // ─── Reset to page 0 whenever the search term or category filter changes ─────
+  // (useRef tracks the previous values so we don't reset on first mount)
+  const prevFilterRef = useRef<{ search: string; cat: string } | null>(null)
+  useEffect(() => {
+    if (prevFilterRef.current === null) {
+      prevFilterRef.current = { search: debouncedSearch, cat: filterCategory }
+      return
+    }
+    if (
+      prevFilterRef.current.search !== debouncedSearch ||
+      prevFilterRef.current.cat !== filterCategory
+    ) {
+      prevFilterRef.current = { search: debouncedSearch, cat: filterCategory }
+      setPage(0)
+    }
+  }, [debouncedSearch, filterCategory])
+
+  // ─── Load categories once on mount ──────────────────────────────────────────
+  const loadCategories = useCallback(async () => {
+    try {
+      setCategories(await api.categories.list())
+    } catch {
+      // Non-fatal; categories may just be empty
+    }
+  }, [])
+
+  useEffect(() => { loadCategories() }, [loadCategories])
+
+  // ─── Server-side paginated product load ──────────────────────────────────────
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [prods, cats] = await Promise.all([api.products.list(), api.categories.list()])
-      setProducts(prods)
-      setCategories(cats)
-    } finally { setLoading(false) }
-  }, [])
+      const result = await api.products.listPaginated({
+        search: debouncedSearch || undefined,
+        categoryId: filterCategory || undefined,
+        offset: page * PAGE_SIZE,
+        limit: PAGE_SIZE
+      })
+      setProducts(result.items)
+      setTotal(result.total)
+    } catch {
+      showToast('Failed to load products', 'error')
+    } finally {
+      setLoading(false)
+    }
+  }, [debouncedSearch, filterCategory, page, showToast])
 
   useEffect(() => { load() }, [load])
 
@@ -234,17 +287,12 @@ export function ProductsScreen() {
   }
 
   function toggleSelectAll() {
-    const allSelected = filtered.length > 0 && filtered.every((p) => selectedIds.has(p.id))
-    setSelectedIds(allSelected ? new Set() : new Set(filtered.map((p) => p.id)))
+    // "Select all" applies to the current page only
+    const allSelected = products.length > 0 && products.every((p) => selectedIds.has(p.id))
+    setSelectedIds(allSelected ? new Set() : new Set(products.map((p) => p.id)))
   }
 
-  const filtered = products.filter((p) => {
-    const matchSearch = !search ||
-      p.name.toLowerCase().includes(search.toLowerCase()) ||
-      p.sku.toLowerCase().includes(search.toLowerCase())
-    const matchCat = !filterCategory || p.categoryId === filterCategory
-    return matchSearch && matchCat
-  })
+  const totalPages = Math.ceil(total / PAGE_SIZE)
 
   const PRODUCT_CSV_TEMPLATE = [
     'name,sku,barcode,description,category_name,price,cost_price,tax_rate,stock_quantity,low_stock_threshold,is_active,image_url',
@@ -306,6 +354,7 @@ export function ProductsScreen() {
 
       <div className="flex-1 overflow-y-auto p-6">
         {loading ? <PageSpinner /> : (
+          <>
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
@@ -313,11 +362,11 @@ export function ProductsScreen() {
                   <th className="px-4 py-3 w-10">
                     <input
                       type="checkbox"
-                      checked={filtered.length > 0 && filtered.every((p) => selectedIds.has(p.id))}
-                      ref={(el) => { if (el) el.indeterminate = selectedIds.size > 0 && !filtered.every((p) => selectedIds.has(p.id)) }}
+                      checked={products.length > 0 && products.every((p) => selectedIds.has(p.id))}
+                      ref={(el) => { if (el) el.indeterminate = selectedIds.size > 0 && !products.every((p) => selectedIds.has(p.id)) }}
                       onChange={toggleSelectAll}
                       className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                      aria-label="Select all products"
+                      aria-label="Select all products on this page"
                     />
                   </th>
                   {['Product', 'SKU', 'Category', 'Price', 'Stock', 'Status', 'Actions'].map((h) => (
@@ -326,7 +375,7 @@ export function ProductsScreen() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {filtered.map((product) => (
+                {products.map((product) => (
                   <tr key={product.id} className={`hover:bg-gray-50 transition-colors ${selectedIds.has(product.id) ? 'bg-blue-50' : ''}`}>
                     <td className="px-4 py-3 w-10">
                       <input
@@ -429,10 +478,53 @@ export function ProductsScreen() {
                 ))}
               </tbody>
             </table>
-            {!filtered.length && (
+            {!loading && products.length === 0 && (
               <div className="text-center py-12 text-gray-400 text-sm">No products found</div>
             )}
           </div>
+
+          {/* Pagination bar — only shown when there's more than one page */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between px-6 py-3 border-t border-gray-200 bg-white">
+              <p className="text-xs text-gray-500">
+                Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of {total} products
+              </p>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setPage(0)}
+                  disabled={page === 0}
+                  className="px-2 py-1 text-xs rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  «
+                </button>
+                <button
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={page === 0}
+                  className="px-2.5 py-1 text-xs rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  ‹ Prev
+                </button>
+                <span className="px-3 py-1 text-xs font-medium text-gray-700">
+                  {page + 1} / {totalPages}
+                </span>
+                <button
+                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                  disabled={page >= totalPages - 1}
+                  className="px-2.5 py-1 text-xs rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Next ›
+                </button>
+                <button
+                  onClick={() => setPage(totalPages - 1)}
+                  disabled={page >= totalPages - 1}
+                  className="px-2 py-1 text-xs rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  »
+                </button>
+              </div>
+            </div>
+          )}
+          </>
         )}
       </div>
 
@@ -452,7 +544,7 @@ export function ProductsScreen() {
       {showCatManager && (
         <CategoryManagerModal
           onClose={() => setShowCatManager(false)}
-          onChanged={load}
+          onChanged={() => { loadCategories(); load() }}
         />
       )}
 
@@ -478,7 +570,7 @@ export function ProductsScreen() {
           </span>
           <div className="w-px h-4 bg-gray-700" />
           <button
-            onClick={() => setBatchTagProducts(filtered.filter((p) => selectedIds.has(p.id)))}
+            onClick={() => setBatchTagProducts(products.filter((p) => selectedIds.has(p.id)))}
             className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
           >
             <Tag size={14} /> Print Tags

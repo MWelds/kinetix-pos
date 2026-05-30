@@ -18,7 +18,9 @@ const api = {
       compositeProductId: string,
       components: Array<{ componentProductId: string; quantity: number }>
     ) => ipcRenderer.invoke(IPC.PRODUCTS_SET_COMPONENTS, compositeProductId, components),
-    imageUrl: (id: string) => ipcRenderer.invoke(IPC.PRODUCTS_IMAGE_URL, id)
+    imageUrl: (id: string) => ipcRenderer.invoke(IPC.PRODUCTS_IMAGE_URL, id),
+    listPaginated: (opts: { search?: string; categoryId?: string; offset: number; limit: number }) =>
+      ipcRenderer.invoke(IPC.PRODUCTS_LIST_PAGINATED, opts)
   },
 
   // Categories

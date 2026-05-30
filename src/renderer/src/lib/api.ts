@@ -36,7 +36,17 @@ export const api = {
       components: Array<{ componentProductId: string; quantity: number }>
     ): Promise<void> => bridge.products.setComponents(compositeProductId, components),
     /** Fetch only the imageUrl for a product — used for lazy loading base64 images */
-    imageUrl: (id: string): Promise<string | null> => bridge.products.imageUrl(id)
+    imageUrl: (id: string): Promise<string | null> => bridge.products.imageUrl(id),
+    /**
+     * Server-side paginated product list with optional search and category filter.
+     * Returns only `limit` rows from SQLite — avoids loading the full catalogue.
+     */
+    listPaginated: (opts: {
+      search?: string
+      categoryId?: string
+      offset: number
+      limit: number
+    }): Promise<{ items: Product[]; total: number }> => bridge.products.listPaginated(opts)
   },
 
   categories: {

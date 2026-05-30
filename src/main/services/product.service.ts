@@ -1,4 +1,4 @@
-import { eq, like, or, and, inArray } from 'drizzle-orm'
+import { eq, like, or, and, inArray, sql, count } from 'drizzle-orm'
 import { getDatabase, getSqlite } from '../database/connection'
 import * as schema from '../database/schema'
 import { generateId } from '../lib/id'
@@ -266,6 +266,66 @@ export const productService = {
       .prepare('SELECT image_url FROM products WHERE id = ?')
       .get(id) as { image_url: string | null } | undefined
     return row?.image_url ?? null
+  },
+
+  /**
+   * Paginated product list — used by the Products management screen.
+   * Filtering (search + category) is applied in SQL so only the requested
+   * page is transferred over IPC, keeping loads fast even with 2000+ products.
+   */
+  listPaginated(opts: {
+    search?: string
+    categoryId?: string
+    offset: number
+    limit: number
+  }): { items: ProductWithInventory[]; total: number } {
+    const db = getDatabase()
+    const { search, categoryId, offset, limit } = opts
+
+    // Build the shared WHERE predicate
+    const searchLike = search ? `%${search}%` : null
+    const where = and(
+      eq(schema.products.isActive, true),
+      categoryId ? eq(schema.products.categoryId, categoryId) : undefined,
+      searchLike
+        ? or(
+            like(schema.products.name, searchLike),
+            like(schema.products.sku, searchLike),
+            like(schema.products.barcode, searchLike)
+          )
+        : undefined
+    )
+
+    // Total count for pagination bar (uses the index — fast)
+    const [{ total }] = db
+      .select({ total: count() })
+      .from(schema.products)
+      .where(where)
+      .all()
+
+    // Fetch only the requested page
+    const rows = db
+      .select(productSelect())
+      .from(schema.products)
+      .leftJoin(schema.inventory, eq(schema.products.id, schema.inventory.productId))
+      .leftJoin(schema.categories, eq(schema.products.categoryId, schema.categories.id))
+      .where(where)
+      .orderBy(schema.products.name)
+      .limit(limit)
+      .offset(offset)
+      .all()
+
+    const base = rows.map((r) => ({
+      ...r,
+      imageUrl: slimImageUrl(r.imageUrl),
+      unitsPerPack: r.unitsPerPack ?? 1,
+      individualProductId: r.individualProductId ?? null,
+      packProductId: r.packProductId ?? null,
+      trackStock: r.trackStock ?? true,
+      quantity: r.quantity ?? 0
+    }))
+
+    return { items: applyPackQuantities(db, base), total }
   },
 
   /**

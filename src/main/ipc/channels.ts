@@ -11,6 +11,7 @@ export const IPC = {
   PRODUCTS_GET_COMPONENTS: 'products:getComponents',
   PRODUCTS_SET_COMPONENTS: 'products:setComponents',
   PRODUCTS_IMAGE_URL: 'products:imageUrl',
+  PRODUCTS_LIST_PAGINATED: 'products:listPaginated',
 
   // Categories
   CATEGORIES_LIST: 'categories:list',

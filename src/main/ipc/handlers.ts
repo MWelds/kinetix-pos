@@ -93,6 +93,11 @@ export function registerIpcHandlers(): void {
     productService.getImageUrl(id)
   )
   ipcMain.handle(
+    IPC.PRODUCTS_LIST_PAGINATED,
+    (_e, opts: { search?: string; categoryId?: string; offset: number; limit: number }) =>
+      productService.listPaginated(opts)
+  )
+  ipcMain.handle(
     IPC.PRODUCTS_SET_COMPONENTS,
     (
       e,

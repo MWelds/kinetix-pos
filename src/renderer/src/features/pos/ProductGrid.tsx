@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef, useCallback, memo } from 'react'
+import React, { useState, useEffect, useRef, useCallback, memo, useMemo } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { Search, Grid, Tag } from 'lucide-react'
 import { api } from '../../lib/api'
 import { useCartStore } from '../../stores/cart.store'
@@ -12,11 +13,21 @@ import { BARCODE_SCAN_TIMEOUT_MS } from '../../constants'
 const LOCAL_IMAGE_SENTINEL = '__local__'
 
 /**
- * Module-level cache for product lists.
- * Key: category id (or '' for "All"). Value: { data, fetchedAt }.
- * Entries expire after CACHE_TTL_MS. Call invalidateProductCache() after mutations.
+ * Number of columns in the product grid.
+ * Must match the Tailwind class used on the grid container below.
+ * xl screens get 4 columns; everything else gets 3.
  */
-const CACHE_TTL_MS = 60_000 // 1 minute
+const COLS_DEFAULT = 3
+const COLS_XL = 4
+
+/** Approximate rendered height of one card row in pixels (card + gap). */
+const ROW_HEIGHT_PX = 160
+
+/**
+ * Module-level cache for product lists.
+ * Key: category id (or '' for "All"). Expires after CACHE_TTL_MS.
+ */
+const CACHE_TTL_MS = 60_000
 interface CacheEntry { data: Product[]; fetchedAt: number }
 const productCache = new Map<string, CacheEntry>()
 
@@ -42,6 +53,37 @@ export function ProductGrid() {
   const [loading, setLoading] = useState(true)
   const addItem = useCartStore((s) => s.addItem)
   const showToast = useUiStore((s) => s.showToast)
+
+  // The scrollable container — virtualizer needs a ref to it
+  const scrollParentRef = useRef<HTMLDivElement>(null)
+
+  // Determine column count from container width
+  const [cols, setCols] = useState(COLS_DEFAULT)
+  useEffect(() => {
+    const el = scrollParentRef.current
+    if (!el) return
+    const obs = new ResizeObserver(([entry]) => {
+      setCols(entry.contentRect.width >= 1280 ? COLS_XL : COLS_DEFAULT)
+    })
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [])
+
+  // Chunk products into rows for the virtualizer
+  const rows = useMemo(() => {
+    const result: Product[][] = []
+    for (let i = 0; i < products.length; i += cols) {
+      result.push(products.slice(i, i + cols))
+    }
+    return result
+  }, [products, cols])
+
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollParentRef.current,
+    estimateSize: () => ROW_HEIGHT_PX,
+    overscan: 3, // render 3 extra rows above/below the viewport
+  })
 
   // Barcode scanner support (keyboard wedge accumulates chars rapidly)
   const barcodeBuffer = useRef('')
@@ -72,6 +114,9 @@ export function ProductGrid() {
   }, [])
 
   useEffect(() => {
+    // Scroll back to top whenever the category or search changes
+    scrollParentRef.current?.scrollTo({ top: 0 })
+
     if (!search) {
       loadProducts()
     } else {
@@ -126,6 +171,9 @@ export function ProductGrid() {
     })
   }
 
+  const virtualItems = virtualizer.getVirtualItems()
+  const totalHeight = virtualizer.getTotalSize()
+
   return (
     <div className="flex flex-col h-full bg-gray-50">
       {/* Search bar */}
@@ -155,9 +203,7 @@ export function ProductGrid() {
             key={cat.id}
             onClick={() => { setSelectedCategory(cat.id); setSearch('') }}
             className={`flex-shrink-0 px-4 py-2 rounded-lg text-sm font-medium transition-colors min-h-[44px] ${
-              selectedCategory === cat.id
-                ? 'text-white'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              selectedCategory === cat.id ? 'text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
             }`}
             style={selectedCategory === cat.id ? { backgroundColor: cat.color } : {}}
           >
@@ -166,8 +212,8 @@ export function ProductGrid() {
         ))}
       </div>
 
-      {/* Product grid */}
-      <div className="flex-1 overflow-y-auto p-4">
+      {/* Virtualised product grid */}
+      <div ref={scrollParentRef} className="flex-1 overflow-y-auto p-4">
         {loading ? (
           <div className="flex items-center justify-center h-48">
             <Spinner size="lg" />
@@ -178,14 +224,38 @@ export function ProductGrid() {
             <p className="text-sm">No products found</p>
           </div>
         ) : (
-          <div className="grid grid-cols-3 gap-3 xl:grid-cols-4">
-            {products.map((product) => (
-              <ProductCard
-                key={product.id}
-                product={product}
-                onAdd={() => handleAddProduct(product)}
-              />
-            ))}
+          /* Outer div holds the full virtual height so the scrollbar is correct */
+          <div style={{ height: totalHeight, position: 'relative' }}>
+            {virtualItems.map((virtualRow) => {
+              const rowProducts = rows[virtualRow.index]
+              return (
+                <div
+                  key={virtualRow.key}
+                  data-index={virtualRow.index}
+                  ref={virtualizer.measureElement}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                >
+                  <div
+                    className="grid gap-3 pb-3"
+                    style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+                  >
+                    {rowProducts.map((product) => (
+                      <ProductCard
+                        key={product.id}
+                        product={product}
+                        onAdd={() => handleAddProduct(product)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
           </div>
         )}
       </div>
@@ -200,16 +270,12 @@ interface ProductCardProps {
 
 /**
  * Memoised product card — only re-renders when its own product data changes.
- *
- * Base64 images are stripped from the list IPC response to keep payloads small.
- * When the card detects the LOCAL_IMAGE_SENTINEL it fetches the real image lazily
- * so the grid paints immediately and images trickle in afterwards.
+ * Lazy-loads base64 images that were stripped from the list IPC response.
  */
 const ProductCard = memo(function ProductCard({ product, onAdd }: ProductCardProps) {
   const fmtRaw = useCurrencyStore((s) => s.fmtRaw)
   const isOutOfStock = product.trackStock && product.quantity <= 0
 
-  // Start with whatever the list gave us. If it's the sentinel, we'll fetch lazily.
   const [imgSrc, setImgSrc] = useState<string | null>(
     product.imageUrl === LOCAL_IMAGE_SENTINEL ? null : product.imageUrl
   )
@@ -237,7 +303,6 @@ const ProductCard = memo(function ProductCard({ product, onAdd }: ProductCardPro
         'min-h-[120px] disabled:opacity-50 disabled:cursor-not-allowed'
       ].join(' ')}
     >
-      {/* Product image / colour swatch */}
       <div
         className="w-full h-16 rounded-lg mb-2 flex items-center justify-center overflow-hidden"
         style={{ backgroundColor: product.categoryColor ? `${product.categoryColor}20` : '#f1f5f9' }}
@@ -255,7 +320,6 @@ const ProductCard = memo(function ProductCard({ product, onAdd }: ProductCardPro
         )}
       </div>
 
-      {/* Info */}
       <p className="text-xs font-medium text-gray-900 leading-tight line-clamp-2 mb-1">
         {product.name}
       </p>
@@ -263,13 +327,11 @@ const ProductCard = memo(function ProductCard({ product, onAdd }: ProductCardPro
         {fmtRaw(product.basePrice)}
       </p>
 
-      {/* Stock badge — only for tracked products */}
       {product.trackStock && product.quantity <= 5 && product.quantity > 0 && (
         <Badge color="yellow" className="mt-1 text-[10px]">
           Low: {product.quantity} left
         </Badge>
       )}
-
       {isOutOfStock && (
         <Badge color="red" className="mt-1 text-[10px]">Out of stock</Badge>
       )}

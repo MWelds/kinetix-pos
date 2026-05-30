@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import {
   ShoppingCart, Package, Users, Archive, BarChart3, Settings,
   ClipboardList, UserCircle, LogOut, ChevronRight, Clock, Sun, Store,
-  RefreshCw, WifiOff, CheckCircle2, AlertCircle
+  RefreshCw, WifiOff, CheckCircle2, AlertCircle, History
 } from 'lucide-react'
 import { useAuthStore } from '../../stores/auth.store'
 import { useLogoStore } from '../../stores/logo.store'
@@ -38,7 +38,7 @@ function SyncIndicator() {
   const color =
     syncState.status === 'synced'  ? 'text-green-400' :
     isSyncing                      ? 'text-blue-400'  :
-    syncState.status === 'error'   ? 'text-red-400'   : 'text-gray-400'
+    syncState.status === 'error'   ? 'text-red-400'   : 'text-slate-400'
 
   const label =
     isSyncing                      ? 'Syncing\u2026' :
@@ -89,6 +89,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: ROUTES.INVENTORY, icon: <Archive size={18} />, label: 'Inventory', minRole: 2 },
   { to: ROUTES.REPORTS, icon: <BarChart3 size={18} />, label: 'Reports', minRole: 2 },
   { to: ROUTES.VENDORS, icon: <Store size={18} />, label: 'Vendors', minRole: 2 },
+  { to: ROUTES.SHIFTS, icon: <History size={18} />, label: 'Shifts & Logs', minRole: 2 },
   { to: ROUTES.STAFF, icon: <UserCircle size={18} />, label: 'Staff', minRole: 3 },
   { to: ROUTES.SETTINGS, icon: <Settings size={18} />, label: 'Settings', minRole: 3 }
 ]
@@ -138,7 +139,7 @@ export function Sidebar() {
             to={item.to}
             className={({ isActive }) =>
               `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors min-h-[44px] ${
-                isActive ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                isActive ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white hover:bg-gray-800'
               }`
             }
           >
@@ -160,7 +161,7 @@ export function Sidebar() {
 
         <button
           onClick={() => setShowShift(true)}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-slate-400 hover:text-white hover:bg-gray-800 transition-colors"
         >
           <Clock size={14} />
           <span className="flex-1 text-left">
@@ -168,7 +169,7 @@ export function Sidebar() {
             {shift ? (
               <span className="text-emerald-400">Open</span>
             ) : (
-              <span className="text-gray-500">Closed</span>
+              <span className="text-slate-400">Closed</span>
             )}
           </span>
           <ChevronRight size={12} />
@@ -182,10 +183,10 @@ export function Sidebar() {
             <p className="text-xs font-medium text-white truncate">
               {staff?.firstName} {staff?.lastName}
             </p>
-            <p className="text-[10px] text-gray-500 capitalize">{staff?.role}</p>
-            <p className="text-[10px] text-gray-600 mt-0.5 truncate">{terminalName}</p>
+            <p className="text-[10px] text-slate-400 capitalize">{staff?.role}</p>
+            <p className="text-[10px] text-slate-500 mt-0.5 truncate">{terminalName}</p>
           </div>
-          <button onClick={handleLogout} className="text-gray-500 hover:text-red-400" aria-label="Log out">
+          <button onClick={handleLogout} className="text-slate-400 hover:text-red-400" aria-label="Log out">
             <LogOut size={14} />
           </button>
         </div>

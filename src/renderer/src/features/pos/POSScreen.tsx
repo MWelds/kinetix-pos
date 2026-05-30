@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react'
+import { Clock } from 'lucide-react'
 import { ProductGrid } from './ProductGrid'
 import { CartPanel } from './CartPanel'
 import { PaymentModal } from './PaymentModal'
 import { HeldOrdersModal } from './HeldOrdersModal'
+import { ShiftModal } from '../staff/ShiftModal'
 import { useCartStore } from '../../stores/cart.store'
 import { useAuthStore } from '../../stores/auth.store'
 import { useUiStore } from '../../stores/ui.store'
@@ -24,6 +26,7 @@ export function POSScreen() {
   const [showPayment, setShowPayment] = useState(false)
   const [showHeld, setShowHeld] = useState(false)
   const [heldCount, setHeldCount] = useState(0)
+  const [showShiftModal, setShowShiftModal] = useState(false)
   const { items, orderType, customer, notes, discountType, discountValue, taxRate, taxEnabled, clearCart } = useCartStore()
   const { staff, shift } = useAuthStore()
   const showToast = useUiStore((s) => s.showToast)
@@ -42,6 +45,7 @@ export function POSScreen() {
   }
 
   async function handleHold() {
+    if (!shift) { setShowShiftModal(true); return }
     if (!items.length) return
     try {
       const orderInput = {
@@ -190,13 +194,36 @@ ${footer ? `<div class="footer">${esc(footer)}</div>` : ''}
       <div className="flex-1 min-w-0">
         <ProductGrid />
       </div>
-      <div className="w-[380px] shrink-0 flex flex-col">
+      {/* Cart panel — gated behind an active shift */}
+      <div className="w-[380px] shrink-0 flex flex-col relative">
         <CartPanel
-          onCheckout={() => setShowPayment(true)}
+          onCheckout={() => {
+            if (!shift) { setShowShiftModal(true); return }
+            setShowPayment(true)
+          }}
           onHold={handleHold}
           onShowHeld={() => setShowHeld(true)}
           onPayLater={handlePayLater}
         />
+
+        {/* Shift gate overlay — rendered on top when no shift is open */}
+        {!shift && (
+          <div className="absolute inset-0 bg-white/90 backdrop-blur-sm flex flex-col items-center justify-center gap-4 z-20 rounded-r-none">
+            <div className="w-16 h-16 rounded-2xl bg-amber-100 flex items-center justify-center">
+              <Clock size={32} className="text-amber-600" />
+            </div>
+            <div className="text-center px-6">
+              <h3 className="text-base font-semibold text-gray-900 mb-1">No Active Shift</h3>
+              <p className="text-sm text-gray-500">You must open a shift before processing sales.</p>
+            </div>
+            <button
+              onClick={() => setShowShiftModal(true)}
+              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold text-sm transition-colors shadow-sm"
+            >
+              Open Shift
+            </button>
+          </div>
+        )}
       </div>
 
       <PaymentModal
@@ -213,6 +240,7 @@ ${footer ? `<div class="footer">${esc(footer)}</div>` : ''}
         onClose={() => setShowHeld(false)}
         onRefresh={() => refreshHeldCount()}
       />
+      <ShiftModal isOpen={showShiftModal} onClose={() => setShowShiftModal(false)} />
     </div>
   )
 }

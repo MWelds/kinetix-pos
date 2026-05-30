@@ -94,6 +94,29 @@ export interface Shift {
   status: 'open' | 'closed'
 }
 
+export interface ShiftWithStaff extends Shift {
+  notes: string | null
+  staffName: string
+}
+
+export interface ShiftOrder {
+  id: string
+  orderNumber: string
+  total: number
+  status: string
+  createdAt: string
+}
+
+export interface AuditEntry {
+  id: string
+  staffId: string | null
+  action: string
+  entityType: string
+  entityId: string | null
+  details: string | null
+  createdAt: string
+}
+
 export interface Order {
   id: string
   orderNumber: string

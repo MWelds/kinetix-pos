@@ -3,6 +3,22 @@ module.exports = {
   content: ['./src/renderer/src/**/*.{js,ts,jsx,tsx}', './src/renderer/index.html'],
   theme: {
     extend: {
+      textColor: {
+        // Force all gray text to near-black on white/light backgrounds.
+        // bg-gray-* classes are unaffected (only text-gray-* changes).
+        gray: {
+          50: '#111827',
+          100: '#111827',
+          200: '#0f172a',
+          300: '#0f172a',
+          400: '#000000',
+          500: '#000000',
+          600: '#000000',
+          700: '#000000',
+          800: '#000000',
+          900: '#000000',
+        }
+      },
       colors: {
         primary: {
           50: '#eff6ff',

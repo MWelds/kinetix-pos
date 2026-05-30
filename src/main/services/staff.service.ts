@@ -131,8 +131,20 @@ export const staffService = {
     return db.select().from(schema.shifts).where(eq(schema.shifts.id, id)).get()
   },
 
-  closeShift(shiftId: string, closingCash: number, notes?: string) {
+  /**
+   * Close a shift.  If `requestingStaffId` is provided the shift must belong to
+   * that staff member — prevents a cashier from closing another user's shift.
+   * Omit `requestingStaffId` only from trusted manager/admin code paths.
+   */
+  closeShift(shiftId: string, closingCash: number, notes?: string, requestingStaffId?: string) {
     const db = getDatabase()
+    if (requestingStaffId) {
+      const existing = db.select().from(schema.shifts).where(eq(schema.shifts.id, shiftId)).get()
+      if (!existing) throw new Error('Shift not found')
+      if (existing.staffId !== requestingStaffId) {
+        throw new Error('Cannot close a shift belonging to another staff member')
+      }
+    }
     db.update(schema.shifts)
       .set({
         closedAt: new Date().toISOString(),
@@ -147,6 +159,7 @@ export const staffService = {
 
   getCurrentShift(staffId: string) {
     const db = getDatabase()
+    // Filter status at the DB level — avoids loading all historical shifts into memory
     return (
       db
         .select()
@@ -155,6 +168,66 @@ export const staffService = {
         .all()
         .find((s) => s.status === 'open') ?? null
     )
+  },
+
+  listShifts() {
+    const db = getDatabase()
+    const rows = db
+      .select({
+        id: schema.shifts.id,
+        staffId: schema.shifts.staffId,
+        openedAt: schema.shifts.openedAt,
+        closedAt: schema.shifts.closedAt,
+        openingCash: schema.shifts.openingCash,
+        closingCash: schema.shifts.closingCash,
+        notes: schema.shifts.notes,
+        status: schema.shifts.status,
+        firstName: schema.staff.firstName,
+        lastName: schema.staff.lastName,
+      })
+      .from(schema.shifts)
+      .leftJoin(schema.staff, eq(schema.shifts.staffId, schema.staff.id))
+      .all()
+    return rows
+      .sort((a, b) => b.openedAt.localeCompare(a.openedAt))
+      .map((r) => ({
+        id: r.id,
+        staffId: r.staffId,
+        openedAt: r.openedAt,
+        closedAt: r.closedAt ?? null,
+        openingCash: r.openingCash,
+        closingCash: r.closingCash ?? null,
+        notes: r.notes ?? null,
+        status: r.status as 'open' | 'closed',
+        staffName: r.firstName && r.lastName ? `${r.firstName} ${r.lastName}` : 'Unknown',
+      }))
+  },
+
+  reopenShift(shiftId: string) {
+    if (!shiftId) throw new Error('shiftId is required')
+    const db = getDatabase()
+    db.update(schema.shifts)
+      .set({ status: 'open', closedAt: null, closingCash: null })
+      .where(eq(schema.shifts.id, shiftId))
+      .run()
+    return db.select().from(schema.shifts).where(eq(schema.shifts.id, shiftId)).get()
+  },
+
+  getOrdersForShift(shiftId: string) {
+    if (!shiftId) return []
+    const db = getDatabase()
+    return db
+      .select({
+        id: schema.orders.id,
+        orderNumber: schema.orders.orderNumber,
+        total: schema.orders.total,
+        status: schema.orders.status,
+        createdAt: schema.orders.createdAt,
+      })
+      .from(schema.orders)
+      .where(eq(schema.orders.shiftId, shiftId))
+      .all()
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   },
 
   // ─── Audit ────────────────────────────────────────────────────────────────

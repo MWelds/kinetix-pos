@@ -33,7 +33,7 @@ export function ShiftModal({ isOpen, onClose }: Props) {
     if (!shift) return
     setLoading(true)
     try {
-      await api.shifts.close((shift as { id: string }).id, parseFloat(cashAmount) || 0, notes)
+      await api.shifts.close((shift as { id: string }).id, parseFloat(cashAmount) || 0, notes, staff?.id)
       setShift(null)
       showToast('Shift closed', 'success')
       onClose()

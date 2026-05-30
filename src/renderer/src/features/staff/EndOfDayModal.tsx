@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import { api } from '../../lib/api'
 import { useAuthStore } from '../../stores/auth.store'
-import { formatCurrency } from '../../lib/currency'
+import { formatCurrency, CURRENCIES } from '../../lib/currency'
 import { useCurrencyStore } from '../../stores/currency.store'
 import { Button } from '../../components/ui'
 import { startOfDay, toISODate } from '../../lib/dates'
@@ -31,11 +31,12 @@ interface DaySummary {
 /** One cash-count entry per method × currency that the cashier fills in */
 interface CountEntry {
   method: string
-  currency: 'USD' | 'KYD'
+  /** Currency code, e.g. 'USD', 'KYD', 'EUR' — driven by Settings */
+  currency: string
   label: string
   counted: string
-  /** Expected amount from actual sales (USD, since all DB amounts are USD) */
-  expectedUSD: number
+  /** Expected amount from actual sales (primary currency, since all DB amounts are in primary) */
+  expectedPrimary: number
 }
 
 const METHOD_LABELS: Record<string, string> = {
@@ -46,7 +47,26 @@ const METHOD_LABELS: Record<string, string> = {
   layaway: 'Layaway',
 }
 
-const KYD_TO_USD_DEFAULT = 1.2
+interface CurrencyConfig {
+  primary: string
+  secondary: string
+  rate: number
+}
+
+/** Get the display symbol for a currency code */
+function currencySymbol(code: string): string {
+  return CURRENCIES[code]?.symbol ?? code
+}
+
+/** Escape a string for safe insertion into HTML context */
+function esc(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
 
 /** Receipt-style HTML for the end-of-day print */
 function buildEodReceiptHtml(
@@ -54,23 +74,27 @@ function buildEodReceiptHtml(
   summary: DaySummary,
   entries: CountEntry[],
   openedAt: string,
-  kydRate: number,
+  cfg: CurrencyConfig,
   closingNote?: string
 ): string {
   const now = new Date().toLocaleString()
-  const fmt = (n: number) => `$${Math.abs(n).toFixed(2)}`
+  const primarySym = currencySymbol(cfg.primary)
+  const fmt = (n: number) => `${primarySym}${Math.abs(n).toFixed(2)}`
 
-  const countedUSD = entries.reduce((s, e) => {
+  // Convert all counted amounts to primary for reconciliation
+  const countedPrimary = entries.reduce((s, e) => {
     const val = parseFloat(e.counted) || 0
-    return s + (e.currency === 'KYD' ? val / kydRate : val)
+    if (e.currency === cfg.primary) return s + val
+    return s + (cfg.rate > 0 ? val / cfg.rate : val)
   }, 0)
-  const expectedUSD = entries.reduce((s, e) => s + e.expectedUSD, 0)
-  const variance = countedUSD - expectedUSD
+  const expectedPrimary = entries.reduce((s, e) => s + e.expectedPrimary, 0)
+  const variance = countedPrimary - expectedPrimary
 
   const entryRows = entries
     .map((e) => {
       const val = parseFloat(e.counted) || 0
-      return `<div class="row"><span class="label">${e.label} (${e.currency})</span><span>${e.currency === 'KYD' ? 'KYD' : '$'}${val.toFixed(2)}</span></div>`
+      const sym = esc(currencySymbol(e.currency))
+      return `<div class="row"><span class="label">${esc(e.label)} (${esc(e.currency)})</span><span>${sym}${val.toFixed(2)}</span></div>`
     })
     .join('')
 
@@ -85,7 +109,7 @@ function buildEodReceiptHtml(
     .variance { color: ${variance >= 0 ? 'green' : 'red'}; }
     .center { text-align: center; }
   </style></head><body>
-    <h2>${storeName}</h2>
+    <h2>${esc(storeName)}</h2>
     <div class="sub">END OF DAY REPORT</div>
     <div class="sub">${now}</div>
     <hr/>
@@ -98,19 +122,76 @@ function buildEodReceiptHtml(
     <div class="sub" style="text-align:left;font-weight:bold;margin-bottom:4px">CASH COUNT</div>
     ${entryRows}
     <hr/>
-    <div class="row"><span class="label">Expected</span><span>${fmt(expectedUSD)}</span></div>
-    <div class="row"><span class="label">Counted</span><span>${fmt(countedUSD)}</span></div>
+    <div class="row"><span class="label">Expected (${cfg.primary})</span><span>${fmt(expectedPrimary)}</span></div>
+    <div class="row"><span class="label">Counted (${cfg.primary} equiv.)</span><span>${fmt(countedPrimary)}</span></div>
     <div class="row variance"><span>Variance</span><span>${variance >= 0 ? '+' : ''}${fmt(variance)}</span></div>
     <hr/>
-    ${closingNote ? `<hr/><div style="font-size:11px;color:#555;word-break:break-word"><strong>Note:</strong> ${closingNote}</div>` : ''}
+    ${closingNote ? `<hr/><div style="font-size:11px;color:#555;word-break:break-word"><strong>Note:</strong> ${esc(closingNote)}</div>` : ''}
     <div class="center" style="margin-top:8px; font-size:11px; color:#777">Shift closed — have a great evening!</div>
   </body></html>`
 }
 
+/** Build the count-entry rows based on enabled methods × configured currencies */
+function buildEntries(
+  paymentRows: { method: string; total: number }[],
+  enabledMethods: string[],
+  cfg: CurrencyConfig
+): CountEntry[] {
+  const rows: CountEntry[] = []
+  const physicalMethods = enabledMethods.filter((m) => ['cash', 'card'].includes(m))
+  const otherMethods = enabledMethods.filter((m) => !['cash', 'card'].includes(m))
+
+  for (const method of physicalMethods) {
+    const expectedPrimary = paymentRows.find((r) => r.method === method)?.total ?? 0
+    const methodLabel = METHOD_LABELS[method] ?? method
+
+    // Primary currency entry — carries the full expected total
+    rows.push({
+      method,
+      currency: cfg.primary,
+      label: `${methodLabel} (${cfg.primary})`,
+      counted: '',
+      expectedPrimary,
+    })
+
+    // Secondary currency entry — cashier enters what they physically counted;
+    // amount is converted to primary on reconciliation, so expectedPrimary is 0 here
+    if (cfg.secondary) {
+      rows.push({
+        method,
+        currency: cfg.secondary,
+        label: `${methodLabel} (${cfg.secondary})`,
+        counted: '',
+        expectedPrimary: 0,
+      })
+    }
+  }
+
+  for (const method of otherMethods) {
+    const expectedPrimary = paymentRows.find((r) => r.method === method)?.total ?? 0
+    rows.push({
+      method,
+      currency: cfg.primary,
+      label: METHOD_LABELS[method] ?? method,
+      counted: '',
+      expectedPrimary,
+    })
+  }
+
+  return rows
+}
+
 export function EndOfDayModal({ isOpen, onClose }: Props) {
   const { staff, shift, logout } = useAuthStore()
-  const { kydToUsdRate } = useCurrencyStore()
+  const { currency: primaryCurrency, kydToUsdRate, altCurrency } = useCurrencyStore()
+  const secondaryCurrency = altCurrency()
   const navigate = useNavigate()
+
+  const currencyCfg: CurrencyConfig = {
+    primary: primaryCurrency,
+    secondary: secondaryCurrency,
+    rate: kydToUsdRate || 1,
+  }
 
   const [step, setStep] = useState<Step>('cash')
   const [summary, setSummary] = useState<DaySummary | null>(null)
@@ -147,47 +228,6 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
     }).catch(() => {})
   }, [isOpen])
 
-  /** Build the count-entry rows based on enabled methods × currencies */
-  function buildEntries(paymentRows: { method: string; total: number }[]): CountEntry[] {
-    const rows: CountEntry[] = []
-    const physicalMethods = enabledMethods.filter((m) => ['cash', 'card'].includes(m))
-    // Also include store_credit / gift_card / layaway as USD-only totals
-    const otherMethods = enabledMethods.filter((m) => !['cash', 'card'].includes(m))
-
-    for (const method of physicalMethods) {
-      const expectedUSD = paymentRows.find((r) => r.method === method)?.total ?? 0
-      // USD entry
-      rows.push({
-        method,
-        currency: 'USD',
-        label: `${METHOD_LABELS[method] ?? method} (USD)`,
-        counted: '',
-        expectedUSD: expectedUSD,
-      })
-      // KYD entry — share the same expected total since DB stores USD; cashier enters what they see
-      rows.push({
-        method,
-        currency: 'KYD',
-        label: `${METHOD_LABELS[method] ?? method} (KYD)`,
-        counted: '',
-        expectedUSD: 0, // KYD counted is converted on reconciliation
-      })
-    }
-
-    for (const method of otherMethods) {
-      const expectedUSD = paymentRows.find((r) => r.method === method)?.total ?? 0
-      rows.push({
-        method,
-        currency: 'USD',
-        label: METHOD_LABELS[method] ?? method,
-        counted: '',
-        expectedUSD,
-      })
-    }
-
-    return rows
-  }
-
   async function loadSummary() {
     setLoadingSummary(true)
     try {
@@ -208,7 +248,7 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
         paymentRows: payArr,
       }
       setSummary(daySummary)
-      setEntries(buildEntries(payArr))
+      setEntries(buildEntries(payArr, enabledMethods, currencyCfg))
     } finally {
       setLoadingSummary(false)
     }
@@ -223,25 +263,29 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
     setEntries((prev) => prev.map((e, i) => (i === index ? { ...e, counted } : e)))
   }
 
-  /** Total counted in USD (KYD entries converted) */
-  const totalCountedUSD = entries.reduce((s, e) => {
+  /** Total counted in primary currency (secondary entries converted via rate) */
+  const totalCountedPrimary = entries.reduce((s, e) => {
     const val = parseFloat(e.counted) || 0
-    return s + (e.currency === 'KYD' ? val / (kydToUsdRate || KYD_TO_USD_DEFAULT) : val)
+    if (e.currency === primaryCurrency) return s + val
+    // secondary → primary: divide by rate (1 primary = rate secondary)
+    return s + (currencyCfg.rate > 0 ? val / currencyCfg.rate : val)
   }, 0)
 
-  const totalExpectedUSD = summary
+  const totalExpectedPrimary = summary
     ? summary.paymentRows.reduce((s, r) => s + r.total, 0)
     : 0
 
-  const variance = totalCountedUSD - totalExpectedUSD
+  const variance = totalCountedPrimary - totalExpectedPrimary
   const variancePositive = variance >= 0
+
+  const primarySym = currencySymbol(primaryCurrency)
 
   async function handlePrint() {
     if (!summary) return
     setPrinting(true)
     try {
       const openedAt = shift?.openedAt ?? new Date().toISOString()
-      const html = buildEodReceiptHtml(storeName, summary, entries, openedAt, kydToUsdRate || KYD_TO_USD_DEFAULT, closingNote || undefined)
+      const html = buildEodReceiptHtml(storeName, summary, entries, openedAt, currencyCfg, closingNote || undefined)
       const result = await api.receipt.print(html)
       if (!result?.success) throw new Error('Print returned failure')
     } catch (err) {
@@ -260,11 +304,11 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
           .map((e) => `${e.label}: ${e.counted || '0'}`)
           .join(', ')
         const notesParts = [
-          `EOD close. Variance: ${variancePositive ? '+' : ''}$${Math.abs(variance).toFixed(2)}.`,
+          `EOD close. Variance: ${variancePositive ? '+' : ''}${primarySym}${Math.abs(variance).toFixed(2)}.`,
           cashCount,
           closingNote ? `Note: ${closingNote}` : ''
         ].filter(Boolean)
-        await api.shifts.close(shift.id, totalCountedUSD, notesParts.join(' '))
+        await api.shifts.close(shift.id, totalCountedPrimary, notesParts.join(' '), staff?.id)
       }
       logout()
       navigate(ROUTES.LOGIN)
@@ -272,6 +316,13 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
     } finally {
       setClosing(false)
     }
+  }
+
+  /** Badge color class for a given currency code */
+  function currencyBadgeClass(code: string): string {
+    if (code === primaryCurrency) return 'bg-blue-50 text-blue-700'
+    if (code === secondaryCurrency) return 'bg-emerald-50 text-emerald-700'
+    return 'bg-gray-100 text-gray-700'
   }
 
   if (!isOpen) return null
@@ -293,12 +344,12 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
               </div>
               <div>
                 <h2 className="text-white font-bold text-lg">End of Day</h2>
-                <p className="text-gray-400 text-xs">
+                <p className="text-slate-400 text-xs">
                   {staff?.firstName} {staff?.lastName} &middot; {new Date().toLocaleDateString()}
                 </p>
               </div>
             </div>
-            <button onClick={onClose} className="text-gray-500 hover:text-white p-1 rounded-lg transition-colors">
+            <button onClick={onClose} className="text-slate-500 hover:text-white p-1 rounded-lg transition-colors">
               <X size={18} />
             </button>
           </div>
@@ -307,8 +358,8 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
           <div className="flex items-center gap-2 mt-4">
             {(['cash', 'summary', 'confirm'] as Step[]).map((s, i) => (
               <React.Fragment key={s}>
-                <div className={`flex items-center gap-2 text-xs font-medium ${step === s ? 'text-white' : step === 'confirm' || (step === 'summary' && i === 0) ? 'text-emerald-400' : 'text-gray-600'}`}>
-                  <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${step === s ? 'bg-amber-500 text-white' : step === 'confirm' || (step === 'summary' && i === 0) ? 'bg-emerald-500 text-white' : 'bg-gray-700 text-gray-500'}`}>
+                <div className={`flex items-center gap-2 text-xs font-medium ${step === s ? 'text-white' : step === 'confirm' || (step === 'summary' && i === 0) ? 'text-emerald-400' : 'text-slate-600'}`}>
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${step === s ? 'bg-amber-500 text-white' : step === 'confirm' || (step === 'summary' && i === 0) ? 'bg-emerald-500 text-white' : 'bg-gray-700 text-slate-500'}`}>
                     {(step === 'confirm' || (step === 'summary' && i === 0)) ? '✓' : i + 1}
                   </div>
                   <span className="hidden sm:inline">{s === 'cash' ? 'Cash Count' : s === 'summary' ? 'Day Summary' : 'Close & Sign Out'}</span>
@@ -339,21 +390,23 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                 </div>
               )}
 
-              {/* We show entry fields after summary loads, or show placeholder rows up front */}
+              {/* Before summary loads, show placeholder rows based on enabled methods */}
               {entries.length === 0 ? (
-                /* Before loading, show input rows based on enabled methods */
                 <div className="space-y-3">
-                  {enabledMethods.filter((m) => ['cash', 'card'].includes(m)).flatMap((method) =>
-                    (['USD', 'KYD'] as const).map((cur) => (
+                  {enabledMethods.filter((m) => ['cash', 'card'].includes(m)).flatMap((method) => {
+                    const currencies = secondaryCurrency
+                      ? [primaryCurrency, secondaryCurrency]
+                      : [primaryCurrency]
+                    return currencies.map((cur) => (
                       <div key={`${method}-${cur}`} className="flex items-center gap-3">
                         <div className="w-28 shrink-0">
-                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold ${cur === 'USD' ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                            {cur === 'USD' ? <DollarSign size={11} /> : <span className="text-[10px]">CI$</span>}
+                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold ${currencyBadgeClass(cur)}`}>
+                            <span className="text-[10px]">{currencySymbol(cur)}</span>
                             {METHOD_LABELS[method]} {cur}
                           </span>
                         </div>
                         <div className="relative flex-1">
-                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">{cur === 'KYD' ? 'CI$' : '$'}</span>
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">{currencySymbol(cur)}</span>
                           <input
                             type="number" min="0" step="0.01" placeholder="0.00"
                             className="w-full pl-9 pr-3 py-2.5 border border-gray-200 rounded-xl text-sm font-semibold text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -361,7 +414,7 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                         </div>
                       </div>
                     ))
-                  )}
+                  })}
                   {enabledMethods.filter((m) => !['cash', 'card'].includes(m)).map((method) => (
                     <div key={method} className="flex items-center gap-3">
                       <div className="w-28 shrink-0">
@@ -370,7 +423,7 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                         </span>
                       </div>
                       <div className="relative flex-1">
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">{primarySym}</span>
                         <input
                           type="number" min="0" step="0.01" placeholder="0.00"
                           className="w-full pl-9 pr-3 py-2.5 border border-gray-200 rounded-xl text-sm font-semibold text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -384,18 +437,14 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                   {entries.map((entry, i) => (
                     <div key={i} className="flex items-center gap-3">
                       <div className="w-28 shrink-0">
-                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold ${
-                          entry.currency === 'USD' ? 'bg-blue-50 text-blue-700' :
-                          entry.currency === 'KYD' ? 'bg-emerald-50 text-emerald-700' :
-                          'bg-gray-100 text-gray-700'
-                        }`}>
-                          {entry.currency === 'USD' ? <DollarSign size={11} /> : entry.currency === 'KYD' ? <span className="text-[10px]">CI$</span> : null}
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold ${currencyBadgeClass(entry.currency)}`}>
+                          <span className="text-[10px]">{currencySymbol(entry.currency)}</span>
                           {entry.label}
                         </span>
                       </div>
                       <div className="relative flex-1">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">
-                          {entry.currency === 'KYD' ? 'CI$' : '$'}
+                          {currencySymbol(entry.currency)}
                         </span>
                         <input
                           type="number" min="0" step="0.01" placeholder="0.00"
@@ -406,7 +455,7 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                       </div>
                       <div className="w-20 text-right shrink-0">
                         <p className="text-[10px] text-gray-400">Expected</p>
-                        <p className="text-xs font-semibold text-gray-600">${entry.expectedUSD.toFixed(2)}</p>
+                        <p className="text-xs font-semibold text-gray-600">{primarySym}{entry.expectedPrimary.toFixed(2)}</p>
                       </div>
                     </div>
                   ))}
@@ -430,8 +479,8 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
               <div className="grid grid-cols-3 gap-3">
                 {[
                   { label: 'Orders', value: String(summary.orderCount), icon: <ShoppingBag size={14} />, color: 'blue' },
-                  { label: 'Revenue', value: formatCurrency(summary.totalRevenue), icon: <TrendingUp size={14} />, color: 'emerald' },
-                  { label: 'Avg Order', value: formatCurrency(summary.averageOrderValue), icon: <DollarSign size={14} />, color: 'purple' }
+                  { label: 'Revenue', value: formatCurrency(summary.totalRevenue, primaryCurrency), icon: <TrendingUp size={14} />, color: 'emerald' },
+                  { label: 'Avg Order', value: formatCurrency(summary.averageOrderValue, primaryCurrency), icon: <DollarSign size={14} />, color: 'purple' }
                 ].map((k) => (
                   <div key={k.label} className="bg-gray-50 rounded-xl p-3 text-center">
                     <div className={`text-${k.color}-500 flex justify-center mb-1`}>{k.icon}</div>
@@ -452,13 +501,13 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                         {METHOD_LABELS[row.method] ?? row.method}
                         <span className="text-xs text-gray-400">×{row.count}</span>
                       </span>
-                      <span className="font-medium text-gray-900">{formatCurrency(row.total)}</span>
+                      <span className="font-medium text-gray-900">{formatCurrency(row.total, primaryCurrency)}</span>
                     </div>
                   ))}
                   {summary.totalDiscount > 0 && (
                     <div className="flex items-center justify-between text-sm border-t border-gray-200 pt-2 mt-2">
                       <span className="text-gray-500">Discounts given</span>
-                      <span className="text-amber-600 font-medium">-{formatCurrency(summary.totalDiscount)}</span>
+                      <span className="text-amber-600 font-medium">-{formatCurrency(summary.totalDiscount, primaryCurrency)}</span>
                     </div>
                   )}
                 </div>
@@ -478,21 +527,23 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                     return val > 0 ? (
                       <div key={i} className="flex justify-between text-gray-600">
                         <span>{e.label}</span>
-                        <span>{e.currency === 'KYD' ? 'CI$' : '$'}{val.toFixed(2)}</span>
+                        <span>{currencySymbol(e.currency)}{val.toFixed(2)}</span>
                       </div>
                     ) : null
                   })}
                 </div>
                 <div className="space-y-1 text-sm border-t border-gray-200 pt-2">
                   <div className="flex justify-between text-gray-600">
-                    <span>Expected (USD)</span><span>${totalExpectedUSD.toFixed(2)}</span>
+                    <span>Expected ({primaryCurrency})</span>
+                    <span>{primarySym}{totalExpectedPrimary.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-gray-600">
-                    <span>Counted (USD equiv.)</span><span>${totalCountedUSD.toFixed(2)}</span>
+                    <span>Counted ({primaryCurrency} equiv.)</span>
+                    <span>{primarySym}{totalCountedPrimary.toFixed(2)}</span>
                   </div>
                   <div className={`flex justify-between font-semibold pt-1 border-t ${variancePositive ? 'border-emerald-200 text-emerald-700' : 'border-red-200 text-red-700'}`}>
                     <span>Variance</span>
-                    <span>{variancePositive ? '+' : ''}${variance.toFixed(2)}</span>
+                    <span>{variancePositive ? '+' : ''}{primarySym}{variance.toFixed(2)}</span>
                   </div>
                 </div>
               </div>
@@ -529,17 +580,20 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
               {summary && (
                 <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-sm">
                   <div className="flex justify-between text-gray-600">
-                    <span>Total orders today</span><span className="font-medium text-gray-900">{summary.orderCount}</span>
+                    <span>Total orders today</span>
+                    <span className="font-medium text-gray-900">{summary.orderCount}</span>
                   </div>
                   <div className="flex justify-between text-gray-600">
-                    <span>Net revenue</span><span className="font-medium text-gray-900">{formatCurrency(summary.totalRevenue)}</span>
+                    <span>Net revenue</span>
+                    <span className="font-medium text-gray-900">{formatCurrency(summary.totalRevenue, primaryCurrency)}</span>
                   </div>
                   <div className="flex justify-between text-gray-600">
-                    <span>Total counted (USD equiv.)</span><span className="font-medium text-gray-900">${totalCountedUSD.toFixed(2)}</span>
+                    <span>Total counted ({primaryCurrency} equiv.)</span>
+                    <span className="font-medium text-gray-900">{primarySym}{totalCountedPrimary.toFixed(2)}</span>
                   </div>
                   <div className={`flex justify-between font-semibold pt-2 border-t border-gray-200 ${variancePositive ? 'text-emerald-600' : 'text-red-600'}`}>
                     <span>Cash variance</span>
-                    <span>{variancePositive ? '+' : ''}${variance.toFixed(2)}</span>
+                    <span>{variancePositive ? '+' : ''}{primarySym}{variance.toFixed(2)}</span>
                   </div>
                 </div>
               )}
@@ -547,7 +601,7 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
               {!variancePositive && Math.abs(variance) > 1 && (
                 <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
                   <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                  <span>Drawer is short by ${Math.abs(variance).toFixed(2)}. This will be recorded in the shift report.</span>
+                  <span>Drawer is short by {primarySym}{Math.abs(variance).toFixed(2)}. This will be recorded in the shift report.</span>
                 </div>
               )}
 

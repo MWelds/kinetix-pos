@@ -101,6 +101,7 @@ export const api = {
   staff: {
     list: (): Promise<StaffMember[]> => bridge.staff.list(),
     auth: (pin: string): Promise<StaffMember | null> => bridge.staff.auth(pin),
+    logout: (): Promise<{ ok: boolean }> => bridge.staff.logout(),
     create: (input: Partial<StaffMember> & { pin: string }): Promise<StaffMember> =>
       bridge.staff.create(input),
     update: (id: string, input: Partial<StaffMember> & { pin?: string }): Promise<StaffMember> =>
@@ -111,9 +112,12 @@ export const api = {
   shifts: {
     open: (staffId: string, openingCash: number): Promise<unknown> =>
       bridge.shifts.open(staffId, openingCash),
-    close: (shiftId: string, closingCash: number, notes?: string): Promise<unknown> =>
-      bridge.shifts.close(shiftId, closingCash, notes),
-    current: (staffId: string): Promise<unknown> => bridge.shifts.current(staffId)
+    close: (shiftId: string, closingCash: number, notes?: string, requestingStaffId?: string): Promise<unknown> =>
+      bridge.shifts.close(shiftId, closingCash, notes, requestingStaffId),
+    current: (staffId: string): Promise<unknown> => bridge.shifts.current(staffId),
+    list: (): Promise<unknown[]> => bridge.shifts.list(),
+    reopen: (shiftId: string): Promise<unknown> => bridge.shifts.reopen(shiftId),
+    orders: (shiftId: string): Promise<unknown[]> => bridge.shifts.orders(shiftId)
   },
 
   reports: {
@@ -255,10 +259,12 @@ export const api = {
       setupComplete: string
       nodeMode: string
       embeddedServerPort: string
-      embeddedServerApiKey: string
+      /** True if an embedded server API key has been configured — key value is never returned to renderer */
+      embeddedServerApiKeySet: boolean
       terminalId: string
       syncUrl: string
-      syncApiKey: string
+      /** True if a sync API key has been configured — key value is never returned to renderer */
+      syncApiKeySet: boolean
     }> => bridge.setup.get(),
     complete: (input: {
       nodeMode: 'standalone' | 'server' | 'terminal'

@@ -66,6 +66,7 @@ const api = {
   staff: {
     list: () => ipcRenderer.invoke(IPC.STAFF_LIST),
     auth: (pin: string) => ipcRenderer.invoke(IPC.STAFF_AUTH, pin),
+    logout: () => ipcRenderer.invoke(IPC.STAFF_LOGOUT),
     create: (input: unknown) => ipcRenderer.invoke(IPC.STAFF_CREATE, input),
     update: (id: string, input: unknown) => ipcRenderer.invoke(IPC.STAFF_UPDATE, id, input),
     delete: (id: string) => ipcRenderer.invoke(IPC.STAFF_DELETE, id)
@@ -75,9 +76,12 @@ const api = {
   shifts: {
     open: (staffId: string, openingCash: number) =>
       ipcRenderer.invoke(IPC.SHIFTS_OPEN, staffId, openingCash),
-    close: (shiftId: string, closingCash: number, notes?: string) =>
-      ipcRenderer.invoke(IPC.SHIFTS_CLOSE, shiftId, closingCash, notes),
-    current: (staffId: string) => ipcRenderer.invoke(IPC.SHIFTS_CURRENT, staffId)
+    close: (shiftId: string, closingCash: number, notes?: string, requestingStaffId?: string) =>
+      ipcRenderer.invoke(IPC.SHIFTS_CLOSE, shiftId, closingCash, notes, requestingStaffId),
+    current: (staffId: string) => ipcRenderer.invoke(IPC.SHIFTS_CURRENT, staffId),
+    list: () => ipcRenderer.invoke(IPC.SHIFTS_LIST),
+    reopen: (shiftId: string) => ipcRenderer.invoke(IPC.SHIFTS_REOPEN, shiftId),
+    orders: (shiftId: string) => ipcRenderer.invoke(IPC.SHIFTS_ORDERS, shiftId)
   },
 
   // Reports

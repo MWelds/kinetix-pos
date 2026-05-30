@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { api } from '../lib/api'
 import type { StaffMember, Shift } from '../types'
 
 interface AuthState {
@@ -18,8 +19,11 @@ export const useAuthStore = create<AuthState>((set) => ({
   login: (staff) =>
     set({ staff, isAuthenticated: true }),
 
-  logout: () =>
-    set({ staff: null, shift: null, isAuthenticated: false }),
+  logout: () => {
+    // Clear the main-process session so role-gated IPC handlers reject subsequent calls
+    api.staff.logout().catch(() => { /* non-fatal — renderer state is still cleared */ })
+    set({ staff: null, shift: null, isAuthenticated: false })
+  },
 
   setShift: (shift) => set({ shift })
 }))

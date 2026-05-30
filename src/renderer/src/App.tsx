@@ -22,6 +22,7 @@ import { StaffScreen } from './features/staff/StaffScreen'
 import { SettingsScreen } from './features/settings/SettingsScreen'
 import { CustomerDisplayScreen } from './features/pos/CustomerDisplayScreen'
 import { VendorsScreen } from './features/vendors/VendorsScreen'
+import { ShiftsScreen } from './features/staff/ShiftsScreen'
 import { ROUTES, ROLE_LEVEL } from './constants'
 import { SetupWizard } from './features/setup/SetupWizard'
 
@@ -240,6 +241,7 @@ export function App() {
             <Route path={ROUTES.INVENTORY} element={<InventoryScreen />} />
             <Route path={ROUTES.REPORTS} element={<ReportsScreen />} />
             <Route path={ROUTES.VENDORS} element={<VendorsScreen />} />
+            <Route path={ROUTES.SHIFTS} element={<ShiftsScreen />} />
           </Route>
         </Route>
 

@@ -456,11 +456,24 @@ export const orderService = {
   },
 
   /** Void an order */
-  voidOrder(orderId: string, _staffId: string): void {
+  voidOrder(orderId: string, staffId: string): void {
     const db = getDatabase()
+    const now = new Date().toISOString()
     db.update(schema.orders)
-      .set({ status: 'voided', updatedAt: new Date().toISOString() })
+      .set({ status: 'voided', updatedAt: now })
       .where(eq(schema.orders.id, orderId))
+      .run()
+    // Write audit log so voids are traceable to the responsible staff member
+    db.insert(schema.auditLog)
+      .values({
+        id: generateId(),
+        staffId: staffId || undefined,
+        action: 'void_order',
+        entityType: 'order',
+        entityId: orderId,
+        details: JSON.stringify({ voidedAt: now }),
+        createdAt: now
+      })
       .run()
   },
 
@@ -585,6 +598,9 @@ export const orderService = {
       .where(eq(schema.orders.id, input.orderId))
       .get()
     if (!existing) throw new Error(`Order ${input.orderId} not found`)
+    if (!['pending', 'held'].includes(existing.status)) {
+      throw new Error(`Order cannot be edited in its current state (status: ${existing.status})`)
+    }
 
     // ── Recalculate totals from new item list ────────────────────────────────
     let subtotal = 0

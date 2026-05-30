@@ -59,11 +59,15 @@ export const IPC = {
   STAFF_UPDATE: 'staff:update',
   STAFF_DELETE: 'staff:delete',
   STAFF_AUTH: 'staff:auth',
+  STAFF_LOGOUT: 'staff:logout',
 
   // Shifts
   SHIFTS_OPEN: 'shifts:open',
   SHIFTS_CLOSE: 'shifts:close',
   SHIFTS_CURRENT: 'shifts:current',
+  SHIFTS_LIST: 'shifts:list',
+  SHIFTS_REOPEN: 'shifts:reopen',
+  SHIFTS_ORDERS: 'shifts:orders',
 
   // Discounts
   DISCOUNTS_LIST: 'discounts:list',

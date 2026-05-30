@@ -1,13 +1,14 @@
 /**
  * Embedded Sync Server — see bottom of file for full route listing.
+ *
+ * IMPORTANT: The server shares the POS app's own SQLite database (pos.db).
+ * This means every push from a terminal is immediately visible to the local
+ * POS app — no secondary database, no separate sync step needed on the server.
  */
 import http from 'http'
-import Database from 'better-sqlite3'
-import { existsSync, mkdirSync } from 'fs'
-import { join } from 'path'
-import { app } from 'electron'
 import { createHmac, randomBytes, randomUUID } from 'crypto'
 import { settingsService } from '../services/settings.service'
+import { getSqlite } from '../database/connection'
 import { hashPin } from '../lib/pin'
 import { getLanIp } from '../lib/network'
 
@@ -32,152 +33,17 @@ const TABLES_WITH_UPDATED_AT = new Set<SyncTable>([
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let server: http.Server | null = null
-let serverDb: Database.Database | null = null
 
 export interface EmbeddedServerStatus { running: boolean; port: number; ip: string }
 
 // ─── Database ─────────────────────────────────────────────────────────────────
-function getServerDb(): Database.Database {
-  if (serverDb) return serverDb
-  const dbDir = join(app.getPath('userData'), 'sync-server')
-  if (!existsSync(dbDir)) mkdirSync(dbDir, { recursive: true })
-  serverDb = new Database(join(dbDir, 'central.db'))
-  serverDb.pragma('journal_mode = WAL')
-  serverDb.pragma('foreign_keys = ON')
-  serverDb.pragma('synchronous = NORMAL')
-  applyServerSchema(serverDb)
-  return serverDb
-}
-
-function applyServerSchema(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS categories (
-      id TEXT PRIMARY KEY, name TEXT NOT NULL,
-      color TEXT NOT NULL DEFAULT '#3b82f6', sort_order INTEGER NOT NULL DEFAULT 0,
-      deleted_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-    CREATE TABLE IF NOT EXISTS products (
-      id TEXT PRIMARY KEY, name TEXT NOT NULL, sku TEXT NOT NULL UNIQUE,
-      barcode TEXT, description TEXT, category_id TEXT, base_price REAL NOT NULL,
-      cost_price REAL, image_url TEXT, is_composite INTEGER NOT NULL DEFAULT 0,
-      is_active INTEGER NOT NULL DEFAULT 1, tax_rate REAL NOT NULL DEFAULT 0,
-      units_per_pack INTEGER NOT NULL DEFAULT 1, individual_product_id TEXT,
-      pack_product_id TEXT, vendor_id TEXT, vendor_cost REAL,
-      track_stock INTEGER NOT NULL DEFAULT 1, deleted_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-    CREATE TABLE IF NOT EXISTS product_variants (
-      id TEXT PRIMARY KEY, product_id TEXT NOT NULL, name TEXT NOT NULL,
-      sku TEXT NOT NULL UNIQUE, barcode TEXT, price_modifier REAL NOT NULL DEFAULT 0,
-      is_active INTEGER NOT NULL DEFAULT 1, deleted_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-    CREATE TABLE IF NOT EXISTS product_components (
-      id TEXT PRIMARY KEY, composite_product_id TEXT NOT NULL,
-      component_product_id TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 1, deleted_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-    CREATE TABLE IF NOT EXISTS inventory (
-      id TEXT PRIMARY KEY, product_id TEXT NOT NULL, variant_id TEXT,
-      quantity REAL NOT NULL DEFAULT 0, low_stock_threshold REAL NOT NULL DEFAULT 5,
-      deleted_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-    CREATE TABLE IF NOT EXISTS inventory_adjustments (
-      id TEXT PRIMARY KEY, product_id TEXT NOT NULL, variant_id TEXT,
-      type TEXT NOT NULL, quantity REAL NOT NULL, note TEXT, staff_id TEXT,
-      deleted_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-    CREATE TABLE IF NOT EXISTS customers (
-      id TEXT PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT NOT NULL,
-      email TEXT, phone TEXT, address TEXT,
-      loyalty_points INTEGER NOT NULL DEFAULT 0, store_credit REAL NOT NULL DEFAULT 0,
-      notes TEXT, deleted_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-    CREATE TABLE IF NOT EXISTS staff (
-      id TEXT PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT NOT NULL,
-      email TEXT, pin TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'cashier',
-      is_active INTEGER NOT NULL DEFAULT 1, deleted_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-    CREATE TABLE IF NOT EXISTS discount_rules (
-      id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, value REAL NOT NULL,
-      min_order_amount REAL, category_id TEXT, product_id TEXT, coupon_code TEXT,
-      is_active INTEGER NOT NULL DEFAULT 1, valid_from TEXT, valid_until TEXT,
-      deleted_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-    CREATE TABLE IF NOT EXISTS orders (
-      id TEXT PRIMARY KEY, order_number TEXT NOT NULL UNIQUE,
-      status TEXT NOT NULL DEFAULT 'pending', order_type TEXT NOT NULL DEFAULT 'instore',
-      customer_id TEXT, staff_id TEXT, shift_id TEXT,
-      subtotal REAL NOT NULL DEFAULT 0, discount_amount REAL NOT NULL DEFAULT 0,
-      tax_amount REAL NOT NULL DEFAULT 0, total REAL NOT NULL DEFAULT 0,
-      notes TEXT, discount_id TEXT, manual_discount_type TEXT, manual_discount_value REAL,
-      loyalty_points_earned INTEGER NOT NULL DEFAULT 0,
-      loyalty_points_redeemed INTEGER NOT NULL DEFAULT 0,
-      terminal_id TEXT NOT NULL DEFAULT 'unknown',
-      sync_status TEXT NOT NULL DEFAULT 'pending', deleted_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-    CREATE TABLE IF NOT EXISTS order_items (
-      id TEXT PRIMARY KEY, order_id TEXT NOT NULL, product_id TEXT NOT NULL,
-      variant_id TEXT, product_name TEXT NOT NULL, variant_name TEXT,
-      sku TEXT NOT NULL, quantity REAL NOT NULL, unit_price REAL NOT NULL,
-      discount_amount REAL NOT NULL DEFAULT 0, tax_amount REAL NOT NULL DEFAULT 0,
-      line_total REAL NOT NULL, notes TEXT, deleted_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-    CREATE TABLE IF NOT EXISTS payments (
-      id TEXT PRIMARY KEY, order_id TEXT NOT NULL, method TEXT NOT NULL,
-      amount REAL NOT NULL, reference TEXT, change_given REAL,
-      status TEXT NOT NULL DEFAULT 'completed', deleted_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-    CREATE TABLE IF NOT EXISTS gift_cards (
-      id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, balance REAL NOT NULL,
-      initial_balance REAL NOT NULL, is_active INTEGER NOT NULL DEFAULT 1,
-      deleted_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-    CREATE TABLE IF NOT EXISTS vendors (
-      id TEXT PRIMARY KEY, name TEXT NOT NULL, phone TEXT, email TEXT, notes TEXT,
-      deleted_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-    CREATE TABLE IF NOT EXISTS vendor_payouts (
-      id TEXT PRIMARY KEY, vendor_id TEXT NOT NULL, amount REAL NOT NULL,
-      note TEXT, staff_id TEXT, deleted_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY, value TEXT NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-  `)
-  const patches = [
-    `ALTER TABLE product_components ADD COLUMN created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
-    `ALTER TABLE gift_cards ADD COLUMN updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
-    `ALTER TABLE orders ADD COLUMN terminal_id TEXT NOT NULL DEFAULT 'unknown'`,
-    `ALTER TABLE staff ADD COLUMN can_access_dashboard INTEGER NOT NULL DEFAULT 0`
-  ]
-  for (const ddl of patches) {
-    try { db.exec(ddl) } catch { /* column already exists */ }
-  }
+/**
+ * Returns the shared POS database handle.
+ * The embedded server operates directly on the same database as the POS app —
+ * pushes from terminals are immediately visible to the local register.
+ */
+function getServerDb() {
+  return getSqlite()
 }
 
 // ─── Sync helpers ─────────────────────────────────────────────────────────────

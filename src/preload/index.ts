@@ -96,7 +96,9 @@ const api = {
       ipcRenderer.invoke(IPC.REPORTS_SALES_BY_TERMINAL, from, to),
     paymentBreakdown: (from: string, to: string) =>
       ipcRenderer.invoke(IPC.REPORTS_PAYMENT_BREAKDOWN, from, to),
-    inventoryValuation: () => ipcRenderer.invoke(IPC.REPORTS_INVENTORY_VALUATION)
+    inventoryValuation: () => ipcRenderer.invoke(IPC.REPORTS_INVENTORY_VALUATION),
+    vendorPayables: (from: string, to: string) =>
+      ipcRenderer.invoke(IPC.REPORTS_VENDOR_PAYABLES, from, to)
   },
 
   // Settings

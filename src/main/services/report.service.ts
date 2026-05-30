@@ -1,6 +1,14 @@
-import { eq, gte, lte, and } from 'drizzle-orm'
+import { eq, gte, lte, and, isNotNull } from 'drizzle-orm'
 import { getDatabase } from '../database/connection'
 import * as schema from '../database/schema'
+
+export interface VendorPayable {
+  vendorId: string
+  vendorName: string
+  unitsSold: number
+  /** Cost of goods sold today for this vendor (sum of quantity × vendor_cost) */
+  cogsToday: number
+}
 
 export const reportService = {
   /** Summary totals for a date range */
@@ -209,5 +217,57 @@ export const reportService = {
         costValue: (r.costPrice ?? 0) * r.quantity,
         retailValue: r.basePrice * r.quantity
       }))
+  },
+
+  /**
+   * For each vendor, return today's cost of goods sold (COGS):
+   * sum(order_item.quantity × product.vendor_cost) for completed orders
+   * in [fromDate, toDate] where the product has a vendor assigned.
+   */
+  vendorPayables(fromDate: string, toDate: string): VendorPayable[] {
+    const db = getDatabase()
+
+    const rows = db
+      .select({
+        vendorId: schema.vendors.id,
+        vendorName: schema.vendors.name,
+        quantity: schema.orderItems.quantity,
+        vendorCost: schema.products.vendorCost,
+      })
+      .from(schema.orderItems)
+      .innerJoin(schema.orders, eq(schema.orderItems.orderId, schema.orders.id))
+      .innerJoin(schema.products, eq(schema.orderItems.productId, schema.products.id))
+      .innerJoin(schema.vendors, eq(schema.products.vendorId, schema.vendors.id))
+      .where(
+        and(
+          eq(schema.orders.status, 'completed'),
+          gte(schema.orders.createdAt, fromDate),
+          lte(schema.orders.createdAt, toDate),
+          isNotNull(schema.products.vendorId),
+          isNotNull(schema.products.vendorCost)
+        )
+      )
+      .all()
+
+    const map = new Map<string, VendorPayable>()
+    for (const row of rows) {
+      const cost = (row.vendorCost ?? 0) * row.quantity
+      const existing = map.get(row.vendorId)
+      if (existing) {
+        existing.unitsSold += row.quantity
+        existing.cogsToday += cost
+      } else {
+        map.set(row.vendorId, {
+          vendorId: row.vendorId,
+          vendorName: row.vendorName,
+          unitsSold: row.quantity,
+          cogsToday: cost,
+        })
+      }
+    }
+
+    return Array.from(map.values())
+      .filter((v) => v.cogsToday > 0)
+      .sort((a, b) => b.cogsToday - a.cogsToday)
   }
 }

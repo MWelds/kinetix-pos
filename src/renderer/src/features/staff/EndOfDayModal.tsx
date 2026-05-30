@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import {
   Sun, DollarSign, CreditCard, Printer, CheckCircle,
-  AlertTriangle, X, ChevronRight, ChevronLeft, TrendingUp, ShoppingBag, LogOut
+  AlertTriangle, X, ChevronRight, ChevronLeft, TrendingUp, ShoppingBag, LogOut, Truck
 } from 'lucide-react'
 import { api } from '../../lib/api'
 import { useAuthStore } from '../../stores/auth.store'
@@ -11,6 +11,7 @@ import { Button } from '../../components/ui'
 import { startOfDay, toISODate } from '../../lib/dates'
 import { useNavigate } from 'react-router-dom'
 import { ROUTES } from '../../constants'
+import type { VendorPayable } from '../../types'
 
 interface Props {
   isOpen: boolean
@@ -75,6 +76,7 @@ function buildEodReceiptHtml(
   entries: CountEntry[],
   openedAt: string,
   cfg: CurrencyConfig,
+  vendorPayables: VendorPayable[],
   closingNote?: string
 ): string {
   const now = new Date().toLocaleString()
@@ -97,6 +99,16 @@ function buildEodReceiptHtml(
       return `<div class="row"><span class="label">${esc(e.label)} (${esc(e.currency)})</span><span>${sym}${val.toFixed(2)}</span></div>`
     })
     .join('')
+
+  const totalVendorCogs = vendorPayables.reduce((s, v) => s + v.cogsToday, 0)
+  const vendorSection = vendorPayables.length > 0
+    ? `<hr/>
+       <div class="sub" style="text-align:left;font-weight:bold;margin-bottom:4px">VENDOR PAYABLES (TODAY)</div>
+       ${vendorPayables.map((v) =>
+         `<div class="row"><span class="label">${esc(v.vendorName)}</span><span>${fmt(v.cogsToday)}</span></div>`
+       ).join('')}
+       <div class="row total"><span>Total COGS</span><span>${fmt(totalVendorCogs)}</span></div>`
+    : ''
 
   return `<!DOCTYPE html><html><head><style>
     body { font-family: monospace; font-size: 12px; width: 280px; margin: 0 auto; }
@@ -125,8 +137,9 @@ function buildEodReceiptHtml(
     <div class="row"><span class="label">Expected (${cfg.primary})</span><span>${fmt(expectedPrimary)}</span></div>
     <div class="row"><span class="label">Counted (${cfg.primary} equiv.)</span><span>${fmt(countedPrimary)}</span></div>
     <div class="row variance"><span>Variance</span><span>${variance >= 0 ? '+' : ''}${fmt(variance)}</span></div>
+    ${vendorSection}
     <hr/>
-    ${closingNote ? `<hr/><div style="font-size:11px;color:#555;word-break:break-word"><strong>Note:</strong> ${esc(closingNote)}</div>` : ''}
+    ${closingNote ? `<div style="font-size:11px;color:#555;word-break:break-word"><strong>Note:</strong> ${esc(closingNote)}</div><hr/>` : ''}
     <div class="center" style="margin-top:8px; font-size:11px; color:#777">Shift closed — have a great evening!</div>
   </body></html>`
 }
@@ -196,6 +209,7 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
   const [step, setStep] = useState<Step>('cash')
   const [summary, setSummary] = useState<DaySummary | null>(null)
   const [entries, setEntries] = useState<CountEntry[]>([])
+  const [vendorPayables, setVendorPayables] = useState<VendorPayable[]>([])
   const [loadingSummary, setLoadingSummary] = useState(false)
   const [closing, setClosing] = useState(false)
   const [printing, setPrinting] = useState(false)
@@ -210,6 +224,7 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
       setStep('cash')
       setSummary(null)
       setEntries([])
+      setVendorPayables([])
       setClosingNote('')
     }
   }, [isOpen])
@@ -234,9 +249,10 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
       const now = new Date()
       const from = toISODate(startOfDay(now))
       const to = now.toISOString()
-      const [sales, payments] = await Promise.all([
+      const [sales, payments, payables] = await Promise.all([
         api.reports.salesSummary(from, to),
-        api.reports.paymentBreakdown(from, to)
+        api.reports.paymentBreakdown(from, to),
+        api.reports.vendorPayables(from, to)
       ])
       const payArr = payments as { method: string; count: number; total: number }[]
       const s = sales as { orderCount: number; totalRevenue: number; totalDiscount: number; averageOrderValue: number }
@@ -249,6 +265,7 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
       }
       setSummary(daySummary)
       setEntries(buildEntries(payArr, enabledMethods, currencyCfg))
+      setVendorPayables(payables)
     } finally {
       setLoadingSummary(false)
     }
@@ -285,7 +302,7 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
     setPrinting(true)
     try {
       const openedAt = shift?.openedAt ?? new Date().toISOString()
-      const html = buildEodReceiptHtml(storeName, summary, entries, openedAt, currencyCfg, closingNote || undefined)
+      const html = buildEodReceiptHtml(storeName, summary, entries, openedAt, currencyCfg, vendorPayables, closingNote || undefined)
       const result = await api.receipt.print(html)
       if (!result?.success) throw new Error('Print returned failure')
     } catch (err) {
@@ -510,6 +527,29 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                       <span className="text-amber-600 font-medium">-{formatCurrency(summary.totalDiscount, primaryCurrency)}</span>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Vendor payables */}
+              {vendorPayables.length > 0 && (
+                <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 space-y-2">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Truck size={14} className="text-orange-600" />
+                    <p className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Vendor Payables — Today's COGS</p>
+                  </div>
+                  {vendorPayables.map((v) => (
+                    <div key={v.vendorId} className="flex items-center justify-between text-sm">
+                      <span className="text-gray-600">{v.vendorName}</span>
+                      <div className="text-right">
+                        <span className="font-medium text-gray-900">{formatCurrency(v.cogsToday, primaryCurrency)}</span>
+                        <span className="text-xs text-gray-400 ml-1.5">({v.unitsSold} units)</span>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="flex justify-between font-semibold pt-2 border-t border-orange-200 text-orange-800">
+                    <span>Total Cost of Goods</span>
+                    <span>{formatCurrency(vendorPayables.reduce((s, v) => s + v.cogsToday, 0), primaryCurrency)}</span>
+                  </div>
                 </div>
               )}
 

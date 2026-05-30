@@ -210,3 +210,12 @@ export interface VendorPayout {
   createdAt: string
 }
 
+/** Daily cost-of-goods-sold breakdown per vendor, returned by the EOD report. */
+export interface VendorPayable {
+  vendorId: string
+  vendorName: string
+  unitsSold: number
+  /** Sum of (quantity × vendor_cost) for all items sold today belonging to this vendor */
+  cogsToday: number
+}
+

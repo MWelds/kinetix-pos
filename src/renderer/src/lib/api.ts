@@ -12,7 +12,8 @@ import type {
   InventoryItem,
   SalesSummary,
   ProductComponent,
-  Vendor
+  Vendor,
+  VendorPayable
 } from '../types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -131,7 +132,9 @@ export const api = {
       bridge.reports.salesByTerminal(from, to),
     paymentBreakdown: (from: string, to: string): Promise<unknown[]> =>
       bridge.reports.paymentBreakdown(from, to),
-    inventoryValuation: (): Promise<unknown[]> => bridge.reports.inventoryValuation()
+    inventoryValuation: (): Promise<unknown[]> => bridge.reports.inventoryValuation(),
+    vendorPayables: (from: string, to: string): Promise<VendorPayable[]> =>
+      bridge.reports.vendorPayables(from, to)
   },
 
   settings: {

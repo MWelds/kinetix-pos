@@ -290,7 +290,8 @@ export const api = {
     start: (intervalSeconds?: number): Promise<void> => bridge.sync.start(intervalSeconds),
     stop: (): Promise<void> => bridge.sync.stop(),
     onStateChange: (callback: (state: unknown) => void): (() => void) =>
-      bridge.sync.onStateChange(callback)
+      bridge.sync.onStateChange(callback),
+    discover: (): Promise<string[]> => bridge.sync.discover()
   },
 
   adminServer: {

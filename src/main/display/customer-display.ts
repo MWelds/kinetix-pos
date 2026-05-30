@@ -4,6 +4,7 @@ import { join } from 'path'
 import * as http from 'http'
 import * as os from 'os'
 import { is } from '@electron-toolkit/utils'
+import { getLanIp } from '../lib/network'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -333,15 +334,7 @@ export function isHttpServerRunning(): boolean {
 
 /** Returns the first non-loopback IPv4 address of this machine. */
 export function getLocalIp(): string {
-  const ifaces = os.networkInterfaces()
-  for (const name of Object.keys(ifaces)) {
-    for (const iface of ifaces[name] ?? []) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        return iface.address
-      }
-    }
-  }
-  return '127.0.0.1'
+  return getLanIp()
 }
 
 // ─── Data push ───────────────────────────────────────────────────────────────

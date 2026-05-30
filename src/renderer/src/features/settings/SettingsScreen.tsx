@@ -413,6 +413,9 @@ function SyncServerSection({
   const [localIps, setLocalIps] = useState<string[]>([])
   const [discovering, setDiscovering] = useState(false)
   const [discovered, setDiscovered] = useState<string[]>([])
+  /** Local API key input — separate from settings state because the stored value is security-blocked */
+  const [apiKeyInput, setApiKeyInput] = useState('')
+  const [apiKeyDirty, setApiKeyDirty] = useState(false)
   const enabled = settings.syncEnabled === 'true'
   const nodeMode = settings.nodeMode ?? ''
 
@@ -426,13 +429,20 @@ function SyncServerSection({
 
   async function handleToggleEnabled(val: boolean) {
     field('syncEnabled')(val ? 'true' : 'false')
-    // Save immediately then start/stop the loop
-    await api.settings.set('syncEnabled', val ? 'true' : 'false')
     if (val) {
+      // Save URL, interval, and key to DB first — runSync() reads them fresh from DB
+      await api.settings.set('syncUrl', settings.syncUrl ?? '')
+      await api.settings.set('syncIntervalSeconds', settings.syncIntervalSeconds ?? '30')
+      await api.settings.set('syncEnabled', 'true')
+      if (apiKeyDirty && apiKeyInput) {
+        await api.settings.set('syncApiKey', apiKeyInput)
+        setApiKeyDirty(false)
+      }
       const interval = parseInt(settings.syncIntervalSeconds || '30', 10)
       await api.sync.start(interval)
       showToast('Sync enabled — connecting to server…', 'info')
     } else {
+      await api.settings.set('syncEnabled', 'false')
       await api.sync.stop()
       showToast('Sync disabled', 'info')
     }
@@ -463,13 +473,38 @@ function SyncServerSection({
     }
   }
 
+  async function handleSyncSave() {
+    // Persist the API key first (if it was changed) — it's write-only from the renderer
+    if (apiKeyDirty && apiKeyInput) {
+      await api.settings.set('syncApiKey', apiKeyInput)
+      setApiKeyDirty(false)
+    }
+    await onSave()
+    // If sync is enabled, restart the loop so the new URL + interval take effect immediately
+    if (enabled && nodeMode !== 'server') {
+      const interval = parseInt(settings.syncIntervalSeconds || '30', 10)
+      await api.sync.start(interval)
+    }
+  }
+
   async function handleDiscoverLan() {
     setDiscovering(true)
     setDiscovered([])
     try {
       const found = await api.sync.discover() as string[]
       setDiscovered(found)
-      if (found.length === 0) showToast('No Kinetix POS servers found on this network', 'info')
+      if (found.length === 0) {
+        showToast('No Kinetix POS servers found on this network', 'info')
+      } else {
+        // Auto-fill with the first (best) result; user can pick another from the pills
+        field('syncUrl')(found[0])
+        showToast(
+          found.length === 1
+            ? 'Server found — URL filled in automatically'
+            : `${found.length} servers found — first one selected`,
+          'success'
+        )
+      }
     } catch {
       showToast('LAN scan failed', 'error')
     } finally {
@@ -598,7 +633,7 @@ function SyncServerSection({
           </div>
         )}
 
-        {/* Auto-detected IPs (always shown for reference / manual setup) */}
+        {/* Auto-detected IPs — quick-fill helper (non-server modes only) */}
         {localIps.length > 0 && nodeMode !== 'server' && (
           <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
             <p className="text-xs font-semibold text-blue-700 mb-2 flex items-center gap-1.5">
@@ -632,12 +667,37 @@ function SyncServerSection({
           </div>
         )}
 
-        <Input
-          label="Server URL"
-          value={settings.syncUrl ?? ''}
-          onChange={field('syncUrl')}
-          placeholder="http://192.168.1.100:3030"
-        />
+        {/* Server URL + API key — hidden in server mode (this machine IS the server) */}
+        {nodeMode !== 'server' && (
+          <>
+            <Input
+              label="Server URL"
+              value={settings.syncUrl ?? ''}
+              onChange={field('syncUrl')}
+              placeholder="http://192.168.1.100:3030"
+            />
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                API Key
+                <span className="text-xs font-normal text-gray-400 ml-2">
+                  (leave blank to keep current, or enter new key)
+                </span>
+              </label>
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={apiKeyInput}
+                placeholder={apiKeyDirty ? '' : '••••••••'}
+                onChange={(e) => { setApiKeyInput(e.target.value); setApiKeyDirty(true) }}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                Must match the API key set on the Sync Server. Leave blank if the server has no key.
+              </p>
+            </div>
+          </>
+        )}
+
         <div className="flex items-center gap-2">
           <label className="text-sm font-medium text-gray-700 w-32">Sync interval</label>
           <select
@@ -662,15 +722,17 @@ function SyncServerSection({
       )}
 
       <div className="mt-5 flex gap-3">
-        <Button variant="secondary" onClick={handleTestConnection} disabled={testing || !settings.syncUrl}>
-          {testing ? 'Testing…' : 'Test Connection'}
-        </Button>
-        {enabled && (
+        {nodeMode !== 'server' && (
+          <Button variant="secondary" onClick={handleTestConnection} disabled={testing || !settings.syncUrl}>
+            {testing ? 'Testing…' : 'Test Connection'}
+          </Button>
+        )}
+        {enabled && nodeMode !== 'server' && (
           <Button variant="secondary" onClick={handleSyncNow} disabled={syncing}>
             {syncing ? 'Syncing…' : 'Sync Now'}
           </Button>
         )}
-        <Button onClick={onSave}>Save</Button>
+        <Button onClick={handleSyncSave}>Save</Button>
       </div>
 
       {settings.terminalId && (

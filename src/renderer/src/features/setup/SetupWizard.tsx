@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { ShoppingCart, Server, Monitor, ChevronRight, Check, Copy, Wifi, AlertCircle, Loader2 } from 'lucide-react'
+import { ShoppingCart, Server, Monitor, ChevronRight, Check, Copy, Wifi, AlertCircle, Loader2, Search, RefreshCw } from 'lucide-react'
 import { api } from '../../lib/api'
 
 type NodeMode = 'standalone' | 'server' | 'terminal'
@@ -58,6 +58,9 @@ export function SetupWizard({ onComplete }: Props) {
   const [terminalUrl, setTerminalUrl] = useState('')
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle')
   const [testMessage, setTestMessage] = useState('')
+  const [discovering, setDiscovering] = useState(false)
+  const [discovered, setDiscovered] = useState<string[]>([])
+  const [localIps, setLocalIps] = useState<string[]>([])
 
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
@@ -69,7 +72,29 @@ export function SetupWizard({ onComplete }: Props) {
     }).catch(() => {})
 
     api.setup.embeddedServerStatus().then((s) => setLocalIp(s.ip)).catch(() => {})
+    api.app.getLocalIps().then(setLocalIps).catch(() => {})
   }, [])
+
+  async function handleDiscoverLan() {
+    setDiscovering(true)
+    setDiscovered([])
+    setTestStatus('idle')
+    try {
+      const found = await api.sync.discover() as string[]
+      setDiscovered(found)
+      if (found.length === 1) {
+        // Exactly one server found — auto-fill and auto-test
+        setTerminalUrl(found[0])
+      } else if (found.length > 1) {
+        // Multiple servers — auto-fill the first one as a sensible default
+        setTerminalUrl(found[0])
+      }
+    } catch {
+      // Non-fatal — user can still enter URL manually
+    } finally {
+      setDiscovering(false)
+    }
+  }
 
   async function handleTestConnection() {
     setTestStatus('testing')
@@ -243,12 +268,92 @@ export function SetupWizard({ onComplete }: Props) {
           <>
             <h2 className="text-xl font-bold text-gray-900 text-center mb-1">Connect to Sync Server</h2>
             <p className="text-gray-500 text-center text-sm mb-6">
-              Enter the address of the machine running the Sync Server.
+              Find your Sync Server on the network or enter its address manually.
             </p>
 
             <div className="space-y-4 mb-4">
+              {/* LAN Discovery */}
+              <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold text-blue-700 flex items-center gap-1.5">
+                    <Search size={12} /> Search for Server on LAN
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleDiscoverLan}
+                    disabled={discovering}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60 transition-colors"
+                  >
+                    {discovering
+                      ? <><RefreshCw size={11} className="animate-spin" /> Scanning…</>
+                      : <><Search size={11} /> Search</>
+                    }
+                  </button>
+                </div>
+
+                {/* Discovered servers */}
+                {discovered.length > 0 && (
+                  <>
+                    <p className="text-xs text-blue-600 mb-2">Found {discovered.length} server{discovered.length !== 1 ? 's' : ''} — click to select:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {discovered.map((url) => {
+                        const active = terminalUrl.trim() === url
+                        return (
+                          <button
+                            key={url}
+                            type="button"
+                            onClick={() => { setTerminalUrl(url); setTestStatus('idle') }}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-semibold border transition-all ${
+                              active
+                                ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                                : 'bg-white text-blue-700 border-blue-200 hover:border-blue-400 hover:bg-blue-50'
+                            }`}
+                          >
+                            {url}
+                            {active && <Check size={11} className="ml-0.5" />}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </>
+                )}
+
+                {!discovering && discovered.length === 0 && (
+                  <p className="text-xs text-blue-500">
+                    Click Search to automatically find Kinetix POS servers on your network.
+                  </p>
+                )}
+
+                {/* This machine's own IPs as a quick-fill hint */}
+                {localIps.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-blue-200">
+                    <p className="text-xs text-blue-600 mb-1.5 flex items-center gap-1">
+                      <Wifi size={11} /> This machine&apos;s IP{localIps.length > 1 ? 's' : ''} (if this PC is the server):
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {localIps.map((ip) => {
+                        const url = `http://${ip}:3030`
+                        return (
+                          <button
+                            key={ip}
+                            type="button"
+                            onClick={() => { setTerminalUrl(url); setTestStatus('idle') }}
+                            className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-mono font-medium bg-white text-blue-700 border border-blue-200 hover:border-blue-400 hover:bg-blue-50 transition-all"
+                          >
+                            {ip}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Manual URL entry */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Server URL</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Server URL <span className="text-gray-400 font-normal">(or enter manually)</span>
+                </label>
                 <input
                   type="text"
                   placeholder="http://192.168.1.100:3030"

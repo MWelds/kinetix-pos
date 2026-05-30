@@ -9,6 +9,7 @@ import { app } from 'electron'
 import { createHmac, randomBytes, randomUUID } from 'crypto'
 import { settingsService } from '../services/settings.service'
 import { hashPin } from '../lib/pin'
+import { getLanIp } from '../lib/network'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type SyncRecord = Record<string, unknown>
@@ -952,15 +953,7 @@ export function stopEmbeddedServer(): Promise<void> {
 
 /** Returns current status without starting/stopping the server. */
 export function getEmbeddedServerStatus(): EmbeddedServerStatus {
-  const { networkInterfaces } = require('os') as typeof import('os')
-  const nets = networkInterfaces()
-  let ip = '127.0.0.1'
-  for (const list of Object.values(nets)) {
-    for (const iface of list ?? []) {
-      if (iface.family === 'IPv4' && !iface.internal) { ip = iface.address; break }
-    }
-  }
   const addr = server?.address()
   const port = addr && typeof addr === 'object' ? addr.port : 3030
-  return { running: server !== null, port, ip }
+  return { running: server !== null, port, ip: getLanIp() }
 }

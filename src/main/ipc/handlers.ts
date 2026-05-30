@@ -1,7 +1,7 @@
 import { ipcMain, IpcMainInvokeEvent, BrowserWindow, dialog, app, WebContents } from 'electron'
 import { readFileSync, writeFileSync, unlinkSync, mkdirSync, copyFileSync, existsSync } from 'fs'
 import { extname, join } from 'path'
-import { tmpdir, networkInterfaces } from 'os'
+import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
 import {
   openDisplayWindow,
@@ -31,6 +31,7 @@ import { csvImportExportService } from '../services/csv-import-export.service'
 import { vendorService } from '../services/vendor.service'
 import { getSyncState, runSync, testConnection, startSyncLoop, stopSyncLoop, onSyncStateChange } from '../sync/sync.service'
 import { startEmbeddedServer, stopEmbeddedServer, getEmbeddedServerStatus } from '../sync/embedded-server'
+import { getLanIps, getLanIp } from '../lib/network'
 
 // ── Role enforcement ────────────────────────────────────────────────────────
 
@@ -450,19 +451,8 @@ export function registerIpcHandlers(): void {
     // TODO: send ESC/POS pulse command to cash drawer port
     return { success: true }
   })
-  /** Returns all non-loopback IPv4 addresses on this machine for the server URL helper. */
-  ipcMain.handle(IPC.APP_GET_LOCAL_IPS, (): string[] => {
-    const nets = networkInterfaces()
-    const ips: string[] = []
-    for (const list of Object.values(nets)) {
-      for (const iface of list ?? []) {
-        if (iface.family === 'IPv4' && !iface.internal) {
-          ips.push(iface.address)
-        }
-      }
-    }
-    return ips
-  })
+  /** Returns real LAN IPv4 addresses for this machine, filtering out Docker/WSL virtual adapters. */
+  ipcMain.handle(IPC.APP_GET_LOCAL_IPS, (): string[] => getLanIps())
 
   // QuickBooks Online
   ipcMain.handle(IPC.QBO_STATUS, () => qboService.getStatus())
@@ -604,8 +594,10 @@ export function registerIpcHandlers(): void {
     return getSyncState()
   })
 
-  ipcMain.handle(IPC.SYNC_TEST_CONNECTION, async (_e, url: string, apiKey: string) => {
-    return testConnection(url, apiKey)
+  ipcMain.handle(IPC.SYNC_TEST_CONNECTION, async (_e, url: string, _apiKey: string) => {
+    // Always use the stored API key — never trust the renderer to supply it
+    const storedKey = settingsService.get('syncApiKey')?.trim() ?? ''
+    return testConnection(url, storedKey)
   })
 
   ipcMain.handle(IPC.SYNC_START, (e, intervalSeconds?: number) => {
@@ -717,19 +709,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.SYNC_DISCOVER, async (): Promise<string[]> => {
     const { get } = await import('http')
 
-    // 1. Find our LAN IP to determine the subnet
-    const nets = networkInterfaces()
-    let localIp = ''
-    for (const list of Object.values(nets)) {
-      for (const iface of list ?? []) {
-        if (iface.family === 'IPv4' && !iface.internal) {
-          localIp = iface.address
-          break
-        }
-      }
-      if (localIp) break
-    }
-    if (!localIp) return []
+    // 1. Find our best LAN IP to determine the subnet (skips Docker/WSL adapters)
+    const localIp = getLanIp()
+    if (localIp === '127.0.0.1') return []
 
     // 2. Build the /24 host list (exclude .0 and .255)
     const parts = localIp.split('.')

@@ -7,35 +7,49 @@ import {
 } from '../lib/currency'
 
 interface CurrencyState {
+  /** Primary display currency — prices are shown and entered in this currency. */
   currency: CurrencyCode
+  /**
+   * Secondary / alternate currency — shown alongside the primary as a
+   * reference conversion. Empty string means no secondary is configured.
+   */
+  currency2: CurrencyCode
+  /**
+   * Exchange rate: 1 unit of `currency` (primary) = kydToUsdRate units of `currency2` (secondary).
+   * Name kept as kydToUsdRate for backward compatibility with settings storage.
+   */
   kydToUsdRate: number
+
   setCurrency: (code: CurrencyCode) => void
+  setCurrency2: (code: CurrencyCode) => void
   setKydToUsdRate: (rate: number) => void
-  /** Format a USD amount, converting to active currency first. Use for cart/payment totals. */
-  fmt: (usdAmount: number) => string
-  /** Format a price already in the store currency — no conversion, just adds the symbol. Use for product prices. */
+
+  /** Format an amount in the primary currency (no conversion — amount is already in primary). */
+  fmt: (amount: number) => string
+  /** Format a price already in the primary currency — alias of fmt. */
   fmtRaw: (amount: number) => string
-  /** Format a USD amount in the alternate (non-active) currency. */
-  fmtAlt: (usdAmount: number) => string
-  /** Returns the currency code that is NOT active. */
+  /** Format an amount in the secondary currency, converting from primary. */
+  fmtAlt: (primaryAmount: number) => string
+  /** Returns the secondary currency code, or empty string if none / same as primary. */
   altCurrency: () => CurrencyCode
-  /** Convert a USD amount to the active display currency (raw number). */
-  toDisplay: (usdAmount: number) => number
-  /** Convert a display-currency amount back to USD (raw number). */
-  toUsd: (displayAmount: number) => number
+  /** Convert a primary-currency amount to secondary (raw number). */
+  toDisplay: (primaryAmount: number) => number
+  /** Convert a secondary-currency amount back to primary (raw number). */
+  toUsd: (secondaryAmount: number) => number
 }
 
 export const useCurrencyStore = create<CurrencyState>((set, get) => ({
-  currency: 'USD',
+  currency:     'USD',
+  currency2:    'KYD',
   kydToUsdRate: DEFAULT_KYD_TO_USD,
 
-  setCurrency: (currency) => set({ currency }),
+  setCurrency:     (currency)     => set({ currency }),
+  setCurrency2:    (currency2)    => set({ currency2 }),
   setKydToUsdRate: (kydToUsdRate) => set({ kydToUsdRate }),
 
-  fmt: (usdAmount) => {
-    const { currency, kydToUsdRate } = get()
-    const display = convertAmount(usdAmount, 'USD', currency, kydToUsdRate)
-    return formatCurrency(display, currency)
+  fmt: (amount) => {
+    const { currency } = get()
+    return formatCurrency(amount, currency)
   },
 
   fmtRaw: (amount) => {
@@ -43,25 +57,27 @@ export const useCurrencyStore = create<CurrencyState>((set, get) => ({
     return formatCurrency(amount, currency)
   },
 
-  fmtAlt: (usdAmount) => {
-    const { currency, kydToUsdRate } = get()
-    const alt: CurrencyCode = currency === 'USD' ? 'KYD' : 'USD'
-    const display = convertAmount(usdAmount, 'USD', alt, kydToUsdRate)
-    return formatCurrency(display, alt)
+  fmtAlt: (primaryAmount) => {
+    const { currency, currency2, kydToUsdRate } = get()
+    if (!currency2 || currency2 === currency) return ''
+    const converted = convertAmount(primaryAmount, currency, currency2, kydToUsdRate, currency)
+    return formatCurrency(converted, currency2)
   },
 
   altCurrency: () => {
-    const { currency } = get()
-    return currency === 'USD' ? 'KYD' : 'USD'
+    const { currency, currency2 } = get()
+    return currency2 && currency2 !== currency ? currency2 : ''
   },
 
-  toDisplay: (usdAmount) => {
-    const { currency, kydToUsdRate } = get()
-    return convertAmount(usdAmount, 'USD', currency, kydToUsdRate)
+  toDisplay: (primaryAmount) => {
+    const { currency, currency2, kydToUsdRate } = get()
+    if (!currency2 || currency2 === currency) return primaryAmount
+    return convertAmount(primaryAmount, currency, currency2, kydToUsdRate, currency)
   },
 
-  toUsd: (displayAmount) => {
-    const { currency, kydToUsdRate } = get()
-    return convertAmount(displayAmount, currency, 'USD', kydToUsdRate)
+  toUsd: (secondaryAmount) => {
+    const { currency, currency2, kydToUsdRate } = get()
+    if (!currency2 || currency2 === currency) return secondaryAmount
+    return convertAmount(secondaryAmount, currency2, currency, kydToUsdRate, currency)
   },
 }))

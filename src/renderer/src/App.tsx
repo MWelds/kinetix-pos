@@ -7,6 +7,7 @@ import { useLogoStore } from './stores/logo.store'
 import { useUiStore } from './stores/ui.store'
 import { api } from './lib/api'
 import type { CurrencyCode } from './lib/currency'
+import { CURRENCIES } from './lib/currency'
 import type { DisplayData } from '../../main/display/customer-display'
 import { Sidebar } from './components/layout/Sidebar'
 import { ToastContainer } from './components/ui'
@@ -83,7 +84,7 @@ function AppShell() {
 /** Pure helper — builds DisplayData from current Zustand state, no side effects. */
 function buildDisplayData(): DisplayData {
   const cart = useCartStore.getState()
-  const { currency, altCurrency, kydToUsdRate } = useCurrencyStore.getState()
+  const { currency, altCurrency, kydToUsdRate, toDisplay } = useCurrencyStore.getState()
   const items = cart.items
   if (items.length === 0) return { state: 'idle' }
   return {
@@ -99,11 +100,11 @@ function buildDisplayData(): DisplayData {
     tax: cart.taxAmount(),
     total: cart.total(),
     currency,
-    symbol: currency === 'KYD' ? 'CI$' : '$',
-    ...(currency !== 'USD' && cart.total() > 0 && {
-      altTotal: cart.total() / kydToUsdRate,
+    symbol: CURRENCIES[currency]?.symbol ?? currency,
+    ...(altCurrency() && cart.total() > 0 && {
+      altTotal: toDisplay(cart.total()),
       altCurrency: altCurrency(),
-      altSymbol: '$',
+      altSymbol: CURRENCIES[altCurrency()]?.symbol ?? altCurrency(),
     }),
     customer: cart.customer
       ? `${cart.customer.firstName} ${cart.customer.lastName}`
@@ -169,6 +170,7 @@ function SettingsHydrator() {
   const setTaxEnabled = useCartStore((s) => s.setTaxEnabled)
   const setTaxRate = useCartStore((s) => s.setTaxRate)
   const setCurrency = useCurrencyStore((s) => s.setCurrency)
+  const setCurrency2 = useCurrencyStore((s) => s.setCurrency2)
   const setKydToUsdRate = useCurrencyStore((s) => s.setKydToUsdRate)
   const setLogo = useLogoStore((s) => s.setLogo)
 
@@ -177,10 +179,11 @@ function SettingsHydrator() {
       if (s.taxEnabled !== undefined) setTaxEnabled(s.taxEnabled === 'true')
       if (s.taxRate) setTaxRate(parseFloat(s.taxRate) || 0.08)
       if (s.currency) setCurrency(s.currency as CurrencyCode)
+      if (s.currency2) setCurrency2(s.currency2 as CurrencyCode)
       if (s.kydToUsdRate) setKydToUsdRate(parseFloat(s.kydToUsdRate) || 1.20)
       if (s.logoBase64) setLogo(s.logoBase64)
     }).catch(() => { /* settings unavailable -- use defaults */ })
-  }, [setTaxEnabled, setTaxRate, setCurrency, setKydToUsdRate, setLogo])
+  }, [setTaxEnabled, setTaxRate, setCurrency, setCurrency2, setKydToUsdRate, setLogo])
 
   return null
 }

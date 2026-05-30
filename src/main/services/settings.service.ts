@@ -12,6 +12,7 @@ export const DEFAULT_SETTINGS = {
   taxName: 'Tax',
   receiptFooter: 'Thank you for your purchase!',
   currency: 'USD',
+  currency2: 'KYD',
   currencySymbol: '$',
   loyaltyPointsPerDollar: '1',
   receiptPrinterPort: '',

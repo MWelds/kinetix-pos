@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Plus, Store, DollarSign, X, Check, Package } from 'lucide-react'
+import { Plus, Store, DollarSign, X, Check, Package, Trash2 } from 'lucide-react'
 import { api } from '../../lib/api'
 import { Button, Badge, Modal, Input, PageSpinner } from '../../components/ui'
 import { useUiStore } from '../../stores/ui.store'
@@ -407,6 +407,7 @@ export function VendorsScreen() {
   const [editVendor, setEditVendor] = useState<Vendor | null>(null)
   const [detailVendor, setDetailVendor] = useState<Vendor | null>(null)
   const [payVendor, setPayVendor] = useState<Vendor | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const showToast = useUiStore((s) => s.showToast)
 
   async function load() {
@@ -438,6 +439,35 @@ export function VendorsScreen() {
     } else {
       showToast(result.reason ?? 'Cannot delete vendor', 'error')
     }
+  }
+
+  async function handleBatchDelete() {
+    const count = selectedIds.size
+    if (!window.confirm(`Delete ${count} vendor${count !== 1 ? 's' : ''}? This cannot be undone.`)) return
+    const results = await Promise.all([...selectedIds].map((id) => api.vendors.delete(id)))
+    const failed = results.filter((r) => !r.ok).length
+    if (failed > 0) {
+      showToast(`${count - failed} deleted, ${failed} could not be removed (have unpaid balances)`, 'error')
+    } else {
+      showToast(`${count} vendor${count !== 1 ? 's' : ''} deleted`, 'success')
+    }
+    setSelectedIds(new Set())
+    if (detailVendor && selectedIds.has(detailVendor.id)) setDetailVendor(null)
+    load()
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleSelectAll() {
+    const allSelected = vendors.length > 0 && vendors.every((v) => selectedIds.has(v.id))
+    setSelectedIds(allSelected ? new Set() : new Set(vendors.map((v) => v.id)))
   }
 
   const totalOwed = vendors.reduce((s, v) => s + v.balanceOwed, 0)
@@ -503,6 +533,16 @@ export function VendorsScreen() {
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b border-gray-200">
                   <tr>
+                    <th className="px-4 py-3 w-10">
+                      <input
+                        type="checkbox"
+                        checked={vendors.length > 0 && vendors.every((v) => selectedIds.has(v.id))}
+                        ref={(el) => { if (el) el.indeterminate = selectedIds.size > 0 && !vendors.every((v) => selectedIds.has(v.id)) }}
+                        onChange={toggleSelectAll}
+                        className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                        aria-label="Select all vendors"
+                      />
+                    </th>
                     <th className="text-left px-4 py-3 text-gray-600 font-medium">Vendor</th>
                     <th className="text-right px-4 py-3 text-gray-600 font-medium">
                       Total Earned
@@ -519,12 +559,24 @@ export function VendorsScreen() {
                     <tr
                       key={v.id}
                       className={`hover:bg-gray-50 cursor-pointer transition-colors ${
-                        detailVendor?.id === v.id ? 'bg-blue-50' : ''
+                        selectedIds.has(v.id) ? 'bg-blue-50' : detailVendor?.id === v.id ? 'bg-slate-50' : ''
                       }`}
                       onClick={() =>
                         setDetailVendor(detailVendor?.id === v.id ? null : v)
                       }
                     >
+                      <td
+                        className="px-4 py-3 w-10"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(v.id)}
+                          onChange={() => toggleSelect(v.id)}
+                          className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                          aria-label={`Select ${v.name}`}
+                        />
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2.5">
                           <div className="w-7 h-7 rounded-full bg-green-100 flex items-center justify-center shrink-0">
@@ -628,6 +680,30 @@ export function VendorsScreen() {
             load()
           }}
         />
+      )}
+
+      {/* Floating multi-select action bar */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-gray-900 text-white rounded-2xl shadow-2xl px-5 py-3 flex items-center gap-3">
+          <span className="text-sm font-medium text-gray-300">
+            {selectedIds.size} selected
+          </span>
+          <div className="w-px h-4 bg-gray-700" />
+          <button
+            onClick={handleBatchDelete}
+            className="flex items-center gap-1.5 bg-red-600 hover:bg-red-500 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+          >
+            <Trash2 size={14} /> Delete
+          </button>
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            className="p-1.5 text-gray-400 hover:text-white rounded-lg transition-colors"
+            title="Clear selection"
+            aria-label="Clear selection"
+          >
+            <X size={15} />
+          </button>
+        </div>
       )}
     </div>
   )

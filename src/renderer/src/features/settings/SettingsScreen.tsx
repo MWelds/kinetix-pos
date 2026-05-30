@@ -10,6 +10,7 @@ import { useCurrencyStore } from '../../stores/currency.store'
 import type { Category } from '../../types'
 import {
   CURRENCIES,
+  CURRENCY_REGIONS,
   convertAmount,
   DEFAULT_KYD_TO_USD,
   type CurrencyCode
@@ -923,6 +924,7 @@ export function SettingsScreen() {
   const setTaxEnabled = useCartStore((s) => s.setTaxEnabled)
   const setTaxRate = useCartStore((s) => s.setTaxRate)
   const setCurrency = useCurrencyStore((s) => s.setCurrency)
+  const setCurrency2 = useCurrencyStore((s) => s.setCurrency2)
   const setKydToUsdRate = useCurrencyStore((s) => s.setKydToUsdRate)
   const logoBase64 = useLogoStore((s) => s.logoBase64)
   const setLogo = useLogoStore((s) => s.setLogo)
@@ -932,6 +934,7 @@ export function SettingsScreen() {
       setSettings({
         taxEnabled: 'true',
         currency: 'USD',
+        currency2: 'KYD',
         kydToUsdRate: String(DEFAULT_KYD_TO_USD),
         enabledPaymentMethods: JSON.stringify(['cash','card','store_credit','gift_card','layaway']),
         receiptTemplate: 'classic',
@@ -1168,6 +1171,7 @@ export function SettingsScreen() {
       setTaxEnabled(settings.taxEnabled === 'true')
       setTaxRate(parseFloat(settings.taxRate) || 0.08)
       setCurrency((settings.currency as CurrencyCode) || 'USD')
+      setCurrency2((settings.currency2 as CurrencyCode) || 'KYD')
       setKydToUsdRate(parseFloat(settings.kydToUsdRate) || DEFAULT_KYD_TO_USD)
       showToast('Settings saved', 'success')
     } catch (err) {
@@ -1197,8 +1201,10 @@ export function SettingsScreen() {
   // Derived converter values
   const rate = parseFloat(settings.kydToUsdRate) || DEFAULT_KYD_TO_USD
   const convAmount = parseFloat(convInput) || 0
-  const convTo: CurrencyCode = convFrom === 'USD' ? 'KYD' : 'USD'
-  const convResult = convertAmount(convAmount, convFrom, convTo, rate)
+  const primaryCur: CurrencyCode = settings.currency || 'USD'
+  const secondaryCur: CurrencyCode = settings.currency2 || 'KYD'
+  const convToCode: CurrencyCode = convFrom === primaryCur ? secondaryCur : primaryCur
+  const convResult = convertAmount(convAmount, convFrom, convToCode, rate, primaryCur)
 
   if (loading) return null
 
@@ -1343,100 +1349,146 @@ export function SettingsScreen() {
         {/* Currency */}
         <SectionAccordion id="currency" title="Currency">
           <p className="text-xs text-gray-500 mb-4">
-            Choose the default display currency. All product prices will be shown in this currency.
+            Select up to two currencies. Prices are stored and entered in the primary currency; the secondary is shown as a live reference conversion alongside totals.
           </p>
 
-          {/* Currency selector */}
-          <div className="flex gap-3 mb-5">
-            {(Object.values(CURRENCIES)).map((cur) => (
-              <button
-                key={cur.code}
-                onClick={() => setSettings((s) => ({ ...s, currency: cur.code }))}
-                className={`flex-1 py-3 rounded-xl border-2 text-sm font-semibold transition-all ${
-                  settings.currency === cur.code
-                    ? 'border-blue-600 bg-blue-50 text-blue-700'
-                    : 'border-gray-200 text-gray-600 hover:border-gray-300 bg-white'
-                }`}
+          {/* Primary / Secondary selects */}
+          <div className="grid grid-cols-2 gap-4 mb-5">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Primary Currency</label>
+              <select
+                value={settings.currency || 'USD'}
+                onChange={(e) => setSettings((s) => ({ ...s, currency: e.target.value }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white min-h-[44px]"
               >
-                <div className="text-xl mb-0.5">{cur.symbol}</div>
-                <div>{cur.code}</div>
-                <div className="text-xs font-normal text-gray-500 mt-0.5">{cur.name}</div>
-              </button>
-            ))}
+                {Object.entries(CURRENCY_REGIONS).map(([region, codes]) => (
+                  <optgroup key={region} label={region}>
+                    {codes.map((code) => {
+                      const cur = CURRENCIES[code]
+                      return (
+                        <option key={code} value={code}>
+                          {cur.symbol} {code} — {cur.name}
+                        </option>
+                      )
+                    })}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Secondary Currency <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
+              <select
+                value={settings.currency2 ?? 'KYD'}
+                onChange={(e) => setSettings((s) => ({ ...s, currency2: e.target.value }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white min-h-[44px]"
+              >
+                <option value="">None</option>
+                {Object.entries(CURRENCY_REGIONS).map(([region, codes]) => (
+                  <optgroup key={region} label={region}>
+                    {codes.map((code) => {
+                      const cur = CURRENCIES[code]
+                      return (
+                        <option key={code} value={code}>
+                          {cur.symbol} {code} — {cur.name}
+                        </option>
+                      )
+                    })}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
           </div>
 
-          {/* KYD exchange rate */}
-          <div className="space-y-1 mb-5">
-            <Input
-              label="KYD to USD rate (1 KYD = ? USD)"
-              value={settings.kydToUsdRate ?? String(DEFAULT_KYD_TO_USD)}
-              onChange={field('kydToUsdRate')}
-              type="number"
-              step="0.0001"
-              min="0.01"
-            />
-            <p className="text-xs text-gray-400">
-              The official Cayman Islands peg is <strong>1 KYD = 1.20 USD</strong> (fixed since 1974).
-              Only change this if you're using a different rate.
-            </p>
-            <button
-              type="button"
-              onClick={() => setSettings((s) => ({ ...s, kydToUsdRate: String(DEFAULT_KYD_TO_USD) }))}
-              className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
-            >
-              <RefreshCw size={11} /> Reset to official rate (1.20)
-            </button>
-          </div>
+          {/* Exchange rate */}
+          {settings.currency2 && settings.currency2 !== settings.currency && (
+            <div className="space-y-1 mb-5">
+              <Input
+                label={`Exchange rate: 1 ${settings.currency || 'primary'} = ? ${settings.currency2}`}
+                value={settings.kydToUsdRate ?? String(DEFAULT_KYD_TO_USD)}
+                onChange={field('kydToUsdRate')}
+                type="number"
+                step="0.0001"
+                min="0.0001"
+              />
+              {((settings.currency === 'KYD' && settings.currency2 === 'USD') ||
+                (settings.currency === 'USD' && settings.currency2 === 'KYD')) ? (
+                <>
+                  <p className="text-xs text-gray-400">
+                    The official Cayman Islands peg is <strong>1 KYD = 1.20 USD</strong> (fixed since 1974).
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setSettings((s) => ({ ...s, kydToUsdRate: String(DEFAULT_KYD_TO_USD) }))}
+                    className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                  >
+                    <RefreshCw size={11} /> Reset to official KYD rate (1.20)
+                  </button>
+                </>
+              ) : (
+                <p className="text-xs text-gray-400">
+                  Enter how many {settings.currency2} units equal 1 {settings.currency || 'primary'}.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Live currency converter */}
-          <div className="border border-gray-200 rounded-xl p-4 bg-gray-50">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3 flex items-center gap-1.5">
-              <ArrowLeftRight size={13} /> Currency Converter
-            </p>
-            <div className="flex items-center gap-3">
-              <div className="flex-1">
-                <label className="text-xs text-gray-500 block mb-1">{CURRENCIES[convFrom].name}</label>
-                <div className="flex">
-                  <span className="bg-white border border-r-0 border-gray-300 rounded-l-lg px-3 py-2 text-sm text-gray-600 flex items-center">
-                    {CURRENCIES[convFrom].symbol}
-                  </span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={convInput}
-                    onChange={(e) => setConvInput(e.target.value)}
-                    placeholder="0.00"
-                    className="flex-1 border border-gray-300 rounded-r-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px]"
-                  />
+          {settings.currency2 && settings.currency2 !== settings.currency && (
+            <div className="border border-gray-200 rounded-xl p-4 bg-gray-50">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3 flex items-center gap-1.5">
+                <ArrowLeftRight size={13} /> Currency Converter
+              </p>
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <label className="text-xs text-gray-500 block mb-1">
+                    {CURRENCIES[convFrom]?.name ?? convFrom}
+                  </label>
+                  <div className="flex">
+                    <span className="bg-white border border-r-0 border-gray-300 rounded-l-lg px-3 py-2 text-sm text-gray-600 flex items-center">
+                      {CURRENCIES[convFrom]?.symbol ?? convFrom}
+                    </span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={convInput}
+                      onChange={(e) => setConvInput(e.target.value)}
+                      placeholder="0.00"
+                      className="flex-1 border border-gray-300 rounded-r-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px]"
+                    />
+                  </div>
                 </div>
-              </div>
 
-              <button
-                type="button"
-                onClick={() => setConvFrom((f) => (f === 'USD' ? 'KYD' : 'USD'))}
-                className="mt-5 p-2 rounded-full bg-blue-100 hover:bg-blue-200 text-blue-600 transition-colors"
-                title="Swap currencies"
-              >
-                <ArrowLeftRight size={16} />
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setConvFrom((f) => f === primaryCur ? secondaryCur : primaryCur)}
+                  className="mt-5 p-2 rounded-full bg-blue-100 hover:bg-blue-200 text-blue-600 transition-colors"
+                  title="Swap currencies"
+                >
+                  <ArrowLeftRight size={16} />
+                </button>
 
-              <div className="flex-1">
-                <label className="text-xs text-gray-500 block mb-1">{CURRENCIES[convTo].name}</label>
-                <div className="flex">
-                  <span className="bg-white border border-r-0 border-gray-300 rounded-l-lg px-3 py-2 text-sm text-gray-600 flex items-center">
-                    {CURRENCIES[convTo].symbol}
-                  </span>
-                  <div className="flex-1 border border-gray-300 rounded-r-lg px-3 py-2 text-sm bg-gray-100 text-gray-800 font-semibold min-h-[44px] flex items-center">
-                    {convAmount > 0 ? convResult.toFixed(2) : '-'}
+                <div className="flex-1">
+                  <label className="text-xs text-gray-500 block mb-1">
+                    {CURRENCIES[convToCode]?.name ?? convToCode}
+                  </label>
+                  <div className="flex">
+                    <span className="bg-white border border-r-0 border-gray-300 rounded-l-lg px-3 py-2 text-sm text-gray-600 flex items-center">
+                      {CURRENCIES[convToCode]?.symbol ?? convToCode}
+                    </span>
+                    <div className="flex-1 border border-gray-300 rounded-r-lg px-3 py-2 text-sm bg-gray-100 text-gray-800 font-semibold min-h-[44px] flex items-center">
+                      {convAmount > 0 ? convResult.toFixed(2) : '—'}
+                    </div>
                   </div>
                 </div>
               </div>
+              <p className="text-xs text-gray-400 mt-2">
+                Rate: 1 {primaryCur} = {rate.toFixed(4)} {secondaryCur} | 1 {secondaryCur} = {(1 / rate).toFixed(4)} {primaryCur}
+              </p>
             </div>
-            <p className="text-xs text-gray-400 mt-2">
-              Rate: 1 KYD = {rate.toFixed(4)} USD | 1 USD = {(1 / rate).toFixed(4)} KYD
-            </p>
-          </div>
+          )}
         </SectionAccordion>
 
         {/* Receipt Templates */}

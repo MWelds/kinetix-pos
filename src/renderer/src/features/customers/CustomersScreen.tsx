@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Plus, Search, Edit, User, Trash2 } from 'lucide-react'
+import { Plus, Search, Edit, User, Trash2, X } from 'lucide-react'
 import { api } from '../../lib/api'
 import { CsvImportExportBar } from '../../components/ui/CsvImportExportBar'
 import { Input, Button, Badge, Modal, PageSpinner } from '../../components/ui'
@@ -17,6 +17,7 @@ export function CustomersScreen() {
   const [showForm, setShowForm] = useState(false)
   const [editCustomer, setEditCustomer] = useState<Customer | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const showToast = useUiStore((s) => s.showToast)
 
   async function load() {
@@ -53,6 +54,34 @@ export function CustomersScreen() {
     }
   }
 
+  async function handleBatchDelete() {
+    const count = selectedIds.size
+    if (!window.confirm(`Remove ${count} customer${count !== 1 ? 's' : ''}? Their order history will be preserved.`)) return
+    try {
+      await Promise.all([...selectedIds].map((id) => api.customers.delete(id)))
+      showToast(`${count} customer${count !== 1 ? 's' : ''} removed`, 'success')
+      if (selected && selectedIds.has(selected.id)) setSelected(null)
+      setSelectedIds(new Set())
+      load()
+    } catch {
+      showToast('Failed to remove some customers', 'error')
+    }
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleSelectAll() {
+    const allSelected = customers.length > 0 && customers.every((c) => selectedIds.has(c.id))
+    setSelectedIds(allSelected ? new Set() : new Set(customers.map((c) => c.id)))
+  }
+
   const CUSTOMER_CSV_TEMPLATE = [
     'first_name,last_name,email,phone,address,loyalty_points,store_credit,notes',
     'Jane,Doe,jane@example.com,555-0100,"123 Main St",0,0.00,'
@@ -86,6 +115,16 @@ export function CustomersScreen() {
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
+                  <th className="px-4 py-3 w-10">
+                    <input
+                      type="checkbox"
+                      checked={customers.length > 0 && customers.every((c) => selectedIds.has(c.id))}
+                      ref={(el) => { if (el) el.indeterminate = selectedIds.size > 0 && !customers.every((c) => selectedIds.has(c.id)) }}
+                      onChange={toggleSelectAll}
+                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                      aria-label="Select all customers"
+                    />
+                  </th>
                   {['Customer', 'Contact', 'Loyalty Points', 'Store Credit', 'Joined', 'Actions'].map(h => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide">{h}</th>
                   ))}
@@ -93,7 +132,16 @@ export function CustomersScreen() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {customers.map((c) => (
-                  <tr key={c.id} className="hover:bg-gray-50">
+                  <tr key={c.id} className={`hover:bg-gray-50 transition-colors ${selectedIds.has(c.id) ? 'bg-blue-50' : ''}`}>
+                    <td className="px-4 py-3 w-10">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(c.id)}
+                        onChange={() => toggleSelect(c.id)}
+                        className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                        aria-label={`Select ${c.firstName} ${c.lastName}`}
+                      />
+                    </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-medium text-xs">
@@ -177,6 +225,30 @@ export function CustomersScreen() {
           onClose={() => setShowForm(false)}
           onSave={() => { setShowForm(false); load(); showToast(editCustomer ? 'Customer updated' : 'Customer created', 'success') }}
         />
+      )}
+
+      {/* Floating multi-select action bar */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-gray-900 text-white rounded-2xl shadow-2xl px-5 py-3 flex items-center gap-3">
+          <span className="text-sm font-medium text-gray-300">
+            {selectedIds.size} selected
+          </span>
+          <div className="w-px h-4 bg-gray-700" />
+          <button
+            onClick={handleBatchDelete}
+            className="flex items-center gap-1.5 bg-red-600 hover:bg-red-500 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+          >
+            <Trash2 size={14} /> Remove
+          </button>
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            className="p-1.5 text-gray-400 hover:text-white rounded-lg transition-colors"
+            title="Clear selection"
+            aria-label="Clear selection"
+          >
+            <X size={15} />
+          </button>
+        </div>
       )}
     </div>
   )

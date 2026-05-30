@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { Plus, Search, Edit, Trash2, Package, Layers, FolderOpen, X, Check, ImagePlus, Store, Loader, Tag } from 'lucide-react'
+import { Plus, Search, Edit, Trash2, Package, Layers, FolderOpen, X, Check, ImagePlus, Store, Loader, Tag, CheckSquare } from 'lucide-react'
 import { api } from '../../lib/api'
 import { CsvImportExportBar } from '../../components/ui/CsvImportExportBar'
 import { Input, Button, Badge, Modal, PageSpinner } from '../../components/ui'
@@ -193,6 +193,8 @@ export function ProductsScreen() {
   const [showForm, setShowForm] = useState(false)
   const [showCatManager, setShowCatManager] = useState(false)
   const [tagProduct, setTagProduct] = useState<Product | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [batchTagProducts, setBatchTagProducts] = useState<Product[] | null>(null)
   const showToast = useUiStore((s) => s.showToast)
 
   const load = useCallback(async () => {
@@ -211,6 +213,29 @@ export function ProductsScreen() {
     await api.products.delete(product.id)
     showToast('Product deleted', 'success')
     load()
+  }
+
+  async function handleBatchDelete() {
+    const count = selectedIds.size
+    if (!confirm(`Delete ${count} product${count !== 1 ? 's' : ''}? This cannot be undone.`)) return
+    await Promise.all([...selectedIds].map((id) => api.products.delete(id)))
+    showToast(`${count} product${count !== 1 ? 's' : ''} deleted`, 'success')
+    setSelectedIds(new Set())
+    load()
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleSelectAll() {
+    const allSelected = filtered.length > 0 && filtered.every((p) => selectedIds.has(p.id))
+    setSelectedIds(allSelected ? new Set() : new Set(filtered.map((p) => p.id)))
   }
 
   const filtered = products.filter((p) => {
@@ -285,6 +310,16 @@ export function ProductsScreen() {
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
+                  <th className="px-4 py-3 w-10">
+                    <input
+                      type="checkbox"
+                      checked={filtered.length > 0 && filtered.every((p) => selectedIds.has(p.id))}
+                      ref={(el) => { if (el) el.indeterminate = selectedIds.size > 0 && !filtered.every((p) => selectedIds.has(p.id)) }}
+                      onChange={toggleSelectAll}
+                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                      aria-label="Select all products"
+                    />
+                  </th>
                   {['Product', 'SKU', 'Category', 'Price', 'Stock', 'Status', 'Actions'].map((h) => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide">{h}</th>
                   ))}
@@ -292,7 +327,16 @@ export function ProductsScreen() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {filtered.map((product) => (
-                  <tr key={product.id} className="hover:bg-gray-50">
+                  <tr key={product.id} className={`hover:bg-gray-50 transition-colors ${selectedIds.has(product.id) ? 'bg-blue-50' : ''}`}>
+                    <td className="px-4 py-3 w-10">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(product.id)}
+                        onChange={() => toggleSelect(product.id)}
+                        className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                        aria-label={`Select ${product.name}`}
+                      />
+                    </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         <div
@@ -404,9 +448,46 @@ export function ProductsScreen() {
 
       {tagProduct && (
         <PriceTagModal
-          product={tagProduct}
+          products={[tagProduct]}
           onClose={() => setTagProduct(null)}
         />
+      )}
+
+      {batchTagProducts && batchTagProducts.length > 0 && (
+        <PriceTagModal
+          products={batchTagProducts}
+          onClose={() => setBatchTagProducts(null)}
+        />
+      )}
+
+      {/* Floating multi-select action bar */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-gray-900 text-white rounded-2xl shadow-2xl px-5 py-3 flex items-center gap-3">
+          <span className="text-sm font-medium text-gray-300">
+            {selectedIds.size} selected
+          </span>
+          <div className="w-px h-4 bg-gray-700" />
+          <button
+            onClick={() => setBatchTagProducts(filtered.filter((p) => selectedIds.has(p.id)))}
+            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+          >
+            <Tag size={14} /> Print Tags
+          </button>
+          <button
+            onClick={handleBatchDelete}
+            className="flex items-center gap-1.5 bg-red-600 hover:bg-red-500 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+          >
+            <Trash2 size={14} /> Delete
+          </button>
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            className="p-1.5 text-gray-400 hover:text-white rounded-lg transition-colors"
+            title="Clear selection"
+            aria-label="Clear selection"
+          >
+            <X size={15} />
+          </button>
+        </div>
       )}
     </div>
   )

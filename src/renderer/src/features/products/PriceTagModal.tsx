@@ -174,31 +174,31 @@ function esc(s: string): string {
 }
 
 /**
- * Build a printable HTML document containing `qty` price tags
- * laid out for the given `paper` configuration.
+ * Build a printable HTML document containing price tags for one or more products.
+ * Each product gets `copiesEach` tags, laid out for the given paper configuration.
  */
 function buildTagsHtml(
-  product: Product,
-  barcode: string,
-  qty: number,
+  products: Product[],
+  copiesEach: number,
   paper: PaperConfig,
   fmtRaw: (n: number) => string
 ): string {
-  let barcodeSvg = ''
-  try {
-    barcodeSvg = generateCode128Svg(barcode, {
-      height: paper.barcodeHeight,
-      moduleWidth: paper.barcodeModuleWidth,
-      showText: true,
-      fontSize: Math.max(6, Math.round(paper.barcodeModuleWidth * 4.5)),
-    })
-  } catch {
-    barcodeSvg = `<span style="font-family:monospace;font-size:8px;letter-spacing:1px">${esc(barcode)}</span>`
-  }
+  const allTags = products.flatMap((product) => {
+    const barcode = product.barcode ?? product.sku
+    let barcodeSvg = ''
+    try {
+      barcodeSvg = generateCode128Svg(barcode, {
+        height: paper.barcodeHeight,
+        moduleWidth: paper.barcodeModuleWidth,
+        showText: true,
+        fontSize: Math.max(6, Math.round(paper.barcodeModuleWidth * 4.5)),
+      })
+    } catch {
+      barcodeSvg = `<span style="font-family:monospace;font-size:8px;letter-spacing:1px">${esc(barcode)}</span>`
+    }
 
-  const pageBreak = paper.singlePerPage ? 'page-break-after: always;' : ''
-
-  const tagHtml = `
+    const pageBreak = paper.singlePerPage ? 'page-break-after: always;' : ''
+    const tagHtml = `
     <div class="tag" style="${pageBreak}">
       <div class="sku">${esc(product.sku)}</div>
       <div class="name">${esc(product.name)}</div>
@@ -206,17 +206,20 @@ function buildTagsHtml(
       <div class="price">${esc(fmtRaw(product.basePrice))}</div>
     </div>`
 
-  const tags = Array.from({ length: qty }, () => tagHtml).join('\n')
+    return Array.from({ length: copiesEach }, () => tagHtml)
+  })
 
-  const tagMinHeightCss = paper.tagMinHeight
-    ? `min-height: ${paper.tagMinHeight};`
-    : ''
+  const tagMinHeightCss = paper.tagMinHeight ? `min-height: ${paper.tagMinHeight};` : ''
+  const title =
+    products.length === 1
+      ? `Price Tags — ${esc(products[0].name)}`
+      : `Price Tags — ${products.length} Products`
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Price Tags — ${esc(product.name)}</title>
+<title>${title}</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -294,7 +297,7 @@ function buildTagsHtml(
 </head>
 <body>
 <div class="grid">
-${tags}
+${allTags.join('\n')}
 </div>
 </body>
 </html>`
@@ -302,24 +305,27 @@ ${tags}
 
 // ─── Modal component ──────────────────────────────────────────────────────────
 
-interface PriceTagModalProps {
-  product: Product
+export interface PriceTagModalProps {
+  /** One or more products to print tags for. */
+  products: Product[]
   onClose: () => void
 }
 
 /**
  * Modal for previewing and printing product price tags.
- * Supports multiple paper sizes and label formats.
+ * Supports single-product (with a visual preview) and multi-product batch mode.
  */
-export function PriceTagModal({ product, onClose }: PriceTagModalProps) {
-  const [qty, setQty]           = useState(1)
-  const [paperId, setPaperId]   = useState(DEFAULT_PAPER_ID)
-  const [printing, setPrinting] = useState(false)
+export function PriceTagModal({ products, onClose }: PriceTagModalProps) {
+  const [copiesEach, setCopiesEach] = useState(1)
+  const [paperId, setPaperId]       = useState(DEFAULT_PAPER_ID)
+  const [printing, setPrinting]     = useState(false)
   const showToast = useUiStore((s) => s.showToast)
   const fmtRaw    = useCurrencyStore((s) => s.fmtRaw)
 
-  const paper  = PAPER_CONFIGS.find((p) => p.id === paperId) ?? PAPER_CONFIGS[0]
-  const barcode = product.barcode ?? product.sku
+  const paper   = PAPER_CONFIGS.find((p) => p.id === paperId) ?? PAPER_CONFIGS[0]
+  const isSingle = products.length === 1
+  const preview  = products[0] // used for single-product preview card
+  const barcode  = preview.barcode ?? preview.sku
 
   /** Small in-modal barcode preview (constant size, independent of paper choice). */
   const previewSvg = useMemo(() => {
@@ -335,13 +341,15 @@ export function PriceTagModal({ product, onClose }: PriceTagModalProps) {
     }
   }, [barcode])
 
+  const totalTags = products.length * copiesEach
+
   async function handlePrint() {
     setPrinting(true)
     try {
-      const html   = buildTagsHtml(product, barcode, qty, paper, fmtRaw)
+      const html   = buildTagsHtml(products, copiesEach, paper, fmtRaw)
       const result = await api.tag.print(html)
       if (result.success) {
-        showToast(`${qty} price tag${qty > 1 ? 's' : ''} sent to printer`, 'success')
+        showToast(`${totalTags} price tag${totalTags !== 1 ? 's' : ''} sent to printer`, 'success')
         onClose()
       } else {
         showToast('Print failed — check printer settings', 'error')
@@ -353,46 +361,67 @@ export function PriceTagModal({ product, onClose }: PriceTagModalProps) {
     }
   }
 
-  function adjustQty(delta: number) {
-    setQty((q) => Math.max(1, Math.min(100, q + delta)))
+  function adjustCopies(delta: number) {
+    setCopiesEach((q) => Math.max(1, Math.min(100, q + delta)))
   }
 
-  function handleQtyInput(e: React.ChangeEvent<HTMLInputElement>) {
+  function handleCopiesInput(e: React.ChangeEvent<HTMLInputElement>) {
     const parsed = parseInt(e.target.value, 10)
-    if (!isNaN(parsed)) setQty(Math.max(1, Math.min(100, parsed)))
+    if (!isNaN(parsed)) setCopiesEach(Math.max(1, Math.min(100, parsed)))
   }
 
   return (
     <Modal isOpen onClose={onClose} title="Print Price Tags" size="sm">
       <div className="space-y-5">
 
-        {/* ── Tag preview ──────────────────────────────────────────────────── */}
-        <div className="flex justify-center">
-          <div
-            className="border border-dashed border-gray-300 rounded-xl bg-white shadow-sm p-4 text-center"
-            style={{ width: 220 }}
-          >
-            <p className="text-[10px] font-mono text-gray-400 mb-1 truncate">
-              {product.sku}
-            </p>
-            <p className="text-sm font-bold text-gray-900 leading-tight mb-3 line-clamp-2">
-              {product.name}
-            </p>
-            {previewSvg ? (
-              <div
-                className="flex justify-center mb-3 overflow-hidden"
-                dangerouslySetInnerHTML={{ __html: previewSvg }}
-              />
-            ) : (
-              <p className="text-xs font-mono text-gray-500 mb-3 tracking-wide">
-                {barcode}
+        {/* ── Single-product preview card / Multi-product list ──────────────── */}
+        {isSingle ? (
+          <div className="flex justify-center">
+            <div
+              className="border border-dashed border-gray-300 rounded-xl bg-white shadow-sm p-4 text-center"
+              style={{ width: 220 }}
+            >
+              <p className="text-[10px] font-mono text-gray-400 mb-1 truncate">
+                {preview.sku}
               </p>
-            )}
-            <p className="text-2xl font-extrabold text-blue-600">
-              {fmtRaw(product.basePrice)}
-            </p>
+              <p className="text-sm font-bold text-gray-900 leading-tight mb-3 line-clamp-2">
+                {preview.name}
+              </p>
+              {previewSvg ? (
+                <div
+                  className="flex justify-center mb-3 overflow-hidden"
+                  dangerouslySetInnerHTML={{ __html: previewSvg }}
+                />
+              ) : (
+                <p className="text-xs font-mono text-gray-500 mb-3 tracking-wide">
+                  {barcode}
+                </p>
+              )}
+              <p className="text-2xl font-extrabold text-blue-600">
+                {fmtRaw(preview.basePrice)}
+              </p>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="border border-gray-200 rounded-xl overflow-hidden">
+            <div className="bg-blue-50 border-b border-blue-100 px-3 py-2 text-xs font-semibold text-blue-700">
+              {products.length} products selected
+            </div>
+            <div className="max-h-36 overflow-y-auto divide-y divide-gray-100">
+              {products.map((p) => (
+                <div
+                  key={p.id}
+                  className="flex items-center justify-between px-3 py-2 text-sm"
+                >
+                  <span className="font-medium text-gray-900 truncate">{p.name}</span>
+                  <span className="text-gray-400 font-mono ml-2 shrink-0">
+                    {fmtRaw(p.basePrice)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* ── Paper type ───────────────────────────────────────────────────── */}
         <div>
@@ -417,17 +446,17 @@ export function PriceTagModal({ product, onClose }: PriceTagModalProps) {
           <p className="mt-1 text-xs text-gray-400">{paper.description}</p>
         </div>
 
-        {/* ── Quantity selector ──────────────────────────────────────────────── */}
+        {/* ── Quantity / copies selector ────────────────────────────────────── */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Number of tags
+            {isSingle ? 'Number of tags' : 'Copies per product'}
           </label>
           <div className="flex items-center gap-3">
             <button
               type="button"
-              aria-label="Decrease quantity"
-              disabled={qty <= 1}
-              onClick={() => adjustQty(-1)}
+              aria-label="Decrease"
+              disabled={copiesEach <= 1}
+              onClick={() => adjustCopies(-1)}
               className="w-9 h-9 rounded-lg border border-gray-300 flex items-center justify-center
                          hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
@@ -437,27 +466,31 @@ export function PriceTagModal({ product, onClose }: PriceTagModalProps) {
               type="number"
               min={1}
               max={100}
-              value={qty}
-              onChange={handleQtyInput}
-              aria-label="Tag quantity"
+              value={copiesEach}
+              onChange={handleCopiesInput}
+              aria-label="Copies"
               className="w-16 text-center border border-gray-300 rounded-lg px-2 py-1.5 text-sm
                          focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             <button
               type="button"
-              aria-label="Increase quantity"
-              disabled={qty >= 100}
-              onClick={() => adjustQty(1)}
+              aria-label="Increase"
+              disabled={copiesEach >= 100}
+              onClick={() => adjustCopies(1)}
               className="w-9 h-9 rounded-lg border border-gray-300 flex items-center justify-center
                          hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               <Plus size={14} />
             </button>
-            <span className="text-xs text-gray-400 ml-1">max 100</span>
+            {!isSingle && (
+              <span className="text-xs text-gray-400 ml-1">
+                = {totalTags} total
+              </span>
+            )}
           </div>
         </div>
 
-        {/* ── Actions ────────────────────────────────────────────────────────── */}
+        {/* ── Actions ──────────────────────────────────────────────────────── */}
         <div className="flex gap-3 pt-1">
           <Button variant="ghost" onClick={onClose} className="flex-1">
             Cancel
@@ -469,7 +502,7 @@ export function PriceTagModal({ product, onClose }: PriceTagModalProps) {
             loading={printing}
             className="flex-1"
           >
-            Print {qty} Tag{qty !== 1 ? 's' : ''}
+            Print {totalTags} Tag{totalTags !== 1 ? 's' : ''}
           </Button>
         </div>
 

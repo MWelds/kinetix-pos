@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Plus, Edit, Shield, Trash2, Monitor } from 'lucide-react'
+import { Plus, Edit, Shield, Trash2, Monitor, X } from 'lucide-react'
 import { api } from '../../lib/api'
 import { Button, Badge, Modal, Input, PageSpinner } from '../../components/ui'
 import { useUiStore } from '../../stores/ui.store'
@@ -12,6 +12,7 @@ export function StaffScreen() {
   const [editMember, setEditMember] = useState<StaffMember | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const showToast = useUiStore((s) => s.showToast)
 
   async function load() {
@@ -35,6 +36,33 @@ export function StaffScreen() {
     }
   }
 
+  async function handleBatchDelete() {
+    const count = selectedIds.size
+    if (!window.confirm(`Remove ${count} staff member${count !== 1 ? 's' : ''}? They will be deactivated and can no longer log in.`)) return
+    try {
+      await Promise.all([...selectedIds].map((id) => api.staff.delete(id)))
+      showToast(`${count} staff member${count !== 1 ? 's' : ''} removed`, 'success')
+      setSelectedIds(new Set())
+      load()
+    } catch {
+      showToast('Failed to remove some staff members', 'error')
+    }
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleSelectAll() {
+    const allSelected = staff.length > 0 && staff.every((s) => selectedIds.has(s.id))
+    setSelectedIds(allSelected ? new Set() : new Set(staff.map((s) => s.id)))
+  }
+
   const ROLE_COLORS: Record<string, 'red' | 'purple' | 'blue'> = { admin: 'red', manager: 'purple', cashier: 'blue' }
 
   return (
@@ -52,6 +80,16 @@ export function StaffScreen() {
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
+                  <th className="px-4 py-3 w-10">
+                    <input
+                      type="checkbox"
+                      checked={staff.length > 0 && staff.every((s) => selectedIds.has(s.id))}
+                      ref={(el) => { if (el) el.indeterminate = selectedIds.size > 0 && !staff.every((s) => selectedIds.has(s.id)) }}
+                      onChange={toggleSelectAll}
+                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                      aria-label="Select all staff"
+                    />
+                  </th>
                   {['Name', 'Email', 'Role', 'Dashboard', 'Status', 'Actions'].map(h => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide">{h}</th>
                   ))}
@@ -59,7 +97,16 @@ export function StaffScreen() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {staff.map((s) => (
-                  <tr key={s.id} className="hover:bg-gray-50">
+                  <tr key={s.id} className={`hover:bg-gray-50 transition-colors ${selectedIds.has(s.id) ? 'bg-blue-50' : ''}`}>
+                    <td className="px-4 py-3 w-10">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(s.id)}
+                        onChange={() => toggleSelect(s.id)}
+                        className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                        aria-label={`Select ${s.firstName} ${s.lastName}`}
+                      />
+                    </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center text-purple-600 font-medium text-xs">
@@ -116,6 +163,30 @@ export function StaffScreen() {
           onClose={() => setShowForm(false)}
           onSave={() => { setShowForm(false); load(); showToast(editMember ? 'Staff updated' : 'Staff created', 'success') }}
         />
+      )}
+
+      {/* Floating multi-select action bar */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-gray-900 text-white rounded-2xl shadow-2xl px-5 py-3 flex items-center gap-3">
+          <span className="text-sm font-medium text-gray-300">
+            {selectedIds.size} selected
+          </span>
+          <div className="w-px h-4 bg-gray-700" />
+          <button
+            onClick={handleBatchDelete}
+            className="flex items-center gap-1.5 bg-red-600 hover:bg-red-500 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+          >
+            <Trash2 size={14} /> Remove
+          </button>
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            className="p-1.5 text-gray-400 hover:text-white rounded-lg transition-colors"
+            title="Clear selection"
+            aria-label="Clear selection"
+          >
+            <X size={15} />
+          </button>
+        </div>
       )}
     </div>
   )

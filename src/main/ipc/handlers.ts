@@ -126,6 +126,7 @@ export function registerIpcHandlers(): void {
 
   // Inventory
   ipcMain.handle(IPC.INVENTORY_LIST, () => inventoryService.list())
+  ipcMain.handle(IPC.INVENTORY_LIST_PAGINATED, (_e, opts) => inventoryService.listPaginated(opts))
   ipcMain.handle(IPC.INVENTORY_LOW_STOCK, () => inventoryService.lowStock())
   ipcMain.handle(IPC.INVENTORY_ADJUST, (e, input) => {
     requireRole(e, 'manager')

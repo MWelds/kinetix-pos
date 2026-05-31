@@ -34,6 +34,8 @@ const api = {
   // Inventory
   inventory: {
     list: () => ipcRenderer.invoke(IPC.INVENTORY_LIST),
+    listPaginated: (opts: { search?: string; offset: number; limit: number }) =>
+      ipcRenderer.invoke(IPC.INVENTORY_LIST_PAGINATED, opts),
     lowStock: () => ipcRenderer.invoke(IPC.INVENTORY_LOW_STOCK),
     adjust: (input: unknown) => ipcRenderer.invoke(IPC.INVENTORY_ADJUST, input)
   },

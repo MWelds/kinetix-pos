@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { Plus, AlertTriangle, Barcode, X, Search, Package, ChevronRight } from 'lucide-react'
+import { Plus, AlertTriangle, Barcode, X, Search, Package, ChevronRight, ChevronLeft } from 'lucide-react'
 import { api } from '../../lib/api'
 import { Button, Badge, Modal, Input, PageSpinner, Spinner } from '../../components/ui'
 import { useUiStore } from '../../stores/ui.store'
@@ -7,10 +7,16 @@ import { useAuthStore } from '../../stores/auth.store'
 import { BARCODE_SCAN_TIMEOUT_MS } from '../../constants'
 import type { InventoryItem, Product } from '../../types'
 
+const PAGE_SIZE = 50
+
 export function InventoryScreen() {
   const [items, setItems] = useState<InventoryItem[]>([])
+  const [total, setTotal] = useState(0)
+  const [lowStockCount, setLowStockCount] = useState(0)
+  const [page, setPage] = useState(0)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [adjustItem, setAdjustItem] = useState<InventoryItem | null>(null)
   const [showReceiveModal, setShowReceiveModal] = useState(false)
   const [form, setForm] = useState({
@@ -24,6 +30,25 @@ export function InventoryScreen() {
   const barcodeRef = useRef<HTMLInputElement>(null)
   const showToast = useUiStore((s) => s.showToast)
   const { staff } = useAuthStore()
+
+  // 250 ms debounce for search
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 250)
+    return () => clearTimeout(t)
+  }, [search])
+
+  // Reset to page 0 when search changes (skip on first mount)
+  const prevSearchRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (prevSearchRef.current === null) {
+      prevSearchRef.current = debouncedSearch
+      return
+    }
+    if (prevSearchRef.current !== debouncedSearch) {
+      prevSearchRef.current = debouncedSearch
+      setPage(0)
+    }
+  }, [debouncedSearch])
 
   // Keyboard-wedge barcode scanner listener
   const scanBuffer = useRef('')
@@ -41,9 +66,10 @@ export function InventoryScreen() {
           setBarcodeError(`No product found for barcode: ${barcode}`)
           return
         }
+        // Search the current page first; if not found, fetch by product lookup
         const inventoryItem = items.find((i) => i.productId === product.id)
         if (!inventoryItem) {
-          setBarcodeError(`"${product.name}" has no inventory record yet`)
+          setBarcodeError(`"${product.name}" is not on the current page — use the search box to find it`)
           return
         }
         setAdjustItem(inventoryItem)
@@ -58,7 +84,6 @@ export function InventoryScreen() {
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      // Ignore if focused on an input/textarea/select (manual input takes priority)
       const tag = (e.target as HTMLElement).tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
 
@@ -85,19 +110,27 @@ export function InventoryScreen() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [handleBarcodeScan])
 
-  useEffect(() => {
-    load()
-  }, [])
-
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await api.inventory.list()
-      setItems(data)
+      const result = await api.inventory.listPaginated({
+        search: debouncedSearch || undefined,
+        offset: page * PAGE_SIZE,
+        limit: PAGE_SIZE
+      })
+      setItems(result.items)
+      setTotal(result.total)
+      setLowStockCount(result.lowStockCount)
+    } catch {
+      showToast('Failed to load inventory', 'error')
     } finally {
       setLoading(false)
     }
-  }
+  }, [debouncedSearch, page, showToast])
+
+  useEffect(() => {
+    load()
+  }, [load])
 
   async function handleAdjust() {
     if (!adjustItem) return
@@ -131,27 +164,14 @@ export function InventoryScreen() {
     await handleBarcodeScan(barcodeInput.trim())
   }
 
-  const filtered = items.filter((item) => {
-    if (!search) return true
-    const q = search.toLowerCase()
-    return (
-      item.productName?.toLowerCase().includes(q) ||
-      item.sku?.toLowerCase().includes(q)
-    )
-  })
-
-  const lowStock = items.filter((i) => i.quantity <= i.lowStockThreshold)
+  const totalPages = Math.ceil(total / PAGE_SIZE)
 
   /** Whether this inventory item is the individual product of a pack */
-  function isPackIndividual(item: typeof items[number]) {
+  function isPackIndividual(item: InventoryItem) {
     return item.packProductId != null && item.packUnitsPerPack != null
   }
 
-  /**
-   * Rich stock display for pack-linked individual products:
-   * "200 units — 2 full boxes (100 each) + 0 remaining"
-   */
-  function packStockLabel(item: typeof items[number]) {
+  function packStockLabel(item: InventoryItem) {
     const ppu = item.packUnitsPerPack!
     const fullBoxes = Math.floor(item.quantity / ppu)
     const remaining = item.quantity % ppu
@@ -166,15 +186,15 @@ export function InventoryScreen() {
     )
   }
 
-  if (loading) return <PageSpinner />
-
   return (
     <div className="flex flex-col h-full bg-gray-50">
       {/* Header */}
       <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Inventory</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{items.length} products tracked</p>
+          <p className="text-sm text-gray-500 mt-0.5">
+            {loading ? 'Loading…' : `${total} product${total !== 1 ? 's' : ''} tracked`}
+          </p>
         </div>
         <Button icon={<Plus size={16} />} onClick={() => setShowReceiveModal(true)}>
           Receive Stock
@@ -183,18 +203,17 @@ export function InventoryScreen() {
 
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
         {/* Low stock alert */}
-        {lowStock.length > 0 && (
+        {lowStockCount > 0 && (
           <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-amber-800">
             <AlertTriangle size={16} className="shrink-0" />
             <span className="text-sm font-medium">
-              {lowStock.length} product{lowStock.length > 1 ? 's' : ''} low in stock
+              {lowStockCount} product{lowStockCount > 1 ? 's' : ''} low in stock
             </span>
           </div>
         )}
 
         {/* Search + Barcode bar */}
         <div className="flex gap-3">
-          {/* Text search */}
           <div className="relative flex-1">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
             <input
@@ -206,7 +225,6 @@ export function InventoryScreen() {
             />
           </div>
 
-          {/* Manual barcode input */}
           <form onSubmit={handleManualBarcode} className="flex gap-2">
             <div className="relative">
               <Barcode size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
@@ -241,89 +259,123 @@ export function InventoryScreen() {
         )}
 
         {/* Inventory table */}
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="text-left px-4 py-3 text-gray-600 font-medium">Product</th>
-                <th className="text-left px-4 py-3 text-gray-600 font-medium">SKU</th>
-                <th className="text-center px-4 py-3 text-gray-600 font-medium">In Stock</th>
-                <th className="text-center px-4 py-3 text-gray-600 font-medium">Low Stock At</th>
-                <th className="text-center px-4 py-3 text-gray-600 font-medium">Status</th>
-                <th className="text-right px-4 py-3 text-gray-600 font-medium">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="text-center py-12 text-gray-400">
-                    {search ? 'No products match your search' : 'No inventory records'}
-                  </td>
-                </tr>
-              ) : (
-                filtered.map((item) => {
-                  const isLow = item.quantity <= item.lowStockThreshold
-                  const packInd = isPackIndividual(item)
-                  return (
-                    <tr key={item.id} className={`hover:bg-gray-50 ${packInd ? 'bg-indigo-50/30' : ''}`}>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          {item.imageUrl ? (
-                            <img
-                              src={item.imageUrl}
-                              alt={item.productName ?? ''}
-                              className="w-8 h-8 rounded-lg object-cover shrink-0 border border-gray-100"
-                            />
-                          ) : (
-                            <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center shrink-0">
-                              <Package size={13} className="text-gray-400" />
-                            </div>
-                          )}
-                          <div className="flex items-center gap-1.5">
-                            {packInd && <Package size={13} className="text-indigo-500 shrink-0" />}
-                            <span className="font-medium text-gray-900">{item.productName}</span>
-                            {packInd && (
-                              <span className="text-xs text-indigo-600 bg-indigo-100 rounded px-1 py-0.5 shrink-0">
-                                pack-linked
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-gray-500 font-mono text-xs">{item.sku}</td>
-                      <td className="px-4 py-3 text-center">
-                        {packInd
-                          ? packStockLabel(item)
-                          : <span className={`font-bold text-base ${isLow ? 'text-red-600' : 'text-gray-900'}`}>{item.quantity}</span>
-                        }
-                      </td>
-                      <td className="px-4 py-3 text-center text-gray-500">{item.lowStockThreshold}</td>
-                      <td className="px-4 py-3 text-center">
-                        {isLow
-                          ? <Badge color="red">Low Stock</Badge>
-                          : <Badge color="green">In Stock</Badge>
-                        }
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => {
-                            setAdjustItem(item)
-                            setForm({ type: 'receive', quantity: '', note: '' })
-                            setBarcodeError('')
-                          }}
-                        >
-                          Adjust
-                        </Button>
+        {loading ? (
+          <PageSpinner />
+        ) : (
+          <>
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="text-left px-4 py-3 text-gray-600 font-medium">Product</th>
+                    <th className="text-left px-4 py-3 text-gray-600 font-medium">SKU</th>
+                    <th className="text-center px-4 py-3 text-gray-600 font-medium">In Stock</th>
+                    <th className="text-center px-4 py-3 text-gray-600 font-medium">Low Stock At</th>
+                    <th className="text-center px-4 py-3 text-gray-600 font-medium">Status</th>
+                    <th className="text-right px-4 py-3 text-gray-600 font-medium">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {items.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="text-center py-12 text-gray-400">
+                        {debouncedSearch ? 'No products match your search' : 'No inventory records'}
                       </td>
                     </tr>
-                  )
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+                  ) : (
+                    items.map((item) => {
+                      const isLow = item.quantity <= item.lowStockThreshold
+                      const packInd = isPackIndividual(item)
+                      return (
+                        <tr key={item.id} className={`hover:bg-gray-50 ${packInd ? 'bg-indigo-50/30' : ''}`}>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              {item.imageUrl ? (
+                                <img
+                                  src={item.imageUrl}
+                                  alt={item.productName ?? ''}
+                                  className="w-8 h-8 rounded-lg object-cover shrink-0 border border-gray-100"
+                                />
+                              ) : (
+                                <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center shrink-0">
+                                  <Package size={13} className="text-gray-400" />
+                                </div>
+                              )}
+                              <div className="flex items-center gap-1.5">
+                                {packInd && <Package size={13} className="text-indigo-500 shrink-0" />}
+                                <span className="font-medium text-gray-900">{item.productName}</span>
+                                {packInd && (
+                                  <span className="text-xs text-indigo-600 bg-indigo-100 rounded px-1 py-0.5 shrink-0">
+                                    pack-linked
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-gray-500 font-mono text-xs">{item.sku}</td>
+                          <td className="px-4 py-3 text-center">
+                            {packInd
+                              ? packStockLabel(item)
+                              : <span className={`font-bold text-base ${isLow ? 'text-red-600' : 'text-gray-900'}`}>{item.quantity}</span>
+                            }
+                          </td>
+                          <td className="px-4 py-3 text-center text-gray-500">{item.lowStockThreshold}</td>
+                          <td className="px-4 py-3 text-center">
+                            {isLow
+                              ? <Badge color="red">Low Stock</Badge>
+                              : <Badge color="green">In Stock</Badge>
+                            }
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => {
+                                setAdjustItem(item)
+                                setForm({ type: 'receive', quantity: '', note: '' })
+                                setBarcodeError('')
+                              }}
+                            >
+                              Adjust
+                            </Button>
+                          </td>
+                        </tr>
+                      )
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination bar */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between px-1">
+                <p className="text-sm text-gray-500">
+                  Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of {total}
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setPage((p) => Math.max(0, p - 1))}
+                    disabled={page === 0}
+                    className="p-1.5 rounded-lg border border-gray-200 disabled:opacity-40 hover:bg-gray-50"
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                  <span className="text-sm text-gray-700 font-medium">
+                    Page {page + 1} of {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                    disabled={page >= totalPages - 1}
+                    className="p-1.5 rounded-lg border border-gray-200 disabled:opacity-40 hover:bg-gray-50"
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       {/* Receive Stock modal */}
@@ -411,7 +463,6 @@ export function InventoryScreen() {
               }
               autoFocus
             />
-            {/* Live pack preview */}
             {adjustItem && isPackIndividual(adjustItem) && adjustItem.packUnitsPerPack && form.quantity && (
               (() => {
                 const n = parseInt(form.quantity, 10)
@@ -424,7 +475,6 @@ export function InventoryScreen() {
                   </p>
                 )
               })()
-
             )}
             <Input
               label="Note (optional)"

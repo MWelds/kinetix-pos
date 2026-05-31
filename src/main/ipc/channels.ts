@@ -26,6 +26,7 @@ export const IPC = {
 
   // Inventory
   INVENTORY_LIST: 'inventory:list',
+  INVENTORY_LIST_PAGINATED: 'inventory:listPaginated',
   INVENTORY_ADJUST: 'inventory:adjust',
   INVENTORY_LOW_STOCK: 'inventory:lowStock',
 

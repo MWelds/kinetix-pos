@@ -60,6 +60,12 @@ export const api = {
 
   inventory: {
     list: (): Promise<InventoryItem[]> => bridge.inventory.list(),
+    listPaginated: (opts: {
+      search?: string
+      offset: number
+      limit: number
+    }): Promise<{ items: InventoryItem[]; total: number; lowStockCount: number }> =>
+      bridge.inventory.listPaginated(opts),
     lowStock: (): Promise<InventoryItem[]> => bridge.inventory.lowStock(),
     adjust: (input: {
       productId: string

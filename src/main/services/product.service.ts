@@ -443,12 +443,17 @@ export const productService = {
     return this.getById(id)!
   },
 
-  /** Soft-delete a product */
+  /** Soft-delete a product and hard-delete its inventory record. */
   delete(id: string): void {
     const db = getDatabase()
     db.update(schema.products)
       .set({ isActive: false, updatedAt: new Date().toISOString() })
       .where(eq(schema.products.id, id))
+      .run()
+    // Remove the inventory row — no longer relevant once the product is deleted.
+    // inventory_adjustments reference product_id directly so history is preserved.
+    db.delete(schema.inventory)
+      .where(eq(schema.inventory.productId, id))
       .run()
   },
 

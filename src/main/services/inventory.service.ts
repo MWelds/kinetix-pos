@@ -1,5 +1,5 @@
 import { eq, sql } from 'drizzle-orm'
-import { getDatabase } from '../database/connection'
+import { getDatabase, getSqlite } from '../database/connection'
 import * as schema from '../database/schema'
 import { generateId } from '../lib/id'
 
@@ -78,6 +78,116 @@ export const inventoryService = {
     }
 
     return rows
+  },
+
+  /**
+   * Server-side paginated inventory list with optional name/SKU search.
+   * Returns only `limit` rows and the total matching count.
+   * Also returns `lowStockCount` so the UI alert banner needs no extra round-trip.
+   * Only shows inventory for active (non-deleted) products.
+   */
+  listPaginated(opts: {
+    search?: string
+    offset: number
+    limit: number
+  }): {
+    items: Array<{
+      id: string
+      productId: string
+      variantId: string | null
+      quantity: number
+      lowStockThreshold: number
+      productName: string | null
+      sku: string | null
+      categoryName: string | null
+      imageUrl: string | null
+      unitsPerPack: number
+      individualProductId: string | null
+      packProductId: string | null
+      packUnitsPerPack: number | null
+    }>
+    total: number
+    lowStockCount: number
+  } {
+    const db = getSqlite()
+    const { search, offset, limit } = opts
+
+    const likePat = search ? `%${search.replace(/%/g, '\\%').replace(/_/g, '\\_')}%` : null
+
+    const whereClause = likePat
+      ? `AND p.is_active = 1 AND (LOWER(p.name) LIKE LOWER(?) ESCAPE '\\' OR LOWER(p.sku) LIKE LOWER(?) ESCAPE '\\')`
+      : `AND p.is_active = 1`
+    const params: unknown[] = likePat ? [likePat, likePat] : []
+
+    // Total count matching the search (for pagination bar)
+    const totalRow = db.prepare(
+      `SELECT COUNT(*) as cnt
+       FROM inventory i
+       JOIN products p ON p.id = i.product_id
+       LEFT JOIN categories c ON c.id = p.category_id
+       WHERE p.track_stock = 1 ${whereClause}`
+    ).get(...params) as { cnt: number }
+    const total = totalRow?.cnt ?? 0
+
+    // Low stock count (always across all active products, ignoring search)
+    const lowRow = db.prepare(
+      `SELECT COUNT(*) as cnt
+       FROM inventory i
+       JOIN products p ON p.id = i.product_id
+       WHERE p.is_active = 1 AND p.track_stock = 1 AND i.quantity <= i.low_stock_threshold`
+    ).get() as { cnt: number }
+    const lowStockCount = lowRow?.cnt ?? 0
+
+    // Paginated rows
+    type RawRow = {
+      id: string; product_id: string; variant_id: string | null
+      quantity: number; low_stock_threshold: number
+      product_name: string | null; sku: string | null
+      category_name: string | null; image_url: string | null
+      units_per_pack: number; individual_product_id: string | null
+      pack_product_id: string | null
+    }
+    const rows = db.prepare(
+      `SELECT i.id, i.product_id, i.variant_id, i.quantity, i.low_stock_threshold,
+              p.name AS product_name, p.sku, p.image_url, p.units_per_pack,
+              p.individual_product_id, p.pack_product_id,
+              c.name AS category_name
+       FROM inventory i
+       JOIN products p ON p.id = i.product_id
+       LEFT JOIN categories c ON c.id = p.category_id
+       WHERE p.track_stock = 1 ${whereClause}
+       ORDER BY p.name ASC
+       LIMIT ? OFFSET ?`
+    ).all(...params, limit, offset) as RawRow[]
+
+    // Resolve packUnitsPerPack for pack-linked individual products
+    const packIds = rows.filter((r) => r.pack_product_id).map((r) => r.pack_product_id as string)
+    const packMap = new Map<string, number>()
+    if (packIds.length > 0) {
+      const placeholders = packIds.map(() => '?').join(',')
+      const packRows = db.prepare(
+        `SELECT id, units_per_pack FROM products WHERE id IN (${placeholders})`
+      ).all(...packIds) as Array<{ id: string; units_per_pack: number }>
+      for (const p of packRows) packMap.set(p.id, p.units_per_pack ?? 1)
+    }
+
+    const items = rows.map((r) => ({
+      id: r.id,
+      productId: r.product_id,
+      variantId: r.variant_id,
+      quantity: r.quantity,
+      lowStockThreshold: r.low_stock_threshold,
+      productName: r.product_name,
+      sku: r.sku,
+      categoryName: r.category_name,
+      imageUrl: r.image_url,
+      unitsPerPack: r.units_per_pack ?? 1,
+      individualProductId: r.individual_product_id,
+      packProductId: r.pack_product_id,
+      packUnitsPerPack: r.pack_product_id ? (packMap.get(r.pack_product_id) ?? null) : null
+    }))
+
+    return { items, total, lowStockCount }
   },
 
   lowStock() {

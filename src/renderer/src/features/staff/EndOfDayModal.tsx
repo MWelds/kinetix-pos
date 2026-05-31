@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import {
   Sun, DollarSign, CreditCard, Printer, CheckCircle,
-  AlertTriangle, X, ChevronRight, ChevronLeft, TrendingUp, ShoppingBag, LogOut, Truck
+  AlertTriangle, X, ChevronRight, ChevronLeft, TrendingUp, ShoppingBag, LogOut, Truck,
+  Monitor
 } from 'lucide-react'
 import { api } from '../../lib/api'
 import { useAuthStore } from '../../stores/auth.store'
@@ -26,6 +27,15 @@ interface DaySummary {
   totalDiscount: number
   averageOrderValue: number
   /** Raw payment breakdown from the DB */
+  paymentRows: { method: string; count: number; total: number }[]
+}
+
+interface TerminalSummary {
+  terminalId: string
+  terminalName: string
+  orderCount: number
+  totalRevenue: number
+  totalDiscount: number
   paymentRows: { method: string; count: number; total: number }[]
 }
 
@@ -77,6 +87,7 @@ function buildEodReceiptHtml(
   openedAt: string,
   cfg: CurrencyConfig,
   vendorPayables: VendorPayable[],
+  terminals: TerminalSummary[],
   closingNote?: string
 ): string {
   const now = new Date().toLocaleString()
@@ -110,6 +121,23 @@ function buildEodReceiptHtml(
        <div class="row total"><span>Total COGS</span><span>${fmt(totalVendorCogs)}</span></div>`
     : ''
 
+  // Per-terminal section — only rendered when 2+ terminals exist
+  const terminalSection = terminals.length >= 2
+    ? `<hr/>
+       <div class="sub" style="text-align:left;font-weight:bold;margin-bottom:4px">BY REGISTER</div>
+       ${terminals.map((t) => `
+         <div style="margin-bottom:6px">
+           <div style="font-weight:bold;font-size:11px;margin-bottom:2px">${esc(t.terminalName)}</div>
+           <div class="row"><span class="label">Orders</span><span>${t.orderCount}</span></div>
+           <div class="row"><span class="label">Revenue</span><span>${fmt(t.totalRevenue)}</span></div>
+           ${t.paymentRows.map((p) =>
+             `<div class="row"><span class="label" style="padding-left:8px">&#8627; ${esc(METHOD_LABELS[p.method] ?? p.method)}</span><span>${fmt(p.total)}</span></div>`
+           ).join('')}
+         </div>
+       `).join('')}
+       <div class="row total"><span>COMBINED TOTAL</span><span>${fmt(summary.totalRevenue)}</span></div>`
+    : ''
+
   return `<!DOCTYPE html><html><head><style>
     body { font-family: monospace; font-size: 12px; width: 280px; margin: 0 auto; }
     h2 { text-align: center; font-size: 14px; margin: 8px 0 4px; }
@@ -130,6 +158,7 @@ function buildEodReceiptHtml(
     <hr/>
     <div class="row"><span class="label">Discounts</span><span>-${fmt(summary.totalDiscount)}</span></div>
     <div class="row total"><span>NET REVENUE</span><span>${fmt(summary.totalRevenue)}</span></div>
+    ${terminalSection}
     <hr/>
     <div class="sub" style="text-align:left;font-weight:bold;margin-bottom:4px">CASH COUNT</div>
     ${entryRows}
@@ -210,6 +239,7 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
   const [summary, setSummary] = useState<DaySummary | null>(null)
   const [entries, setEntries] = useState<CountEntry[]>([])
   const [vendorPayables, setVendorPayables] = useState<VendorPayable[]>([])
+  const [terminals, setTerminals] = useState<TerminalSummary[]>([])
   const [loadingSummary, setLoadingSummary] = useState(false)
   const [closing, setClosing] = useState(false)
   const [printing, setPrinting] = useState(false)
@@ -225,6 +255,7 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
       setSummary(null)
       setEntries([])
       setVendorPayables([])
+      setTerminals([])
       setClosingNote('')
     }
   }, [isOpen])
@@ -249,10 +280,11 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
       const now = new Date()
       const from = toISODate(startOfDay(now))
       const to = now.toISOString()
-      const [sales, payments, payables] = await Promise.all([
+      const [sales, payments, payables, eodTerminals] = await Promise.all([
         api.reports.salesSummary(from, to),
         api.reports.paymentBreakdown(from, to),
-        api.reports.vendorPayables(from, to)
+        api.reports.vendorPayables(from, to),
+        api.reports.eodByTerminal(from, to)
       ])
       const payArr = payments as { method: string; count: number; total: number }[]
       const s = sales as { orderCount: number; totalRevenue: number; totalDiscount: number; averageOrderValue: number }
@@ -266,6 +298,7 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
       setSummary(daySummary)
       setEntries(buildEntries(payArr, enabledMethods, currencyCfg))
       setVendorPayables(payables)
+      setTerminals(eodTerminals.terminals)
     } finally {
       setLoadingSummary(false)
     }
@@ -297,12 +330,18 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
 
   const primarySym = currencySymbol(primaryCurrency)
 
+  /** Whether to show the per-terminal breakdown (only meaningful when 2+ registers) */
+  const isMultiTerminal = terminals.length >= 2
+
   async function handlePrint() {
     if (!summary) return
     setPrinting(true)
     try {
       const openedAt = shift?.openedAt ?? new Date().toISOString()
-      const html = buildEodReceiptHtml(storeName, summary, entries, openedAt, currencyCfg, vendorPayables, closingNote || undefined)
+      const html = buildEodReceiptHtml(
+        storeName, summary, entries, openedAt, currencyCfg,
+        vendorPayables, terminals, closingNote || undefined
+      )
       const result = await api.receipt.print(html)
       if (!result?.success) throw new Error('Print returned failure')
     } catch (err) {
@@ -490,7 +529,9 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
           {/* ── Step 2: Day Summary ── */}
           {step === 'summary' && summary && (
             <div className="space-y-5">
-              <h3 className="text-sm font-semibold text-gray-900">Today's performance</h3>
+              <h3 className="text-sm font-semibold text-gray-900">
+                {isMultiTerminal ? 'Combined day performance — all registers' : "Today's performance"}
+              </h3>
 
               {/* KPI row */}
               <div className="grid grid-cols-3 gap-3">
@@ -507,10 +548,60 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                 ))}
               </div>
 
+              {/* Multi-terminal per-register breakdown */}
+              {isMultiTerminal && (
+                <div className="space-y-3">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+                    <Monitor size={12} /> Sales by Register
+                  </p>
+                  {terminals.map((t) => (
+                    <div key={t.terminalId} className="bg-indigo-50 border border-indigo-100 rounded-xl p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <Monitor size={13} className="text-indigo-500" />
+                          <span className="text-sm font-semibold text-gray-900">{t.terminalName}</span>
+                        </div>
+                        <span className="text-sm font-bold text-indigo-700">{formatCurrency(t.totalRevenue, primaryCurrency)}</span>
+                      </div>
+                      <div className="space-y-1 text-xs text-gray-600">
+                        <div className="flex justify-between">
+                          <span>Orders</span>
+                          <span className="font-medium">{t.orderCount}</span>
+                        </div>
+                        {t.paymentRows.map((p) => (
+                          <div key={p.method} className="flex justify-between">
+                            <span className="flex items-center gap-1.5">
+                              {p.method === 'cash' ? <DollarSign size={10} /> : <CreditCard size={10} />}
+                              {METHOD_LABELS[p.method] ?? p.method}
+                              <span className="text-gray-400">×{p.count}</span>
+                            </span>
+                            <span>{formatCurrency(p.total, primaryCurrency)}</span>
+                          </div>
+                        ))}
+                        {t.totalDiscount > 0 && (
+                          <div className="flex justify-between text-amber-600 border-t border-indigo-100 pt-1 mt-1">
+                            <span>Discounts</span>
+                            <span>-{formatCurrency(t.totalDiscount, primaryCurrency)}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Combined total bar */}
+                  <div className="bg-gray-900 rounded-xl p-3 flex items-center justify-between">
+                    <span className="text-xs font-semibold text-gray-300 uppercase tracking-wide">All Registers Combined</span>
+                    <span className="text-base font-bold text-white">{formatCurrency(summary.totalRevenue, primaryCurrency)}</span>
+                  </div>
+                </div>
+              )}
+
               {/* Payment breakdown from DB */}
               {summary.paymentRows.length > 0 && (
                 <div className="bg-gray-50 rounded-xl p-4 space-y-2">
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Sales by Payment Method</p>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+                    {isMultiTerminal ? 'Payment Totals (All Registers)' : 'Sales by Payment Method'}
+                  </p>
                   {summary.paymentRows.map((row) => (
                     <div key={row.method} className="flex items-center justify-between text-sm">
                       <span className="flex items-center gap-2 text-gray-600">
@@ -619,12 +710,23 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
 
               {summary && (
                 <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-sm">
+                  {isMultiTerminal && (
+                    <div className="pb-2 mb-1 border-b border-gray-200">
+                      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">By Register</p>
+                      {terminals.map((t) => (
+                        <div key={t.terminalId} className="flex justify-between text-gray-600 text-xs mb-1">
+                          <span className="flex items-center gap-1"><Monitor size={10} />{t.terminalName}</span>
+                          <span className="font-medium">{formatCurrency(t.totalRevenue, primaryCurrency)} ({t.orderCount} orders)</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <div className="flex justify-between text-gray-600">
                     <span>Total orders today</span>
                     <span className="font-medium text-gray-900">{summary.orderCount}</span>
                   </div>
                   <div className="flex justify-between text-gray-600">
-                    <span>Net revenue</span>
+                    <span>Net revenue {isMultiTerminal ? '(all registers)' : ''}</span>
                     <span className="font-medium text-gray-900">{formatCurrency(summary.totalRevenue, primaryCurrency)}</span>
                   </div>
                   <div className="flex justify-between text-gray-600">

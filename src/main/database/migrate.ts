@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 
 /** Schema version — increment whenever tables change */
-const SCHEMA_VERSION = 15
+const SCHEMA_VERSION = 16
 
 /**
  * Runs idempotent DDL migrations on first launch.
@@ -63,6 +63,9 @@ export function runMigrations(sqlite: Database.Database): void {
   }
   if (currentVersion < 15) {
     applyV15(sqlite)
+  }
+  if (currentVersion < 16) {
+    applyV16(sqlite)
   }
 
   if (currentVersion < SCHEMA_VERSION) {
@@ -581,4 +584,16 @@ function applyV15(sqlite: Database.Database): void {
   sqlite.prepare(
     `UPDATE settings SET value = '' WHERE key = 'storeName' AND value = 'My Store'`
   ).run()
+}
+
+/**
+ * V16: Add terminal_name column to orders so EOD reports can show a
+ * human-readable register label alongside each terminal's totals.
+ */
+function applyV16(sqlite: Database.Database): void {
+  try {
+    sqlite.exec(`ALTER TABLE orders ADD COLUMN terminal_name TEXT NOT NULL DEFAULT ''`)
+  } catch {
+    // Column already exists — ignore
+  }
 }

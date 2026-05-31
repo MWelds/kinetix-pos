@@ -152,7 +152,18 @@ export const api = {
       bridge.reports.paymentBreakdown(from, to),
     inventoryValuation: (): Promise<unknown[]> => bridge.reports.inventoryValuation(),
     vendorPayables: (from: string, to: string): Promise<VendorPayable[]> =>
-      bridge.reports.vendorPayables(from, to)
+      bridge.reports.vendorPayables(from, to),
+    eodByTerminal: (from: string, to: string): Promise<{
+      terminals: Array<{
+        terminalId: string
+        terminalName: string
+        orderCount: number
+        totalRevenue: number
+        totalDiscount: number
+        paymentRows: Array<{ method: string; count: number; total: number }>
+      }>
+      combined: { orderCount: number; totalRevenue: number; totalDiscount: number }
+    }> => bridge.reports.eodByTerminal(from, to)
   },
 
   settings: {

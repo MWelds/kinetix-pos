@@ -90,6 +90,7 @@ export const IPC = {
   REPORTS_PAYMENT_BREAKDOWN: 'reports:paymentBreakdown',
   REPORTS_INVENTORY_VALUATION: 'reports:inventoryValuation',
   REPORTS_VENDOR_PAYABLES: 'reports:vendorPayables',
+  REPORTS_EOD_BY_TERMINAL: 'reports:eodByTerminal',
 
   // Settings
   SETTINGS_GET: 'settings:get',

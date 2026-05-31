@@ -1,5 +1,5 @@
 import { eq, gte, lte, and, isNotNull } from 'drizzle-orm'
-import { getDatabase } from '../database/connection'
+import { getDatabase, getSqlite } from '../database/connection'
 import * as schema from '../database/schema'
 
 export interface VendorPayable {
@@ -269,5 +269,128 @@ export const reportService = {
     return Array.from(map.values())
       .filter((v) => v.cogsToday > 0)
       .sort((a, b) => b.cogsToday - a.cogsToday)
+  },
+
+  /**
+   * End-of-day breakdown by terminal for multi-register reporting.
+   * Returns per-terminal sales + payment totals plus combined totals.
+   * Only includes completed orders in the given date range.
+   */
+  eodByTerminal(fromDate: string, toDate: string): {
+    terminals: Array<{
+      terminalId: string
+      terminalName: string
+      orderCount: number
+      totalRevenue: number
+      totalDiscount: number
+      paymentRows: Array<{ method: string; count: number; total: number }>
+    }>
+    combined: {
+      orderCount: number
+      totalRevenue: number
+      totalDiscount: number
+    }
+  } {
+    const sqlite = getSqlite()
+
+    // Fetch all completed orders with their terminal info
+    const orders = sqlite.prepare<[], {
+      id: string
+      terminal_id: string
+      terminal_name: string
+      total: number
+      discount_amount: number
+    }>(`
+      SELECT id, terminal_id, terminal_name, total, discount_amount
+      FROM orders
+      WHERE status = 'completed'
+        AND created_at >= ?
+        AND created_at <= ?
+    `).all(fromDate, toDate)
+
+    // Fetch all payments for those orders
+    const payments = sqlite.prepare<[], {
+      order_id: string
+      method: string
+      amount: number
+    }>(`
+      SELECT p.order_id, p.method, p.amount
+      FROM payments p
+      INNER JOIN orders o ON p.order_id = o.id
+      WHERE o.status = 'completed'
+        AND o.created_at >= ?
+        AND o.created_at <= ?
+    `).all(fromDate, toDate)
+
+    // Group payments by orderId for quick lookup
+    const paymentsByOrder = new Map<string, Array<{ method: string; amount: number }>>()
+    for (const p of payments) {
+      const arr = paymentsByOrder.get(p.order_id) ?? []
+      arr.push({ method: p.method, amount: p.amount })
+      paymentsByOrder.set(p.order_id, arr)
+    }
+
+    // Aggregate per terminal
+    type TerminalAgg = {
+      terminalId: string
+      terminalName: string
+      orderCount: number
+      totalRevenue: number
+      totalDiscount: number
+      paymentMap: Map<string, { method: string; count: number; total: number }>
+    }
+    const termMap = new Map<string, TerminalAgg>()
+
+    for (const o of orders) {
+      const key = o.terminal_id || 'unknown'
+      let agg = termMap.get(key)
+      if (!agg) {
+        agg = {
+          terminalId: key,
+          terminalName: o.terminal_name || key,
+          orderCount: 0,
+          totalRevenue: 0,
+          totalDiscount: 0,
+          paymentMap: new Map(),
+        }
+        termMap.set(key, agg)
+      }
+      agg.orderCount++
+      agg.totalRevenue += o.total
+      agg.totalDiscount += o.discount_amount
+
+      for (const p of paymentsByOrder.get(o.id) ?? []) {
+        const pm = agg.paymentMap.get(p.method)
+        if (pm) {
+          pm.count++
+          pm.total += p.amount
+        } else {
+          agg.paymentMap.set(p.method, { method: p.method, count: 1, total: p.amount })
+        }
+      }
+    }
+
+    // Build output terminals array
+    const terminals = Array.from(termMap.values())
+      .sort((a, b) => b.totalRevenue - a.totalRevenue)
+      .map((t) => ({
+        terminalId: t.terminalId,
+        terminalName: t.terminalName,
+        orderCount: t.orderCount,
+        totalRevenue: t.totalRevenue,
+        totalDiscount: t.totalDiscount,
+        paymentRows: Array.from(t.paymentMap.values()).sort((a, b) => b.total - a.total),
+      }))
+
+    const combined = terminals.reduce(
+      (acc, t) => ({
+        orderCount: acc.orderCount + t.orderCount,
+        totalRevenue: acc.totalRevenue + t.totalRevenue,
+        totalDiscount: acc.totalDiscount + t.totalDiscount,
+      }),
+      { orderCount: 0, totalRevenue: 0, totalDiscount: 0 }
+    )
+
+    return { terminals, combined }
   }
 }

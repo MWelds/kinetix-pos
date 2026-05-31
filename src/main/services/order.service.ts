@@ -320,7 +320,8 @@ export const orderService = {
         loyaltyPointsEarned: Math.floor(total),
         loyaltyPointsRedeemed: input.loyaltyPointsRedeemed ?? 0,
         syncStatus: 'pending',
-        terminalId: settingsService.get('terminalId') ?? 'unknown',
+        terminalId: settingsService.get('terminalId') || 'unknown',
+        terminalName: settingsService.get('terminalName') || 'POS',
         createdAt: now,
         updatedAt: now
       })

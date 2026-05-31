@@ -162,6 +162,7 @@ export const orders = sqliteTable('orders', {
   loyaltyPointsRedeemed: integer('loyalty_points_redeemed').notNull().default(0),
   syncStatus: text('sync_status').notNull().default('pending'),
   terminalId: text('terminal_id').notNull().default('unknown'),
+  terminalName: text('terminal_name').notNull().default(''),
   ...timestamps
 })
 

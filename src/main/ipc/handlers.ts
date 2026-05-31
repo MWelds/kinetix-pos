@@ -258,6 +258,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.REPORTS_VENDOR_PAYABLES, (_e, from: string, to: string) =>
     reportService.vendorPayables(from, to)
   )
+  ipcMain.handle(IPC.REPORTS_EOD_BY_TERMINAL, (_e, from: string, to: string) =>
+    reportService.eodByTerminal(from, to)
+  )
 
   // Settings
   // SECURITY: sensitive keys (tokens, passwords, hashed PINs) are never returned to the

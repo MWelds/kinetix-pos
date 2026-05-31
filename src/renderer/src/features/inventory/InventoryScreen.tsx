@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { Plus, AlertTriangle, Barcode, X, Search, Package, ChevronRight, ChevronLeft } from 'lucide-react'
 import { api } from '../../lib/api'
-import { Button, Badge, Modal, Input, PageSpinner, Spinner } from '../../components/ui'
+import { Button, Badge, Modal, Input, Spinner } from '../../components/ui'
 import { useUiStore } from '../../stores/ui.store'
 import { useAuthStore } from '../../stores/auth.store'
 import { BARCODE_SCAN_TIMEOUT_MS } from '../../constants'
@@ -258,31 +258,36 @@ export function InventoryScreen() {
           </div>
         )}
 
-        {/* Inventory table */}
-        {loading ? (
-          <PageSpinner />
-        ) : (
-          <>
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50 border-b border-gray-200">
+        {/* Inventory table — always rendered so inputs above stay interactive */}
+        <>
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="text-left px-4 py-3 text-gray-600 font-medium">Product</th>
+                  <th className="text-left px-4 py-3 text-gray-600 font-medium">SKU</th>
+                  <th className="text-center px-4 py-3 text-gray-600 font-medium">In Stock</th>
+                  <th className="text-center px-4 py-3 text-gray-600 font-medium">Low Stock At</th>
+                  <th className="text-center px-4 py-3 text-gray-600 font-medium">Status</th>
+                  <th className="text-right px-4 py-3 text-gray-600 font-medium">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {loading ? (
                   <tr>
-                    <th className="text-left px-4 py-3 text-gray-600 font-medium">Product</th>
-                    <th className="text-left px-4 py-3 text-gray-600 font-medium">SKU</th>
-                    <th className="text-center px-4 py-3 text-gray-600 font-medium">In Stock</th>
-                    <th className="text-center px-4 py-3 text-gray-600 font-medium">Low Stock At</th>
-                    <th className="text-center px-4 py-3 text-gray-600 font-medium">Status</th>
-                    <th className="text-right px-4 py-3 text-gray-600 font-medium">Actions</th>
+                    <td colSpan={6} className="text-center py-16">
+                      <div className="flex justify-center">
+                        <Spinner size="lg" />
+                      </div>
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {items.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="text-center py-12 text-gray-400">
-                        {debouncedSearch ? 'No products match your search' : 'No inventory records'}
-                      </td>
-                    </tr>
-                  ) : (
+                ) : items.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="text-center py-12 text-gray-400">
+                      {debouncedSearch ? 'No products match your search' : 'No inventory records'}
+                    </td>
+                  </tr>
+                ) : (
                     items.map((item) => {
                       const isLow = item.quantity <= item.lowStockThreshold
                       const packInd = isPackIndividual(item)
@@ -347,35 +352,34 @@ export function InventoryScreen() {
               </table>
             </div>
 
-            {/* Pagination bar */}
-            {totalPages > 1 && (
-              <div className="flex items-center justify-between px-1">
-                <p className="text-sm text-gray-500">
-                  Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of {total}
-                </p>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setPage((p) => Math.max(0, p - 1))}
-                    disabled={page === 0}
-                    className="p-1.5 rounded-lg border border-gray-200 disabled:opacity-40 hover:bg-gray-50"
-                  >
-                    <ChevronLeft size={16} />
-                  </button>
-                  <span className="text-sm text-gray-700 font-medium">
-                    Page {page + 1} of {totalPages}
-                  </span>
-                  <button
-                    onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-                    disabled={page >= totalPages - 1}
-                    className="p-1.5 rounded-lg border border-gray-200 disabled:opacity-40 hover:bg-gray-50"
-                  >
-                    <ChevronRight size={16} />
-                  </button>
-                </div>
+          {/* Pagination bar */}
+          {!loading && totalPages > 1 && (
+            <div className="flex items-center justify-between px-1">
+              <p className="text-sm text-gray-500">
+                Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of {total}
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={page === 0}
+                  className="p-1.5 rounded-lg border border-gray-200 disabled:opacity-40 hover:bg-gray-50"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <span className="text-sm text-gray-700 font-medium">
+                  Page {page + 1} of {totalPages}
+                </span>
+                <button
+                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                  disabled={page >= totalPages - 1}
+                  className="p-1.5 rounded-lg border border-gray-200 disabled:opacity-40 hover:bg-gray-50"
+                >
+                  <ChevronRight size={16} />
+                </button>
               </div>
-            )}
-          </>
-        )}
+            </div>
+          )}
+        </>
       </div>
 
       {/* Receive Stock modal */}

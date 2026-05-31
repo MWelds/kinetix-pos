@@ -248,33 +248,32 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
   /** Optional free-text note attached to this shift close */
   const [closingNote, setClosingNote] = useState('')
 
-  // Reset when opened
-  useEffect(() => {
-    if (isOpen) {
-      setStep('cash')
-      setSummary(null)
-      setEntries([])
-      setVendorPayables([])
-      setTerminals([])
-      setClosingNote('')
-    }
-  }, [isOpen])
-
-  // Load store settings when opened
+  // Reset and load when opened
   useEffect(() => {
     if (!isOpen) return
+    setStep('cash')
+    setSummary(null)
+    setEntries([])
+    setVendorPayables([])
+    setTerminals([])
+    setClosingNote('')
+
+    // Load store settings first, then immediately load summary so the
+    // cash-count inputs are real state-backed fields from the start.
+    // This prevents typed values from being lost when advancing steps.
     api.settings.getAll().then((s) => {
       if (s.storeName) setStoreName(s.storeName)
+      let methods = ['cash', 'card']
       if (s.enabledPaymentMethods) {
-        try {
-          const methods = JSON.parse(s.enabledPaymentMethods) as string[]
-          setEnabledMethods(methods)
-        } catch { /* use default */ }
+        try { methods = JSON.parse(s.enabledPaymentMethods) as string[] } catch { /* use default */ }
       }
+      setEnabledMethods(methods)
+      // Now load the day summary with the correct payment methods
+      loadSummaryWithMethods(methods)
     }).catch(() => {})
   }, [isOpen])
 
-  async function loadSummary() {
+  async function loadSummaryWithMethods(methods: string[]) {
     setLoadingSummary(true)
     try {
       const now = new Date()
@@ -296,7 +295,16 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
         paymentRows: payArr,
       }
       setSummary(daySummary)
-      setEntries(buildEntries(payArr, enabledMethods, currencyCfg))
+      // Preserve any already-typed counted values if entries already exist
+      setEntries((prev) => {
+        const fresh = buildEntries(payArr, methods, currencyCfg)
+        if (prev.length === 0) return fresh
+        // Merge: keep counted values from current state, update expectedPrimary from DB
+        return fresh.map((f) => {
+          const existing = prev.find((p) => p.method === f.method && p.currency === f.currency)
+          return existing ? { ...f, counted: existing.counted } : f
+        })
+      })
       setVendorPayables(payables)
       setTerminals(eodTerminals.terminals)
     } finally {
@@ -304,9 +312,14 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
     }
   }
 
-  async function handleNextFromCash() {
-    await loadSummary()
-    setStep('summary')
+  function handleNextFromCash() {
+    // Summary is already loaded on open — just advance the step.
+    // If for some reason it failed to load, try again.
+    if (!summary) {
+      loadSummaryWithMethods(enabledMethods).then(() => setStep('summary')).catch(() => {})
+    } else {
+      setStep('summary')
+    }
   }
 
   function updateEntry(index: number, counted: string) {

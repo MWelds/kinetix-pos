@@ -57,5 +57,6 @@ export const ROUTES = {
   STAFF: '/staff',
   SETTINGS: '/settings',
   VENDORS: '/vendors',
-  SHIFTS: '/shifts'
+  SHIFTS: '/shifts',
+  EOD_REPORT: '/eod-report'
 } as const

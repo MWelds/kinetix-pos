@@ -21,7 +21,6 @@ function getDateRange(preset: DatePreset): { from: string; to: string } {
   return { from: toISODate(startOfDay(from)), to }
 }
 
-/** Triggers a file download in the renderer from a string payload. */
 function downloadFile(content: string, filename: string, mimeType: string) {
   const blob = new Blob([content], { type: mimeType })
   const url = URL.createObjectURL(blob)
@@ -48,18 +47,15 @@ export function ReportsScreen() {
   const [byTerminal, setByTerminal] = useState<{ terminalId: string; orderCount: number; revenue: number }[]>([])
   const [payments, setPayments] = useState<{ method: string; count: number; total: number }[]>([])
 
-  // Export dropdown
   const [exportOpen, setExportOpen] = useState(false)
   const [exporting, setExporting] = useState(false)
   const exportRef = useRef<HTMLDivElement>(null)
 
-  // QBO
   const [qboConnected, setQboConnected] = useState(false)
   const [qboCompany, setQboCompany] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [syncMessage, setSyncMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
-  // Close export dropdown on outside click
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
@@ -70,12 +66,11 @@ export function ReportsScreen() {
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
-  // Load QBO status once on mount
   useEffect(() => {
     api.qbo.status().then((s) => {
       setQboConnected(s.connected)
       setQboCompany(s.companyName ?? null)
-    }).catch(() => { /* QBO unavailable */ })
+    }).catch(() => {})
   }, [])
 
   async function load() {
@@ -143,24 +138,18 @@ export function ReportsScreen() {
   async function handleExport(option: ExportOption) {
     setExportOpen(false)
     setExporting(true)
-    try {
-      await option.fn()
-    } catch (err) {
+    try { await option.fn() }
+    catch (err) {
       setSyncMessage({ type: 'error', text: `Export failed: ${err instanceof Error ? err.message : 'Unknown error'}` })
       setTimeout(() => setSyncMessage(null), 4000)
-    } finally {
-      setExporting(false)
-    }
+    } finally { setExporting(false) }
   }
 
   async function handleQboSync() {
     setSyncing(true)
     setSyncMessage(null)
     try {
-      const [salesResult, custResult] = await Promise.all([
-        api.qbo.syncSales(),
-        api.qbo.syncCustomers()
-      ])
+      const [salesResult, custResult] = await Promise.all([api.qbo.syncSales(), api.qbo.syncCustomers()])
       const salesCount = (salesResult as { synced?: number }).synced ?? 0
       const custCount = (custResult as { synced?: number }).synced ?? 0
       setSyncMessage({ type: 'success', text: `Synced ${salesCount} sale(s) and ${custCount} customer(s) to QuickBooks.` })
@@ -168,15 +157,11 @@ export function ReportsScreen() {
     } catch (err) {
       setSyncMessage({ type: 'error', text: `Sync failed: ${err instanceof Error ? err.message : 'Unknown error'}` })
       setTimeout(() => setSyncMessage(null), 5000)
-    } finally {
-      setSyncing(false)
-    }
+    } finally { setSyncing(false) }
   }
 
-  /** Format a raw terminal ID into a readable label. */
   function terminalLabel(id: string): string {
     if (!id || id === 'unknown') return 'Unknown Register'
-    // If it looks like a UUID, shorten it
     if (/^[0-9a-f-]{36}$/i.test(id)) return `Register ${id.slice(0, 8).toUpperCase()}`
     return id
   }
@@ -188,7 +173,6 @@ export function ReportsScreen() {
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-bold text-gray-900">Reports</h1>
           <div className="flex items-center gap-3">
-            {/* Date preset toggle */}
             <div className="flex rounded-lg overflow-hidden border border-gray-300">
               {(['today', 'week', 'month'] as DatePreset[]).map((p) => (
                 <button key={p} onClick={() => setPreset(p)}
@@ -198,22 +182,18 @@ export function ReportsScreen() {
               ))}
             </div>
 
-            {/* QBO Sync button (only when connected) */}
             {qboConnected && (
               <button
                 onClick={handleQboSync}
                 disabled={syncing}
                 title={`Sync to QuickBooks${qboCompany ? ` (${qboCompany})` : ''}`}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-green-50 border border-green-300 text-green-700 hover:bg-green-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-green-50 border border-green-300 text-green-700 hover:bg-green-100 disabled:opacity-50 transition-colors"
               >
-                {syncing
-                  ? <RefreshCw size={14} className="animate-spin" />
-                  : <Cloud size={14} />}
+                {syncing ? <RefreshCw size={14} className="animate-spin" /> : <Cloud size={14} />}
                 {syncing ? 'Syncing…' : 'Sync to QBO'}
               </button>
             )}
 
-            {/* Export dropdown */}
             <div className="relative" ref={exportRef}>
               <button
                 onClick={() => setExportOpen((o) => !o)}
@@ -224,15 +204,11 @@ export function ReportsScreen() {
                 Export
                 <ChevronDown size={12} className={`transition-transform ${exportOpen ? 'rotate-180' : ''}`} />
               </button>
-
               {exportOpen && (
                 <div className="absolute right-0 mt-1 w-64 bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden z-50">
                   {exportOptions.map((opt) => (
-                    <button
-                      key={opt.label}
-                      onClick={() => handleExport(opt)}
-                      className="w-full text-left px-4 py-3 hover:bg-gray-50 border-b border-gray-100 last:border-0 transition-colors"
-                    >
+                    <button key={opt.label} onClick={() => handleExport(opt)}
+                      className="w-full text-left px-4 py-3 hover:bg-gray-50 border-b border-gray-100 last:border-0 transition-colors">
                       <p className="text-sm font-medium text-gray-800">{opt.label}</p>
                       <p className="text-xs text-gray-500 mt-0.5">{opt.description}</p>
                     </button>
@@ -243,12 +219,9 @@ export function ReportsScreen() {
           </div>
         </div>
 
-        {/* Sync / export feedback banner */}
         {syncMessage && (
           <div className={`mt-3 flex items-center gap-2 px-4 py-2 rounded-lg text-sm ${
-            syncMessage.type === 'success'
-              ? 'bg-green-50 border border-green-200 text-green-700'
-              : 'bg-red-50 border border-red-200 text-red-700'
+            syncMessage.type === 'success' ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'
           }`}>
             {syncMessage.type === 'success' ? <Check size={14} /> : <AlertCircle size={14} />}
             {syncMessage.text}
@@ -259,7 +232,6 @@ export function ReportsScreen() {
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
         {loading ? <PageSpinner /> : (
           <>
-            {/* KPI cards */}
             {summary && (
               <div className="grid grid-cols-4 gap-4">
                 {[
@@ -277,7 +249,6 @@ export function ReportsScreen() {
             )}
 
             <div className="grid grid-cols-2 gap-6">
-              {/* Top products */}
               <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
                   <BarChart3 size={16} className="text-blue-600" />
@@ -300,7 +271,6 @@ export function ReportsScreen() {
                 </table>
               </div>
 
-              {/* Payment breakdown */}
               <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
                   <TrendingUp size={16} className="text-emerald-600" />
@@ -324,10 +294,7 @@ export function ReportsScreen() {
               </div>
             </div>
 
-            {/* Sales by staff + Sales by register side by side */}
             <div className="grid grid-cols-2 gap-6">
-
-              {/* Sales by staff */}
               <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-100">
                   <h2 className="text-sm font-semibold text-gray-700">Sales by Staff</h2>
@@ -349,7 +316,6 @@ export function ReportsScreen() {
                 </table>
               </div>
 
-              {/* Sales by register */}
               <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
                   <Monitor size={16} className="text-indigo-600" />
@@ -372,13 +338,10 @@ export function ReportsScreen() {
                         <td className="px-4 py-2 text-sm font-medium">{fmtRaw(t.revenue)}</td>
                       </tr>
                     ))}
-                    {!byTerminal.length && (
-                      <tr><td colSpan={3} className="px-4 py-6 text-center text-gray-400 text-sm">No data</td></tr>
-                    )}
+                    {!byTerminal.length && <tr><td colSpan={3} className="px-4 py-6 text-center text-gray-400 text-sm">No data</td></tr>}
                   </tbody>
                 </table>
               </div>
-
             </div>
           </>
         )}

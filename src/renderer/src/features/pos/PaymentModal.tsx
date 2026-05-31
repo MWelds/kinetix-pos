@@ -361,9 +361,9 @@ export function PaymentModal({ isOpen, onClose, onComplete }: PaymentModalProps)
   )
   const remainingStore  = Math.max(0, orderTotal - totalPaidStore)
   const changeStore     = Math.max(0, totalPaidStore - orderTotal)
-  const lastCashLine    = [...payments].reverse().find((p) => p.method === 'cash')
-  const changeCurrency: CurrencyCode = lastCashLine?.currency ?? storeCurrency
-  /** Change given back to the customer, expressed in the currency of the last cash line. */
+  /** Change is always given back in the primary (store) currency, regardless of how the
+   *  customer paid. E.g. customer pays in USD → change is returned in CI$. */
+  const changeCurrency: CurrencyCode = storeCurrency
   const changeInCurrency = fromStore(changeStore, changeCurrency)
 
   function addPaymentLine() {

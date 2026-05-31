@@ -87,6 +87,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: ROUTES.PRODUCTS, icon: <Package size={18} />, label: 'Products', minRole: 2 },
   { to: ROUTES.CUSTOMERS, icon: <Users size={18} />, label: 'Customers' },
   { to: ROUTES.INVENTORY, icon: <Archive size={18} />, label: 'Inventory', minRole: 2 },
+  { to: ROUTES.EOD_REPORT, icon: <Sun size={18} />, label: 'End of Day Report' },
   { to: ROUTES.REPORTS, icon: <BarChart3 size={18} />, label: 'Reports', minRole: 2 },
   { to: ROUTES.VENDORS, icon: <Store size={18} />, label: 'Vendors', minRole: 2 },
   { to: ROUTES.SHIFTS, icon: <History size={18} />, label: 'Shifts & Logs', minRole: 2 },

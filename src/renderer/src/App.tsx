@@ -18,6 +18,7 @@ import { ProductsScreen } from './features/products/ProductsScreen'
 import { CustomersScreen } from './features/customers/CustomersScreen'
 import { InventoryScreen } from './features/inventory/InventoryScreen'
 import { ReportsScreen } from './features/reports/ReportsScreen'
+import { EodReportScreen } from './features/reports/EodReportScreen'
 import { StaffScreen } from './features/staff/StaffScreen'
 import { SettingsScreen } from './features/settings/SettingsScreen'
 import { CustomerDisplayScreen } from './features/pos/CustomerDisplayScreen'
@@ -231,6 +232,7 @@ export function App() {
             <Route path={ROUTES.POS} element={<POSScreen />} />
             <Route path={ROUTES.ORDERS} element={<OrdersScreen />} />
             <Route path={ROUTES.CUSTOMERS} element={<CustomersScreen />} />
+            <Route path={ROUTES.EOD_REPORT} element={<EodReportScreen />} />
           </Route>
         </Route>
 

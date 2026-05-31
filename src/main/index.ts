@@ -1,6 +1,7 @@
 import { app, shell, BrowserWindow, session, ipcMain, dialog } from 'electron'
 import { join } from 'path'
 import { appendFileSync, mkdirSync, existsSync } from 'fs'
+import { execFile } from 'child_process'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { autoUpdater } from 'electron-updater'
 import { registerIpcHandlers } from './ipc/handlers'
@@ -21,6 +22,32 @@ function logError(context: string, err: unknown): void {
   } catch {
     // If logging itself fails there is nothing we can do
   }
+}
+
+/**
+ * Ensures a Windows Firewall inbound rule exists for the given TCP port.
+ * Uses netsh (always present on Windows) so we don't need an external dep.
+ * Runs fire-and-forget — a failure is logged but never surfaces to the user.
+ * No-op on non-Windows platforms.
+ */
+function ensureFirewallRule(port: number): void {
+  if (process.platform !== 'win32') return
+  const ruleName = `Kinetix POS Sync Server (port ${port})`
+  // First check whether the rule already exists to avoid duplicate adds
+  execFile('netsh', [
+    'advfirewall', 'firewall', 'show', 'rule', `name=${ruleName}`
+  ], (_checkErr, stdout) => {
+    if (stdout && stdout.includes(ruleName)) return // already exists
+    // Add the inbound allow rule
+    execFile('netsh', [
+      'advfirewall', 'firewall', 'add', 'rule',
+      `name=${ruleName}`,
+      'dir=in', 'action=allow', 'protocol=TCP',
+      `localport=${port}`, 'profile=private,domain'
+    ], (addErr) => {
+      if (addErr) logError('ensureFirewallRule', addErr)
+    })
+  })
 }
 
 process.on('uncaughtException', (err) => {
@@ -93,6 +120,8 @@ app
       const port = parseInt(settingsService.get('embeddedServerPort') || '3030', 10)
       const apiKey = settingsService.get('embeddedServerApiKey') || ''
       startEmbeddedServer(port, apiKey).catch((err) => logError('startEmbeddedServer', err))
+      // Open Windows Firewall for the sync port so terminals can reach this machine
+      ensureFirewallRule(port)
       // initSync() checks nodeMode === 'server' and returns early — no writes needed here
     }
 

@@ -64,6 +64,17 @@ function getRecordsSince(table: SyncTable, since: string): SyncRecord[] {
   return db.prepare(`SELECT * FROM ${table} WHERE ${col} > ? ORDER BY ${col} ASC`).all(since) as SyncRecord[]
 }
 
+/**
+ * Returns the set of column names that actually exist in `table`.
+ * Querying PRAGMA table_info is cheap and is cached per call-site via the
+ * prepared-statement cache that better-sqlite3 maintains internally.
+ */
+function getTableColumns(table: string): Set<string> {
+  const db = getServerDb()
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
+  return new Set(rows.map((r) => r.name))
+}
+
 function upsertRecords(table: SyncTable, records: SyncRecord[]): void {
   if (records.length === 0) return
   const db = getServerDb()
@@ -81,8 +92,18 @@ function upsertRecords(table: SyncTable, records: SyncRecord[]): void {
     })
     upsertSettings(records); return
   }
+
+  // Intersect the pushed row keys with the columns that actually exist in the
+  // server's DB. This makes sync resilient to minor schema version mismatches
+  // (e.g. terminal has a newer column the server hasn't migrated to yet).
+  const existingCols = getTableColumns(table)
   const sample = records[0]
-  const cols = Object.keys(sample)
+  const cols = Object.keys(sample).filter((c) => existingCols.has(c))
+  if (cols.length === 0) {
+    console.warn(`[embedded-server] upsertRecords: no known columns for ${table} — skipping`)
+    return
+  }
+
   const placeholders = cols.map(() => '?').join(', ')
   const updateCol = TABLES_WITH_UPDATED_AT.has(table) ? 'updated_at' : 'created_at'
   const setClauses = cols.filter((c) => c !== 'id')

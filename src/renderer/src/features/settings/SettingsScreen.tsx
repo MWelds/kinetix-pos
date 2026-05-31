@@ -732,21 +732,49 @@ function SyncServerSection({
         )}
       </div>
 
-      {/* Only show sync errors when this machine is actually a sync client */}
-      {nodeMode !== 'server' && syncState?.status === 'error' && syncState.error && (
-        <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-          {syncState.error}
+      {/* Sync status + error diagnostic — terminal only */}
+      {nodeMode !== 'server' && syncState && (
+        <div className={`mt-4 rounded-xl border px-4 py-3 text-sm ${
+          syncState.status === 'error'  ? 'bg-red-50 border-red-200' :
+          syncState.status === 'synced' ? 'bg-emerald-50 border-emerald-200' :
+          syncState.status === 'syncing'? 'bg-blue-50 border-blue-200' :
+          'bg-gray-50 border-gray-200'
+        }`}>
+          <div className="flex items-center justify-between">
+            <span className={`font-semibold capitalize ${
+              syncState.status === 'error'   ? 'text-red-700' :
+              syncState.status === 'synced'  ? 'text-emerald-700' :
+              syncState.status === 'syncing' ? 'text-blue-700' :
+              'text-gray-600'
+            }`}>
+              {syncState.status === 'syncing' ? '⟳ Syncing…' :
+               syncState.status === 'synced'  ? '✓ Synced' :
+               syncState.status === 'error'   ? '✗ Sync Error' :
+               'Sync Disabled'}
+            </span>
+            {syncState.lastSyncAt && (
+              <span className="text-xs text-gray-400">
+                Last sync: {new Date(syncState.lastSyncAt).toLocaleTimeString()}
+              </span>
+            )}
+          </div>
+          {syncState.status === 'error' && syncState.error && (
+            <p className="mt-2 text-red-700 text-xs font-mono break-all">{syncState.error}</p>
+          )}
+          {!settings.syncUrl && nodeMode !== 'server' && (
+            <p className="mt-2 text-amber-700 text-xs">⚠ No Server URL configured. Enter the server&apos;s IP and port above and click Save.</p>
+          )}
         </div>
       )}
 
-      <div className="mt-5 flex gap-3">
+      <div className="mt-5 flex gap-3 flex-wrap">
         {nodeMode !== 'server' && (
           <Button variant="secondary" onClick={handleTestConnection} disabled={testing || !settings.syncUrl}>
             {testing ? 'Testing…' : 'Test Connection'}
           </Button>
         )}
-        {enabled && nodeMode !== 'server' && (
-          <Button variant="secondary" onClick={handleSyncNow} disabled={syncing}>
+        {nodeMode !== 'server' && (
+          <Button variant="secondary" onClick={handleSyncNow} disabled={syncing || !settings.syncUrl}>
             {syncing ? 'Syncing…' : 'Sync Now'}
           </Button>
         )}

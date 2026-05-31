@@ -230,8 +230,8 @@ function applyPulledRecords(records: SyncPayload): void {
     if (rows.length === 0) return
     const isSettings = table === 'settings'
 
-    for (const row of rows) {
-      if (isSettings) {
+    if (isSettings) {
+      for (const row of rows) {
         // Never overwrite machine-specific settings with values from another machine
         if (MACHINE_SPECIFIC_SETTINGS.has(row['key'] as string)) continue
         const existing = db.prepare('SELECT updated_at FROM settings WHERE key = ?').get(row['key']) as { updated_at: string } | undefined
@@ -241,13 +241,22 @@ function applyPulledRecords(records: SyncPayload): void {
             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
           `).run(row['key'], row['value'], row['updated_at'])
         }
-        continue
       }
+      return
+    }
 
-      const cols = Object.keys(row)
+    // Resolve which columns actually exist in this machine's schema (once per table,
+    // not per row). Resilient to version mismatches where the server sends a column
+    // this machine hasn't migrated to yet.
+    const tableColsRaw = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
+    const tableColSet = new Set(tableColsRaw.map((r) => r.name))
+    const updateCol = HAS_UPDATED_AT.has(table as SyncTable) ? 'updated_at' : 'created_at'
+
+    for (const row of rows) {
+      const cols = Object.keys(row).filter((c) => tableColSet.has(c))
+      if (cols.length === 0) continue
+
       const placeholders = cols.map(() => '?').join(', ')
-      const updateCol = HAS_UPDATED_AT.has(table as SyncTable) ? 'updated_at' : 'created_at'
-
       const setClauses = cols
         .filter((c) => c !== 'id')
         .map((c) => `${c} = CASE WHEN excluded.${updateCol} >= COALESCE(${table}.${updateCol}, '') THEN excluded.${c} ELSE ${table}.${c} END`)

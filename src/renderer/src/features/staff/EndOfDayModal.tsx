@@ -213,7 +213,7 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
   const [loadingSummary, setLoadingSummary] = useState(false)
   const [closing, setClosing] = useState(false)
   const [printing, setPrinting] = useState(false)
-  const [storeName, setStoreName] = useState('Kinetix POS')
+  const [storeName, setStoreName] = useState('')
   const [enabledMethods, setEnabledMethods] = useState<string[]>(['cash', 'card'])
   /** Optional free-text note attached to this shift close */
   const [closingNote, setClosingNote] = useState('')

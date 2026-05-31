@@ -321,7 +321,7 @@ ${esc(cfg.footer)}</pre></body></html>`
         footer:     s.receiptFooterText ?? 'Thank you for your business!',
         logoBase64: s.logoBase64 ?? '',
       }
-      const storeName = s.storeName ?? 'Kinetix POS'
+      const storeName = s.storeName ?? ''
       const html = buildReprintReceiptHtml(order, items, payments, storeName, cfg, s.storeAddress ?? '', s.storePhone ?? '')
       const result = await api.receipt.print(html)
       if (result?.success) {
@@ -426,7 +426,7 @@ ${esc(cfg.footer)}</pre></body></html>`
       const s = await api.settings.getAll()
       const html = buildInvoiceHtml(
         order, items, payments,
-        s.storeName ?? 'Kinetix POS',
+        s.storeName ?? '',
         s.storeAddress ?? '',
         s.storePhone ?? '',
         s.logoBase64 ?? '',

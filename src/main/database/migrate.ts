@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 
 /** Schema version — increment whenever tables change */
-const SCHEMA_VERSION = 14
+const SCHEMA_VERSION = 15
 
 /**
  * Runs idempotent DDL migrations on first launch.
@@ -60,6 +60,9 @@ export function runMigrations(sqlite: Database.Database): void {
   }
   if (currentVersion < 14) {
     applyV14(sqlite)
+  }
+  if (currentVersion < 15) {
+    applyV15(sqlite)
   }
 
   if (currentVersion < SCHEMA_VERSION) {
@@ -567,4 +570,15 @@ function applyV14(sqlite: Database.Database): void {
       ON customers (email)
       WHERE email IS NOT NULL;
   `)
+}
+
+/**
+ * V15: Clear the 'My Store' placeholder that was seeded in V1 so receipts
+ * no longer print a generic store name the user never configured.
+ * Only clears the value if the user hasn't changed it from the original default.
+ */
+function applyV15(sqlite: Database.Database): void {
+  sqlite.prepare(
+    `UPDATE settings SET value = '' WHERE key = 'storeName' AND value = 'My Store'`
+  ).run()
 }

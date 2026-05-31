@@ -112,7 +112,7 @@ export function POSScreen() {
 
       // Build and print the Pay Later invoice
       const settings = await api.settings.getAll()
-      const storeName = settings.storeName ?? 'My Store'
+      const storeName = settings.storeName ?? ''
       const storeAddress = settings.storeAddress ?? ''
       const storePhone = settings.storePhone ?? ''
       const showLogo = (settings.invoiceShowLogo ?? 'true') === 'true'

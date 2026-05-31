@@ -492,7 +492,7 @@ export function PaymentModal({ isOpen, onClose, onComplete }: PaymentModalProps)
       setCompleted(true)
 
       try {
-        const storeName    = (await api.settings.get('storeName'))    || 'POS System'
+        const storeName    = (await api.settings.get('storeName'))    || ''
         const storeAddr    = (await api.settings.get('storeAddress')) || ''
         const storePhoneNo = (await api.settings.get('storePhone'))   || ''
         const builtReceiptHtml = buildReceiptHtml(snap, storeName, receiptConfig, storeAddr, storePhoneNo)
@@ -515,7 +515,7 @@ export function PaymentModal({ isOpen, onClose, onComplete }: PaymentModalProps)
 
       if (printReceipt) {
         try {
-          const storeName    = (await api.settings.get('storeName'))    || 'POS System'
+          const storeName    = (await api.settings.get('storeName'))    || ''
           const storeAddr    = (await api.settings.get('storeAddress')) || ''
           const storePhoneNo = (await api.settings.get('storePhone'))   || ''
           await api.receipt.print(buildReceiptHtml(snap, storeName, receiptConfig, storeAddr, storePhoneNo))
@@ -549,7 +549,7 @@ export function PaymentModal({ isOpen, onClose, onComplete }: PaymentModalProps)
   }
 
   function buildInvoiceHtmlFromSnap(snap: ReceiptSnapshot): string {
-    const storeName       = storeSettings.storeName          ?? 'My Store'
+    const storeName       = storeSettings.storeName          ?? ''
     const storeAddress    = storeSettings.storeAddress       ?? ''
     const storePhone      = storeSettings.storePhone         ?? ''
     const showLogo        = (storeSettings.invoiceShowLogo   ?? 'true') === 'true'
@@ -648,7 +648,7 @@ ${footer || customFooter ? `<div class="footer">${esc(footer)}${customFooter}</d
     }
     setEmailSending(true)
     try {
-      const storeName = storeSettings.storeName    ?? 'POS System'
+      const storeName = storeSettings.storeName    ?? ''
       const storeAddr = storeSettings.storeAddress ?? ''
       const storePhN  = storeSettings.storePhone   ?? ''
       const html = type === 'receipt'

@@ -4,7 +4,7 @@ import * as schema from '../database/schema'
 import { hashPin } from '../lib/pin'
 
 export const DEFAULT_SETTINGS = {
-  storeName: 'My Store',
+  storeName: '',
   storeAddress: '',
   storePhone: '',
   storeLogo: '',

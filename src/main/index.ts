@@ -43,7 +43,7 @@ function ensureFirewallRule(port: number): void {
       'advfirewall', 'firewall', 'add', 'rule',
       `name=${ruleName}`,
       'dir=in', 'action=allow', 'protocol=TCP',
-      `localport=${port}`, 'profile=private,domain'
+      `localport=${port}`, 'profile=any'
     ], (addErr) => {
       if (addErr) logError('ensureFirewallRule', addErr)
     })

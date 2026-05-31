@@ -121,7 +121,15 @@ export async function runSync(): Promise<void> {
     setState({ status: 'synced', lastSyncAt: now, error: null, pendingChanges: 0 })
     settingsService.set('lastSyncAt', now)
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
+    let msg = err instanceof Error ? err.message : String(err)
+    // Node.js fetch wraps the real network error in err.cause. Expose it so
+    // users can tell the difference between a timeout, connection refused, etc.
+    const cause = (err as { cause?: unknown })?.cause
+    if (cause instanceof Error && cause.message) {
+      msg += ` (${cause.message})`
+    } else if (typeof cause === 'string' && cause) {
+      msg += ` (${cause})`
+    }
     setState({ status: 'error', error: msg })
   }
 }
@@ -326,10 +334,15 @@ function buildHeaders(apiKey: string): Record<string, string> {
   return headers
 }
 
-/** fetch() with a 10-second timeout so offline checks don't hang indefinitely. */
+/**
+ * fetch() with a 60-second timeout.
+ * The first sync push can be a large payload (all records since epoch) so we
+ * give it generous time rather than aborting a legitimate long-running request.
+ * The status check test uses its own short-lived timeout via testConnection.
+ */
 async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 10_000)
+  const timer = setTimeout(() => controller.abort(), 60_000)
   try {
     return await fetch(url, { ...init, signal: controller.signal })
   } finally {

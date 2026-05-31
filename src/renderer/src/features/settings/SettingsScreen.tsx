@@ -505,12 +505,22 @@ function SyncServerSection({
       if (found.length === 0) {
         showToast('No Kinetix POS servers found on this network', 'info')
       } else {
-        // Auto-fill with the first (best) result; user can pick another from the pills
-        field('syncUrl')(found[0])
+        const url = found[0]
+        // Update React state (shown in the URL input)
+        field('syncUrl')(url)
+        // ALSO persist to DB immediately — the sync loop reads from DB, not from
+        // React state. Without this the test passes (using React state URL) but
+        // the background sync loop keeps using the old DB value.
+        await api.settings.set('syncUrl', url)
+        // Restart the loop so it picks up the new URL right away
+        if (enabled && nodeMode !== 'server') {
+          const interval = parseInt(settings.syncIntervalSeconds || '30', 10)
+          await api.sync.start(interval)
+        }
         showToast(
           found.length === 1
-            ? 'Server found — URL filled in automatically'
-            : `${found.length} servers found — first one selected`,
+            ? 'Server found — URL saved and sync restarted'
+            : `${found.length} servers found — first one selected and saved`,
           'success'
         )
       }
@@ -694,20 +704,19 @@ function SyncServerSection({
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 API Key
-                <span className="text-xs font-normal text-gray-400 ml-2">
-                  (leave blank to keep current, or enter new key)
-                </span>
+                <span className="text-xs font-normal text-gray-400 ml-2">(optional)</span>
               </label>
               <input
                 type="password"
                 autoComplete="new-password"
                 value={apiKeyInput}
-                placeholder={apiKeyDirty ? '' : '••••••••'}
+                placeholder="Leave blank — no API key is set by default"
                 onChange={(e) => { setApiKeyInput(e.target.value); setApiKeyDirty(true) }}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <p className="text-xs text-gray-400 mt-1">
-                Must match the API key set on the Sync Server. Leave blank if the server has no key.
+                The default server setup requires no API key — leave this blank. Only fill it in if
+                you deliberately configured a key on the server.
               </p>
             </div>
           </>

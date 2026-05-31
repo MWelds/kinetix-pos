@@ -31,6 +31,11 @@ import { csvImportExportService } from '../services/csv-import-export.service'
 import { vendorService } from '../services/vendor.service'
 import { getSyncState, runSync, testConnection, startSyncLoop, stopSyncLoop, onSyncStateChange } from '../sync/sync.service'
 import { startEmbeddedServer, stopEmbeddedServer, getEmbeddedServerStatus } from '../sync/embedded-server'
+import {
+  getFileSyncState, runFileSync, startFileSyncLoop, stopFileSyncLoop,
+  testSharePath, onFileSyncStateChange
+} from '../sync/file-sync.service'
+import { startFileSyncServer, stopFileSyncServer, getDefaultLocalSharePath } from '../sync/file-sync-server'
 import { getLanIps, getLanIp } from '../lib/network'
 
 // ── Role enforcement ────────────────────────────────────────────────────────
@@ -790,6 +795,44 @@ export function registerIpcHandlers(): void {
 
     const results = await Promise.all(probes)
     return [...new Set(results.filter((r): r is string => r !== null))]
+  })
+
+  // ── File-based sync (terminal side) ──────────────────────────────────────
+
+  ipcMain.handle(IPC.FILE_SYNC_GET_STATE, () => getFileSyncState())
+
+  ipcMain.handle(IPC.FILE_SYNC_RUN_NOW, async () => {
+    const sharePath = settingsService.get('syncSharePath')?.trim() ?? ''
+    if (!sharePath) return { ok: false, error: 'No share path configured' }
+    await runFileSync(sharePath)
+    return { ok: true }
+  })
+
+  ipcMain.handle(IPC.FILE_SYNC_START, (_e, intervalSeconds?: number) => {
+    const sharePath = settingsService.get('syncSharePath')?.trim() ?? ''
+    if (!sharePath) return { ok: false, error: 'No share path configured' }
+    startFileSyncLoop(sharePath, intervalSeconds ?? 30)
+    return { ok: true }
+  })
+
+  ipcMain.handle(IPC.FILE_SYNC_STOP, () => {
+    stopFileSyncLoop()
+    return { ok: true }
+  })
+
+  ipcMain.handle(IPC.FILE_SYNC_TEST_PATH, async (_e, sharePath: string) =>
+    testSharePath(sharePath)
+  )
+
+  ipcMain.handle(IPC.FILE_SYNC_GET_LOCAL_SHARE_PATH, () =>
+    getDefaultLocalSharePath(app.getPath('userData'))
+  )
+
+  // Push file-sync state changes to renderer
+  onFileSyncStateChange((state) => {
+    BrowserWindow.getAllWindows().forEach((w) => {
+      if (!w.isDestroyed()) w.webContents.send(IPC.FILE_SYNC_STATE_PUSH, state)
+    })
   })
 
 }

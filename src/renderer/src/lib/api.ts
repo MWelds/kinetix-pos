@@ -333,5 +333,18 @@ export const api = {
       bridge.adminServer.stop(),
     status: (): Promise<{ running: boolean; port: number; ip: string; token: string }> =>
       bridge.adminServer.status()
+  },
+
+  fileSync: {
+    getState: (): Promise<unknown> => bridge.fileSync.getState(),
+    runNow: (): Promise<{ ok: boolean; error?: string }> => bridge.fileSync.runNow(),
+    start: (intervalSeconds?: number): Promise<{ ok: boolean; error?: string }> =>
+      bridge.fileSync.start(intervalSeconds),
+    stop: (): Promise<{ ok: boolean }> => bridge.fileSync.stop(),
+    testPath: (sharePath: string): Promise<{ ok: boolean; message: string }> =>
+      bridge.fileSync.testPath(sharePath),
+    getLocalSharePath: (): Promise<string> => bridge.fileSync.getLocalSharePath(),
+    onStateChange: (callback: (state: unknown) => void): (() => void) =>
+      bridge.fileSync.onStateChange(callback)
   }
 }

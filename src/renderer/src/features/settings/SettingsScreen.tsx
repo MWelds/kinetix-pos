@@ -396,6 +396,8 @@ function InvoicePreviewPane({
 
 // ─── Sync Server Section ──────────────────────────────────────────────────────
 
+type SyncStateShape = { status: string; lastSyncAt: string | null; error: string | null }
+
 function SyncServerSection({
   settings,
   field,
@@ -407,27 +409,45 @@ function SyncServerSection({
   onSave: () => Promise<void>
   showToast: (msg: string, type?: string) => void
 }) {
-  const [syncState, setSyncState] = useState<{ status: string; lastSyncAt: string | null; error: string | null } | null>(null)
+  // ── HTTP sync state ──────────────────────────────────────────────────────────
+  const [syncState, setSyncState] = useState<SyncStateShape | null>(null)
   const [testing, setTesting] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [localIps, setLocalIps] = useState<string[]>([])
   const [discovering, setDiscovering] = useState(false)
   const [discovered, setDiscovered] = useState<string[]>([])
-  /** Local API key input — separate from settings state because the stored value is security-blocked */
   const [apiKeyInput, setApiKeyInput] = useState('')
   const [apiKeyDirty, setApiKeyDirty] = useState(false)
+
+  // ── File sync state ──────────────────────────────────────────────────────────
+  const [fileSyncState, setFileSyncState] = useState<SyncStateShape | null>(null)
+  const [testingPath, setTestingPath] = useState(false)
+  const [fileSyncing, setFileSyncing] = useState(false)
+  const [localSharePath, setLocalSharePath] = useState('')
+
+  // ── Derived ──────────────────────────────────────────────────────────────────
   const enabled = settings.syncEnabled === 'true'
   const nodeMode = settings.nodeMode ?? ''
+  /** 'http' (default) | 'file' */
+  const syncMode = settings.syncMode ?? 'http'
 
+  // ── Effects ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     api.sync.getState().then(setSyncState).catch(() => {})
-    const unsub = api.sync.onStateChange((s: unknown) => setSyncState(s as typeof syncState))
-    // Fetch this machine's LAN IPs for the auto-detect helper
+    const unsubHttp = api.sync.onStateChange((s: unknown) => setSyncState(s as SyncStateShape))
+
+    api.fileSync.getState().then(setFileSyncState).catch(() => {})
+    const unsubFile = api.fileSync.onStateChange((s: unknown) => setFileSyncState(s as SyncStateShape))
+
     api.app.getLocalIps().then(setLocalIps).catch(() => {})
-    return unsub
+
+    // Load the server's default local share path so we can display it
+    api.fileSync.getLocalSharePath().then(setLocalSharePath).catch(() => {})
+
+    return () => { unsubHttp(); unsubFile() }
   }, [])
 
-  // Server machines must never run the sync client — stop any runaway loop immediately
+  // Server machines must never run the HTTP sync client
   useEffect(() => {
     if (nodeMode === 'server' && syncState && syncState.status !== 'disabled') {
       api.sync.stop().catch(() => {})
@@ -436,10 +456,10 @@ function SyncServerSection({
     }
   }, [nodeMode, syncState?.status])
 
+  // ── HTTP sync handlers ────────────────────────────────────────────────────────
   async function handleToggleEnabled(val: boolean) {
     field('syncEnabled')(val ? 'true' : 'false')
     if (val) {
-      // Save URL, interval, and key to DB first — runSync() reads them fresh from DB
       await api.settings.set('syncUrl', settings.syncUrl ?? '')
       await api.settings.set('syncIntervalSeconds', settings.syncIntervalSeconds ?? '30')
       await api.settings.set('syncEnabled', 'true')
@@ -460,10 +480,7 @@ function SyncServerSection({
   async function handleTestConnection() {
     setTesting(true)
     try {
-      const result = await api.sync.testConnection(
-        settings.syncUrl?.trim() ?? '',
-        ''
-      )
+      const result = await api.sync.testConnection(settings.syncUrl?.trim() ?? '', '')
       showToast(result.message, result.ok ? 'success' : 'error')
     } finally {
       setTesting(false)
@@ -482,20 +499,6 @@ function SyncServerSection({
     }
   }
 
-  async function handleSyncSave() {
-    // Persist the API key first (if it was changed) — it's write-only from the renderer
-    if (apiKeyDirty && apiKeyInput) {
-      await api.settings.set('syncApiKey', apiKeyInput)
-      setApiKeyDirty(false)
-    }
-    await onSave()
-    // If sync is enabled, restart the loop so the new URL + interval take effect immediately
-    if (enabled && nodeMode !== 'server') {
-      const interval = parseInt(settings.syncIntervalSeconds || '30', 10)
-      await api.sync.start(interval)
-    }
-  }
-
   async function handleDiscoverLan() {
     setDiscovering(true)
     setDiscovered([])
@@ -506,13 +509,8 @@ function SyncServerSection({
         showToast('No Kinetix POS servers found on this network', 'info')
       } else {
         const url = found[0]
-        // Update React state (shown in the URL input)
         field('syncUrl')(url)
-        // ALSO persist to DB immediately — the sync loop reads from DB, not from
-        // React state. Without this the test passes (using React state URL) but
-        // the background sync loop keeps using the old DB value.
         await api.settings.set('syncUrl', url)
-        // Restart the loop so it picks up the new URL right away
         if (enabled && nodeMode !== 'server') {
           const interval = parseInt(settings.syncIntervalSeconds || '30', 10)
           await api.sync.start(interval)
@@ -531,198 +529,261 @@ function SyncServerSection({
     }
   }
 
-  const statusColor =
-    syncState?.status === 'synced'   ? 'text-green-600'  :
-    syncState?.status === 'syncing'  ? 'text-blue-600'   :
-    syncState?.status === 'error'    ? 'text-red-600'    :
-    syncState?.status === 'disabled' ? 'text-gray-400'   : 'text-gray-500'
+  // ── File sync handlers ────────────────────────────────────────────────────────
+  async function handleTestSharePath() {
+    const sharePath = settings.syncSharePath?.trim()
+    if (!sharePath) return
+    setTestingPath(true)
+    try {
+      const result = await api.fileSync.testPath(sharePath)
+      showToast(result.message, result.ok ? 'success' : 'error')
+    } finally {
+      setTestingPath(false)
+    }
+  }
 
-  const statusLabel =
+  async function handleFileSyncNow() {
+    setFileSyncing(true)
+    try {
+      await api.fileSync.runNow()
+      showToast('File sync complete', 'success')
+    } catch {
+      showToast('File sync failed — check share path', 'error')
+    } finally {
+      setFileSyncing(false)
+    }
+  }
+
+  // ── Save (unified) ────────────────────────────────────────────────────────────
+  async function handleSyncSave() {
+    if (apiKeyDirty && apiKeyInput) {
+      await api.settings.set('syncApiKey', apiKeyInput)
+      setApiKeyDirty(false)
+    }
+    await onSave()
+    if (syncMode === 'http' && enabled && nodeMode !== 'server') {
+      const interval = parseInt(settings.syncIntervalSeconds || '30', 10)
+      await api.sync.start(interval)
+    }
+    if (syncMode === 'file' && nodeMode === 'terminal') {
+      const sharePath = settings.syncSharePath?.trim()
+      if (sharePath) {
+        const interval = parseInt(settings.syncIntervalSeconds || '30', 10)
+        await api.fileSync.start(interval)
+        showToast('File sync started — share path saved', 'success')
+      }
+    }
+  }
+
+  // ── Status helpers ────────────────────────────────────────────────────────────
+  const httpStatusColor =
+    syncState?.status === 'synced'   ? 'text-green-600' :
+    syncState?.status === 'syncing'  ? 'text-blue-600'  :
+    syncState?.status === 'error'    ? 'text-red-600'   :
+    syncState?.status === 'disabled' ? 'text-gray-400'  : 'text-gray-500'
+
+  const httpStatusLabel =
     syncState?.status === 'synced'   ? `Synced${syncState.lastSyncAt ? ` · ${new Date(syncState.lastSyncAt).toLocaleTimeString()}` : ''}` :
     syncState?.status === 'syncing'  ? 'Syncing…'  :
     syncState?.status === 'error'    ? 'Error'     :
     syncState?.status === 'disabled' ? 'Disabled'  : 'Idle'
 
+  function fileSyncStatusBadge(state: SyncStateShape | null) {
+    if (!state) return null
+    const colorClass =
+      state.status === 'synced'  ? 'bg-emerald-50 border-emerald-200' :
+      state.status === 'syncing' ? 'bg-blue-50 border-blue-200'       :
+      state.status === 'error'   ? 'bg-red-50 border-red-200'         :
+                                   'bg-gray-50 border-gray-200'
+    const label =
+      state.status === 'syncing' ? '⟳ Syncing…' :
+      state.status === 'synced'  ? '✓ Synced'   :
+      state.status === 'error'   ? '✗ Error'    :
+      state.status === 'idle'    ? 'Idle (share unreachable or not configured)' :
+      state.status === 'disabled'? 'Disabled'   : state.status
+    const labelColor =
+      state.status === 'synced'  ? 'text-emerald-700' :
+      state.status === 'syncing' ? 'text-blue-700'    :
+      state.status === 'error'   ? 'text-red-700'     : 'text-gray-600'
+    return (
+      <div className={`mt-4 rounded-xl border px-4 py-3 text-sm ${colorClass}`}>
+        <div className="flex items-center justify-between">
+          <span className={`font-semibold ${labelColor}`}>{label}</span>
+          {state.lastSyncAt && (
+            <span className="text-xs text-gray-400">
+              Last sync: {new Date(state.lastSyncAt).toLocaleTimeString()}
+            </span>
+          )}
+        </div>
+        {state.status === 'error' && state.error && (
+          <p className="mt-2 text-red-700 text-xs font-mono break-all">{state.error}</p>
+        )}
+        {state.status === 'idle' && (
+          <p className="mt-1 text-xs text-gray-500">
+            The sync share could not be reached. POS continues working offline. Sync will resume
+            automatically once the share is accessible again.
+          </p>
+        )}
+      </div>
+    )
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────────
   return (
     <section className="bg-white rounded-xl border border-gray-200 p-6">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
           <ArrowLeftRight size={16} className="text-blue-600" />
-          Multi-Terminal Sync Server
+          Multi-Terminal Sync
         </h2>
         <div className="flex items-center gap-3">
           {nodeMode === 'server' ? (
             <span className="text-xs font-medium text-emerald-600">Server active</span>
-          ) : (
+          ) : syncMode === 'http' ? (
             <>
               {syncState && (
-                <span className={`text-xs font-medium ${statusColor}`}>{statusLabel}</span>
+                <span className={`text-xs font-medium ${httpStatusColor}`}>{httpStatusLabel}</span>
               )}
               <Toggle checked={enabled} onChange={handleToggleEnabled} />
             </>
-          )}
+          ) : null}
         </div>
       </div>
 
       <p className="text-sm text-gray-500 mb-5">
-        Point all POS terminals at a central Kinetix POS Sync Server. Each terminal works
-        fully offline and syncs products, inventory, orders, customers, and staff whenever
-        the network is available.
+        Keep all POS terminals in sync. Each terminal works fully offline — data syncs automatically
+        whenever the network or shared folder is available.
       </p>
 
-      <div className="space-y-4">
-        {/* ── SERVER MODE: show dashboard URL ──────────────────────────────── */}
-        {nodeMode === 'server' && localIps.length > 0 && (
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4">
-            <p className="text-xs font-semibold text-emerald-700 mb-3 flex items-center gap-1.5">
-              <Monitor size={13} /> This machine is running as a Sync Server
-            </p>
-            <div className="space-y-2">
-              {localIps.map((ip) => {
-                const port = settings.embeddedServerPort || '3030'
-                const dashUrl = `http://${ip}:${port}/dashboard`
-                return (
-                  <div key={ip} className="flex items-center gap-2">
-                    <code className="flex-1 text-xs font-mono text-emerald-900 bg-white border border-emerald-200 rounded-lg px-3 py-1.5 truncate">
-                      {dashUrl}
+      {/* ── Sync mode selector ────────────────────────────────────────────────── */}
+      <div className="mb-5">
+        <label className="block text-sm font-medium text-gray-700 mb-2">Sync method</label>
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => field('syncMode')('http')}
+            className={`flex flex-col items-start gap-1 rounded-xl border-2 px-4 py-3 text-left transition-all ${
+              syncMode === 'http'
+                ? 'border-blue-500 bg-blue-50'
+                : 'border-gray-200 bg-white hover:border-gray-300'
+            }`}
+          >
+            <span className={`text-sm font-semibold ${syncMode === 'http' ? 'text-blue-700' : 'text-gray-800'}`}>
+              HTTP (built-in server)
+            </span>
+            <span className="text-xs text-gray-500">
+              One machine runs as a sync server over the LAN. Best when you can open a firewall port.
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => field('syncMode')('file')}
+            className={`flex flex-col items-start gap-1 rounded-xl border-2 px-4 py-3 text-left transition-all ${
+              syncMode === 'file'
+                ? 'border-blue-500 bg-blue-50'
+                : 'border-gray-200 bg-white hover:border-gray-300'
+            }`}
+          >
+            <span className={`text-sm font-semibold ${syncMode === 'file' ? 'text-blue-700' : 'text-gray-800'}`}>
+              File Share (Windows SMB)
+            </span>
+            <span className="text-xs text-gray-500">
+              Sync via a shared Windows folder — no HTTP server or firewall changes needed.
+            </span>
+          </button>
+        </div>
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      {/* FILE SHARE MODE                                                        */}
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      {syncMode === 'file' && (
+        <div className="space-y-4">
+          {/* SERVER: show local folder path + share instructions */}
+          {nodeMode === 'server' && (
+            <>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4">
+                <p className="text-xs font-semibold text-emerald-700 mb-2 flex items-center gap-1.5">
+                  <FolderOpen size={13} /> Sync share folder on this machine
+                </p>
+                {localSharePath ? (
+                  <>
+                    <code className="block text-xs font-mono text-emerald-900 bg-white border border-emerald-200 rounded-lg px-3 py-2 break-all mb-2">
+                      {localSharePath}
                     </code>
-                    <a
-                      href={dashUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="p-1.5 rounded-lg hover:bg-emerald-100 text-emerald-600 shrink-0"
-                      title="Open dashboard"
-                    >
-                      <ExternalLink size={14} />
-                    </a>
-                  </div>
-                )
-              })}
-            </div>
-            <p className="text-xs text-emerald-600 mt-2">
-              Share this URL with your manager to access the web admin dashboard. Terminals should
-              point their Sync Server URL to the base address (without /dashboard).
-            </p>
-          </div>
-        )}
+                    <p className="text-xs text-emerald-700 mb-3">
+                      This folder is managed automatically by Kinetix POS. You only need to share it
+                      once as a Windows network share so terminals can access it.
+                    </p>
+                    <p className="text-xs font-semibold text-emerald-700 mb-1">
+                      Run this once in PowerShell (as Administrator) on this machine:
+                    </p>
+                    <code className="block text-xs font-mono text-emerald-900 bg-white border border-emerald-200 rounded-lg px-3 py-2 break-all whitespace-pre-wrap">
+                      {`New-SmbShare -Name "KinetixSync" -Path "${localSharePath}" -FullAccess "Everyone"`}
+                    </code>
+                    <p className="text-xs text-emerald-600 mt-2">
+                      After sharing, terminals can connect via{' '}
+                      <strong>\\{'{'}this machine&apos;s hostname or IP{'}'}\KinetixSync</strong> — paste that UNC path
+                      into each terminal&apos;s Sync Share Path setting below.
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-xs text-emerald-600">Loading share path…</p>
+                )}
+              </div>
 
-        {/* ── TERMINAL MODE: LAN scan ───────────────────────────────────────── */}
-        {nodeMode === 'terminal' && (
-          <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-semibold text-blue-700 flex items-center gap-1.5">
-                <Search size={12} /> Auto-discover Server on LAN
-              </p>
-              <button
-                type="button"
-                onClick={handleDiscoverLan}
-                disabled={discovering}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60 transition-colors"
-              >
-                {discovering
-                  ? <><RefreshCw size={11} className="animate-spin" /> Scanning…</>
-                  : <><Search size={11} /> Scan LAN</>
-                }
-              </button>
-            </div>
-            {discovered.length > 0 && (
-              <>
-                <div className="flex flex-wrap gap-2 mt-2">
-                  {discovered.map((url) => {
-                    const active = settings.syncUrl?.trim() === url
-                    return (
-                      <button
-                        key={url}
-                        type="button"
-                        onClick={() => field('syncUrl')(url)}
-                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-semibold border transition-all ${
-                          active
-                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                            : 'bg-white text-blue-700 border-blue-200 hover:border-blue-400 hover:bg-blue-50'
-                        }`}
-                      >
-                        {url}
-                        {active && <span className="text-blue-100 ml-1">✓</span>}
-                      </button>
-                    )
-                  })}
-                </div>
-                <p className="text-xs text-blue-500 mt-2">Click a server to set it as your Sync Server URL.</p>
-              </>
-            )}
-            {!discovering && discovered.length === 0 && (
-              <p className="text-xs text-blue-500 mt-1">
-                Click Scan LAN to probe for Kinetix POS servers on this network.
-              </p>
-            )}
-          </div>
-        )}
+              {/* Custom share path override (advanced) */}
+              <div>
+                <Input
+                  label="Custom sync folder path (optional override)"
+                  value={settings.syncSharePath ?? ''}
+                  onChange={field('syncSharePath')}
+                  placeholder={localSharePath || 'Leave blank to use the default path above'}
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  Leave blank to use the default path. Only change this if you want to use a
+                  different folder — the folder must still be shared as a Windows network share.
+                </p>
+              </div>
+            </>
+          )}
 
-        {/* Auto-detected IPs — quick-fill helper (non-server modes only) */}
-        {localIps.length > 0 && nodeMode !== 'server' && (
-          <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
-            <p className="text-xs font-semibold text-blue-700 mb-2 flex items-center gap-1.5">
-              <Wifi size={12} /> This machine&apos;s detected IP{localIps.length > 1 ? 's' : ''}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {localIps.map((ip) => {
-                const port = settings.embeddedServerPort || '3030'
-                const url = `http://${ip}:${port}`
-                const active = settings.syncUrl?.trim() === url
-                return (
-                  <button
-                    key={ip}
-                    type="button"
-                    onClick={() => field('syncUrl')(url)}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-semibold border transition-all ${
-                      active
-                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                        : 'bg-white text-blue-700 border-blue-200 hover:border-blue-400 hover:bg-blue-50'
-                    }`}
-                  >
-                    {ip}
-                    {active && <span className="text-blue-100">✓</span>}
-                  </button>
-                )
-              })}
-            </div>
-            <p className="text-xs text-blue-500 mt-2">
-              Click an IP to use it as the Server URL, or type one manually below.
-            </p>
-          </div>
-        )}
+          {/* TERMINAL: UNC path input + test + status */}
+          {nodeMode === 'terminal' && (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Sync Share Path (UNC)
+                </label>
+                <input
+                  type="text"
+                  value={settings.syncSharePath ?? ''}
+                  onChange={(e) => field('syncSharePath')(e.target.value)}
+                  placeholder={String.raw`\\SERVER-PC\KinetixSync`}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  spellCheck={false}
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  Enter the UNC path to the shared folder on the server machine, e.g.{' '}
+                  <code className="font-mono">\\GRANDPHIL-POS\KinetixSync</code>. The server
+                  machine must have already shared this folder.
+                </p>
+              </div>
 
-        {/* Server URL + API key — hidden in server mode (this machine IS the server) */}
-        {nodeMode !== 'server' && (
-          <>
-            <Input
-              label="Server URL"
-              value={settings.syncUrl ?? ''}
-              onChange={field('syncUrl')}
-              placeholder="http://192.168.1.100:3030"
-            />
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                API Key
-                <span className="text-xs font-normal text-gray-400 ml-2">(optional)</span>
-              </label>
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={apiKeyInput}
-                placeholder="Leave blank — no API key is set by default"
-                onChange={(e) => { setApiKeyInput(e.target.value); setApiKeyDirty(true) }}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <p className="text-xs text-gray-400 mt-1">
-                The default server setup requires no API key — leave this blank. Only fill it in if
-                you deliberately configured a key on the server.
-              </p>
-            </div>
-          </>
-        )}
+              <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
+                <p className="text-xs font-semibold text-blue-700 mb-1">How to find the server name</p>
+                <p className="text-xs text-blue-600">
+                  On the <strong>server machine</strong>, open Command Prompt and type{' '}
+                  <code className="font-mono">hostname</code>. Use that name in the path above, or
+                  use the server&apos;s IP address instead (e.g. <code className="font-mono">\\192.168.1.100\KinetixSync</code>).
+                </p>
+              </div>
 
-        {nodeMode !== 'server' && (
+              {fileSyncStatusBadge(fileSyncState)}
+            </>
+          )}
+
+          {/* Sync interval — both modes */}
           <div className="flex items-center gap-2">
             <label className="text-sm font-medium text-gray-700 w-32">Sync interval</label>
             <select
@@ -738,57 +799,257 @@ function SyncServerSection({
               <option value="300">Every 5 minutes</option>
             </select>
           </div>
-        )}
-      </div>
 
-      {/* Sync status + error diagnostic — terminal only */}
-      {nodeMode !== 'server' && syncState && (
-        <div className={`mt-4 rounded-xl border px-4 py-3 text-sm ${
-          syncState.status === 'error'  ? 'bg-red-50 border-red-200' :
-          syncState.status === 'synced' ? 'bg-emerald-50 border-emerald-200' :
-          syncState.status === 'syncing'? 'bg-blue-50 border-blue-200' :
-          'bg-gray-50 border-gray-200'
-        }`}>
-          <div className="flex items-center justify-between">
-            <span className={`font-semibold capitalize ${
-              syncState.status === 'error'   ? 'text-red-700' :
-              syncState.status === 'synced'  ? 'text-emerald-700' :
-              syncState.status === 'syncing' ? 'text-blue-700' :
-              'text-gray-600'
-            }`}>
-              {syncState.status === 'syncing' ? '⟳ Syncing…' :
-               syncState.status === 'synced'  ? '✓ Synced' :
-               syncState.status === 'error'   ? '✗ Sync Error' :
-               'Sync Disabled'}
-            </span>
-            {syncState.lastSyncAt && (
-              <span className="text-xs text-gray-400">
-                Last sync: {new Date(syncState.lastSyncAt).toLocaleTimeString()}
-              </span>
+          <div className="flex gap-3 flex-wrap">
+            {nodeMode === 'terminal' && (
+              <Button
+                variant="secondary"
+                onClick={handleTestSharePath}
+                disabled={testingPath || !settings.syncSharePath?.trim()}
+              >
+                {testingPath ? 'Testing…' : 'Test Share Path'}
+              </Button>
             )}
+            {nodeMode === 'terminal' && (
+              <Button
+                variant="secondary"
+                onClick={handleFileSyncNow}
+                disabled={fileSyncing || !settings.syncSharePath?.trim()}
+              >
+                {fileSyncing ? 'Syncing…' : 'Sync Now'}
+              </Button>
+            )}
+            <Button onClick={handleSyncSave}>Save</Button>
           </div>
-          {syncState.status === 'error' && syncState.error && (
-            <p className="mt-2 text-red-700 text-xs font-mono break-all">{syncState.error}</p>
-          )}
-          {!settings.syncUrl && nodeMode !== 'server' && (
-            <p className="mt-2 text-amber-700 text-xs">⚠ No Server URL configured. Enter the server&apos;s IP and port above and click Save.</p>
-          )}
         </div>
       )}
 
-      <div className="mt-5 flex gap-3 flex-wrap">
-        {nodeMode !== 'server' && (
-          <Button variant="secondary" onClick={handleTestConnection} disabled={testing || !settings.syncUrl}>
-            {testing ? 'Testing…' : 'Test Connection'}
-          </Button>
-        )}
-        {nodeMode !== 'server' && (
-          <Button variant="secondary" onClick={handleSyncNow} disabled={syncing || !settings.syncUrl}>
-            {syncing ? 'Syncing…' : 'Sync Now'}
-          </Button>
-        )}
-        <Button onClick={handleSyncSave}>Save</Button>
-      </div>
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      {/* HTTP MODE (existing UI, unchanged)                                     */}
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      {syncMode === 'http' && (
+        <div className="space-y-4">
+          {/* ── SERVER MODE: show dashboard URL ──────────────────────────────── */}
+          {nodeMode === 'server' && localIps.length > 0 && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4">
+              <p className="text-xs font-semibold text-emerald-700 mb-3 flex items-center gap-1.5">
+                <Monitor size={13} /> This machine is running as a Sync Server
+              </p>
+              <div className="space-y-2">
+                {localIps.map((ip) => {
+                  const port = settings.embeddedServerPort || '3030'
+                  const dashUrl = `http://${ip}:${port}/dashboard`
+                  return (
+                    <div key={ip} className="flex items-center gap-2">
+                      <code className="flex-1 text-xs font-mono text-emerald-900 bg-white border border-emerald-200 rounded-lg px-3 py-1.5 truncate">
+                        {dashUrl}
+                      </code>
+                      <a
+                        href={dashUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="p-1.5 rounded-lg hover:bg-emerald-100 text-emerald-600 shrink-0"
+                        title="Open dashboard"
+                      >
+                        <ExternalLink size={14} />
+                      </a>
+                    </div>
+                  )
+                })}
+              </div>
+              <p className="text-xs text-emerald-600 mt-2">
+                Share this URL with your manager to access the web admin dashboard. Terminals should
+                point their Sync Server URL to the base address (without /dashboard).
+              </p>
+            </div>
+          )}
+
+          {/* ── TERMINAL MODE: LAN scan ───────────────────────────────────────── */}
+          {nodeMode === 'terminal' && (
+            <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-blue-700 flex items-center gap-1.5">
+                  <Search size={12} /> Auto-discover Server on LAN
+                </p>
+                <button
+                  type="button"
+                  onClick={handleDiscoverLan}
+                  disabled={discovering}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60 transition-colors"
+                >
+                  {discovering
+                    ? <><RefreshCw size={11} className="animate-spin" /> Scanning…</>
+                    : <><Search size={11} /> Scan LAN</>
+                  }
+                </button>
+              </div>
+              {discovered.length > 0 && (
+                <>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {discovered.map((url) => {
+                      const active = settings.syncUrl?.trim() === url
+                      return (
+                        <button
+                          key={url}
+                          type="button"
+                          onClick={() => field('syncUrl')(url)}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-semibold border transition-all ${
+                            active
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                              : 'bg-white text-blue-700 border-blue-200 hover:border-blue-400 hover:bg-blue-50'
+                          }`}
+                        >
+                          {url}
+                          {active && <span className="text-blue-100 ml-1">✓</span>}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <p className="text-xs text-blue-500 mt-2">Click a server to set it as your Sync Server URL.</p>
+                </>
+              )}
+              {!discovering && discovered.length === 0 && (
+                <p className="text-xs text-blue-500 mt-1">
+                  Click Scan LAN to probe for Kinetix POS servers on this network.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Auto-detected IPs — quick-fill helper (non-server modes only) */}
+          {localIps.length > 0 && nodeMode !== 'server' && (
+            <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
+              <p className="text-xs font-semibold text-blue-700 mb-2 flex items-center gap-1.5">
+                <Wifi size={12} /> This machine&apos;s detected IP{localIps.length > 1 ? 's' : ''}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {localIps.map((ip) => {
+                  const port = settings.embeddedServerPort || '3030'
+                  const url = `http://${ip}:${port}`
+                  const active = settings.syncUrl?.trim() === url
+                  return (
+                    <button
+                      key={ip}
+                      type="button"
+                      onClick={() => field('syncUrl')(url)}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-semibold border transition-all ${
+                        active
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                          : 'bg-white text-blue-700 border-blue-200 hover:border-blue-400 hover:bg-blue-50'
+                      }`}
+                    >
+                      {ip}
+                      {active && <span className="text-blue-100">✓</span>}
+                    </button>
+                  )
+                })}
+              </div>
+              <p className="text-xs text-blue-500 mt-2">
+                Click an IP to use it as the Server URL, or type one manually below.
+              </p>
+            </div>
+          )}
+
+          {/* Server URL + API key — hidden in server mode */}
+          {nodeMode !== 'server' && (
+            <>
+              <Input
+                label="Server URL"
+                value={settings.syncUrl ?? ''}
+                onChange={field('syncUrl')}
+                placeholder="http://192.168.1.100:3030"
+              />
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  API Key
+                  <span className="text-xs font-normal text-gray-400 ml-2">(optional)</span>
+                </label>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  value={apiKeyInput}
+                  placeholder="Leave blank — no API key is set by default"
+                  onChange={(e) => { setApiKeyInput(e.target.value); setApiKeyDirty(true) }}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  The default server setup requires no API key — leave this blank. Only fill it in if
+                  you deliberately configured a key on the server.
+                </p>
+              </div>
+            </>
+          )}
+
+          {nodeMode !== 'server' && (
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium text-gray-700 w-32">Sync interval</label>
+              <select
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                value={settings.syncIntervalSeconds ?? '30'}
+                onChange={(e) => field('syncIntervalSeconds')(e.target.value)}
+              >
+                <option value="5">Every 5 seconds</option>
+                <option value="10">Every 10 seconds</option>
+                <option value="15">Every 15 seconds</option>
+                <option value="30">Every 30 seconds</option>
+                <option value="60">Every minute</option>
+                <option value="300">Every 5 minutes</option>
+              </select>
+            </div>
+          )}
+
+          {/* HTTP sync status */}
+          {nodeMode !== 'server' && syncState && (
+            <div className={`rounded-xl border px-4 py-3 text-sm ${
+              syncState.status === 'error'   ? 'bg-red-50 border-red-200'       :
+              syncState.status === 'synced'  ? 'bg-emerald-50 border-emerald-200' :
+              syncState.status === 'syncing' ? 'bg-blue-50 border-blue-200'     :
+              'bg-gray-50 border-gray-200'
+            }`}>
+              <div className="flex items-center justify-between">
+                <span className={`font-semibold capitalize ${
+                  syncState.status === 'error'   ? 'text-red-700'     :
+                  syncState.status === 'synced'  ? 'text-emerald-700' :
+                  syncState.status === 'syncing' ? 'text-blue-700'    :
+                  'text-gray-600'
+                }`}>
+                  {syncState.status === 'syncing' ? '⟳ Syncing…' :
+                   syncState.status === 'synced'  ? '✓ Synced'   :
+                   syncState.status === 'error'   ? '✗ Sync Error' :
+                   'Sync Disabled'}
+                </span>
+                {syncState.lastSyncAt && (
+                  <span className="text-xs text-gray-400">
+                    Last sync: {new Date(syncState.lastSyncAt).toLocaleTimeString()}
+                  </span>
+                )}
+              </div>
+              {syncState.status === 'error' && syncState.error && (
+                <p className="mt-2 text-red-700 text-xs font-mono break-all">{syncState.error}</p>
+              )}
+              {!settings.syncUrl && nodeMode !== 'server' && (
+                <p className="mt-2 text-amber-700 text-xs">
+                  ⚠ No Server URL configured. Enter the server&apos;s IP and port above and click Save.
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="flex gap-3 flex-wrap">
+            {nodeMode !== 'server' && (
+              <Button variant="secondary" onClick={handleTestConnection} disabled={testing || !settings.syncUrl}>
+                {testing ? 'Testing…' : 'Test Connection'}
+              </Button>
+            )}
+            {nodeMode !== 'server' && (
+              <Button variant="secondary" onClick={handleSyncNow} disabled={syncing || !settings.syncUrl}>
+                {syncing ? 'Syncing…' : 'Sync Now'}
+              </Button>
+            )}
+            <Button onClick={handleSyncSave}>Save</Button>
+          </div>
+        </div>
+      )}
 
       {settings.terminalId && (
         <p className="mt-4 text-xs text-gray-400">Terminal ID: {settings.terminalId}</p>

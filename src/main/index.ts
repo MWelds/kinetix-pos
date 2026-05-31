@@ -9,6 +9,8 @@ import { getDatabase, closeDatabase } from './database/connection'
 import { seedDatabase } from './database/seed'
 import { setMainWindow } from './display/customer-display'
 import { initSync } from './sync/sync.service'
+import { initFileSync } from './sync/file-sync.service'
+import { startFileSyncServer, getDefaultLocalSharePath } from './sync/file-sync-server'
 import { settingsService } from './services/settings.service'
 import { startEmbeddedServer } from './sync/embedded-server'
 
@@ -119,13 +121,21 @@ app
     if (settingsService.get('nodeMode') === 'server' && settingsService.get('setupComplete') === 'true') {
       const port = parseInt(settingsService.get('embeddedServerPort') || '3030', 10)
       const apiKey = settingsService.get('embeddedServerApiKey') || ''
+      // Start embedded HTTP server (used by HTTP sync mode and the web dashboard)
       startEmbeddedServer(port, apiKey).catch((err) => logError('startEmbeddedServer', err))
       // Open Windows Firewall for the sync port so terminals can reach this machine
       ensureFirewallRule(port)
-      // initSync() checks nodeMode === 'server' and returns early — no writes needed here
+      // Start file-based sync server processor if syncMode === 'file'
+      if (settingsService.get('syncMode') === 'file') {
+        const localSharePath = settingsService.get('syncSharePath')?.trim()
+          || getDefaultLocalSharePath(app.getPath('userData'))
+        const intervalSec = parseInt(settingsService.get('syncIntervalSeconds') || '30', 10)
+        startFileSyncServer(localSharePath, intervalSec)
+      }
     }
 
-    initSync() // no-op on server (syncEnabled=false), active on terminal
+    initSync()     // HTTP sync client — no-op when nodeMode=server or syncMode=file
+    initFileSync() // File sync client — no-op unless nodeMode=terminal and syncMode=file
 
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       callback({

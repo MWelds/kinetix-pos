@@ -264,6 +264,21 @@ const api = {
     embeddedServerStatus: () => ipcRenderer.invoke(IPC.EMBEDDED_SERVER_STATUS)
   },
 
+  // File-based sync (no HTTP — uses Windows network share)
+  fileSync: {
+    getState: () => ipcRenderer.invoke(IPC.FILE_SYNC_GET_STATE),
+    runNow: () => ipcRenderer.invoke(IPC.FILE_SYNC_RUN_NOW),
+    start: (intervalSeconds?: number) => ipcRenderer.invoke(IPC.FILE_SYNC_START, intervalSeconds),
+    stop: () => ipcRenderer.invoke(IPC.FILE_SYNC_STOP),
+    testPath: (sharePath: string) => ipcRenderer.invoke(IPC.FILE_SYNC_TEST_PATH, sharePath),
+    getLocalSharePath: () => ipcRenderer.invoke(IPC.FILE_SYNC_GET_LOCAL_SHARE_PATH),
+    onStateChange: (callback: (state: unknown) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state)
+      ipcRenderer.on(IPC.FILE_SYNC_STATE_PUSH, handler)
+      return () => ipcRenderer.removeListener(IPC.FILE_SYNC_STATE_PUSH, handler)
+    }
+  },
+
 }
 
 contextBridge.exposeInMainWorld('api', api)

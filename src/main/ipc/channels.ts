@@ -187,6 +187,17 @@ export const IPC = {
   EMBEDDED_SERVER_STOP: 'embeddedServer:stop',
   EMBEDDED_SERVER_STATUS: 'embeddedServer:status',
 
+  // File-based sync (terminal side)
+  FILE_SYNC_GET_STATE: 'fileSync:getState',
+  FILE_SYNC_RUN_NOW: 'fileSync:runNow',
+  FILE_SYNC_START: 'fileSync:start',
+  FILE_SYNC_STOP: 'fileSync:stop',
+  FILE_SYNC_TEST_PATH: 'fileSync:testPath',
+  /** Push channel — main → renderer, fires on every file-sync state change */
+  FILE_SYNC_STATE_PUSH: 'fileSync:statePush',
+  /** Returns the server's local sync share path so the UI can display it */
+  FILE_SYNC_GET_LOCAL_SHARE_PATH: 'fileSync:getLocalSharePath',
+
 } as const
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC]

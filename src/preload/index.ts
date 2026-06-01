@@ -74,7 +74,9 @@ const api = {
     logout: () => ipcRenderer.invoke(IPC.STAFF_LOGOUT),
     create: (input: unknown) => ipcRenderer.invoke(IPC.STAFF_CREATE, input),
     update: (id: string, input: unknown) => ipcRenderer.invoke(IPC.STAFF_UPDATE, id, input),
-    delete: (id: string) => ipcRenderer.invoke(IPC.STAFF_DELETE, id)
+    delete: (id: string) => ipcRenderer.invoke(IPC.STAFF_DELETE, id),
+    resetPin: (input: { staffId: string; adminPin: string; newPin: string; useRecoveryKey?: boolean }) =>
+      ipcRenderer.invoke(IPC.STAFF_RESET_PIN, input)
   },
 
   // Shifts

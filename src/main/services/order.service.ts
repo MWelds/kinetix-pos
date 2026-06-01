@@ -36,6 +36,8 @@ export interface CompleteOrderInput {
   payments: Array<{
     method: 'cash' | 'card' | 'store_credit' | 'gift_card' | 'layaway'
     amount: number
+    /** Currency the customer paid in (e.g. 'USD', 'KYD'). Stored for reporting; amount is in store currency. */
+    currency?: string
     reference?: string
     changeGiven?: number
     giftCardCode?: string
@@ -60,6 +62,8 @@ export interface UpdateAndCompleteInput {
   payments: Array<{
     method: 'cash' | 'card' | 'store_credit' | 'gift_card' | 'layaway'
     amount: number
+    /** Currency the customer paid in (e.g. 'USD', 'KYD'). Stored for reporting; amount is in store currency. */
+    currency?: string
     reference?: string
     changeGiven?: number
     giftCardCode?: string
@@ -401,6 +405,7 @@ export const orderService = {
           orderId: input.orderId,
           method: payment.method,
           amount: payment.amount,
+          currency: payment.currency ?? 'KYD',
           reference: payment.reference,
           changeGiven: payment.changeGiven,
           status: 'completed',
@@ -715,6 +720,7 @@ export const orderService = {
           orderId: input.orderId,
           method: payment.method,
           amount: payment.amount,
+          currency: payment.currency ?? 'KYD',
           reference: payment.reference,
           changeGiven: payment.changeGiven,
           status: 'completed',

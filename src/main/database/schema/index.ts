@@ -190,6 +190,9 @@ export const payments = sqliteTable('payments', {
   orderId: text('order_id').notNull().references(() => orders.id),
   method: text('method').notNull(),
   amount: real('amount').notNull(),
+  /** The currency the customer paid in (e.g. 'USD', 'KYD'). Amount is stored
+   *  in store currency; this field preserves the original payment currency. */
+  currency: text('currency').notNull().default('KYD'),
   reference: text('reference'),
   changeGiven: real('change_given'),
   status: text('status').notNull().default('completed'),

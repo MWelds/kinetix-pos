@@ -421,6 +421,7 @@ export function PaymentModal({ isOpen, onClose, onComplete }: PaymentModalProps)
       const mappedPayments = payments.map((p) => ({
         method: p.method,
         amount: toStore(parseFloat(String(p.amount)) || 0, p.currency),
+        currency: p.currency,
         reference: p.reference || undefined,
         changeGiven: p.method === 'cash' ? changeStore : undefined,
         giftCardCode: p.method === 'gift_card' ? p.giftCardCode : undefined,

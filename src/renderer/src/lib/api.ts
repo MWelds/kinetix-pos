@@ -125,7 +125,9 @@ export const api = {
       bridge.staff.create(input),
     update: (id: string, input: Partial<StaffMember> & { pin?: string }): Promise<StaffMember> =>
       bridge.staff.update(id, input),
-    delete: (id: string): Promise<void> => bridge.staff.delete(id)
+    delete: (id: string): Promise<void> => bridge.staff.delete(id),
+    resetPin: (input: { staffId: string; adminPin: string; newPin: string; useRecoveryKey?: boolean }): Promise<{ ok: boolean; error?: string }> =>
+      bridge.staff.resetPin(input)
   },
 
   shifts: {

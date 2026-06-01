@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 
 /** Schema version — increment whenever tables change */
-const SCHEMA_VERSION = 16
+const SCHEMA_VERSION = 17
 
 /**
  * Runs idempotent DDL migrations on first launch.
@@ -66,6 +66,9 @@ export function runMigrations(sqlite: Database.Database): void {
   }
   if (currentVersion < 16) {
     applyV16(sqlite)
+  }
+  if (currentVersion < 17) {
+    applyV17(sqlite)
   }
 
   if (currentVersion < SCHEMA_VERSION) {
@@ -593,6 +596,20 @@ function applyV15(sqlite: Database.Database): void {
 function applyV16(sqlite: Database.Database): void {
   try {
     sqlite.exec(`ALTER TABLE orders ADD COLUMN terminal_name TEXT NOT NULL DEFAULT ''`)
+  } catch {
+    // Column already exists — ignore
+  }
+}
+
+/**
+ * V17: Add currency column to payments so the original payment currency
+ * (e.g. USD vs KYD) is preserved. Amounts are still stored in the store
+ * currency; this column records what the customer actually handed over.
+ * Existing rows default to the store primary currency (KYD).
+ */
+function applyV17(sqlite: Database.Database): void {
+  try {
+    sqlite.exec(`ALTER TABLE payments ADD COLUMN currency TEXT NOT NULL DEFAULT 'KYD'`)
   } catch {
     // Column already exists — ignore
   }

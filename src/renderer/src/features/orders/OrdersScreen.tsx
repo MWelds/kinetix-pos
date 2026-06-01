@@ -6,11 +6,12 @@ import {
 } from 'lucide-react'
 import { api } from '../../lib/api'
 import { Input, Button, Badge, PageSpinner, Modal } from '../../components/ui'
-import { formatCurrency } from '../../lib/currency'
+import { formatCurrency, CURRENCIES } from '../../lib/currency'
 import { formatDateTime } from '../../lib/dates'
 import { useUiStore } from '../../stores/ui.store'
 import { useAuthStore } from '../../stores/auth.store'
 import { useCartStore } from '../../stores/cart.store'
+import { useCurrencyStore } from '../../stores/currency.store'
 import { ROUTES } from '../../constants'
 import type { Order, OrderItem, Payment } from '../../types'
 
@@ -56,6 +57,7 @@ export function OrdersScreen() {
   const { staff } = useAuthStore()
   const cartStore = useCartStore()
   const navigate = useNavigate()
+  const { currency: storeCurrency } = useCurrencyStore()
 
   async function load() {
     setLoading(true)
@@ -157,20 +159,25 @@ export function OrdersScreen() {
       cash: 'Cash', card: 'Card',
       store_credit: 'Store Credit', gift_card: 'Gift Card', layaway: 'Layaway',
     }
-    const CURRENCY_SYMS: Record<string, string> = { KYD: 'CI$', USD: '$' }
+    // Change is ALWAYS returned in the store (primary) currency.
+    const changeCurrCode = storeCurrency
+    const changeCurrSym = CURRENCIES[storeCurrency]?.symbol ?? storeCurrency
 
-    // Derive change from cash payment that has changeGiven recorded
     const cashChange = payments.find((p) => (p.changeGiven ?? 0) > 0.005)
     const changeAmt = cashChange?.changeGiven ?? 0
-    const changeCurrSym = CURRENCY_SYMS[cashChange?.currency ?? 'KYD'] ?? 'CI$'
-    const changeCurrCode = cashChange?.currency ?? 'KYD'
 
-    // Each payment uses its own stored currency
-    const fmt = (n: number, currCode?: string) => {
-      const sym = CURRENCY_SYMS[currCode ?? 'KYD'] ?? 'CI$'
+    // fmt shows the amount the customer *tendered* in their chosen currency.
+    // originalAmount is what they handed over; fall back to amount if missing.
+    const fmt = (p: Payment) => {
+      const sym = CURRENCIES[p.currency]?.symbol ?? p.currency
+      const displayAmt = p.originalAmount ?? p.amount
+      return `${sym}${Math.abs(displayAmt).toFixed(2)}`
+    }
+    // Prices, totals, tax — always in store currency
+    const fmtKyd = (n: number) => {
+      const sym = CURRENCIES[storeCurrency]?.symbol ?? storeCurrency
       return `${sym}${Math.abs(n).toFixed(2)}`
     }
-    const fmtKyd = (n: number) => fmt(n, 'KYD')
 
     const showSubtotal = order.taxAmount > 0
 
@@ -185,7 +192,7 @@ export function OrdersScreen() {
     </tr>`).join('')
 
     const payLinesClassic = payments.map((p) =>
-      `<tr><td>${METHOD_LABELS[p.method] ?? p.method} (${p.currency ?? 'KYD'})</td><td style="text-align:right">${fmt(p.amount, p.currency)}</td></tr>`
+      `<tr><td>${METHOD_LABELS[p.method] ?? p.method} (${p.currency ?? storeCurrency})</td><td style="text-align:right">${fmt(p)}</td></tr>`
     ).join('')
 
     const logoHtml = cfg.showLogo && cfg.logoBase64
@@ -238,7 +245,7 @@ export function OrdersScreen() {
     // ── Modern template ───────────────────────────────────────────────────────
     if (cfg.template === 'modern') {
       const payLinesModern = payments.map((p) =>
-        `<div class="payment-row"><span>${METHOD_LABELS[p.method] ?? p.method} (${p.currency ?? 'KYD'})</span><span>${fmt(p.amount, p.currency)}</span></div>`
+        `<div class="payment-row"><span>${METHOD_LABELS[p.method] ?? p.method} (${p.currency ?? storeCurrency})</span><span>${fmt(p)}</span></div>`
       ).join('')
 
       return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Receipt #${order.orderNumber}</title>
@@ -302,7 +309,7 @@ ${'='.repeat(32)}
 ${items.map((i) => `${i.quantity}x ${esc(i.productName)}${i.variantName ? ` (${esc(i.variantName)})` : ''} ${fmtKyd((i.unitPrice - i.discountAmount) * i.quantity)}`).join('\n')}
 ${'-'.repeat(32)}
 TOTAL: ${fmtKyd(order.total)}
-${payments.map((p) => `${METHOD_LABELS[p.method] ?? p.method}: ${fmt(p.amount, p.currency)}`).join('\n')}
+${payments.map((p) => `${METHOD_LABELS[p.method] ?? p.method} (${p.currency ?? storeCurrency}): ${fmt(p)}`).join('\n')}
 ${changeAmt > 0.005 ? `Change: ${changeCurrSym}${changeAmt.toFixed(2)}` : ''}
 ${esc(cfg.footer)}</pre></body></html>`
     }
@@ -711,13 +718,23 @@ ${esc(cfg.footer)}</pre></body></html>`
                 {selected.payments.map((p) => (
                   <div key={p.id} className="py-1 border-b border-gray-100 last:border-0">
                     <div className="flex justify-between text-gray-600">
-                      <span className="capitalize">{p.method.replace(/_/g, ' ')}</span>
-                      <span>{formatCurrency(p.amount)}</span>
+                      <span className="capitalize flex items-center gap-1.5">
+                        {p.method.replace(/_/g, ' ')}
+                        <span className="text-xs font-semibold text-gray-400 uppercase">
+                          {p.currency ?? storeCurrency}
+                        </span>
+                      </span>
+                      {/* Show amount the customer actually tendered in their currency */}
+                      <span>
+                        {CURRENCIES[p.currency]?.symbol ?? p.currency}
+                        {(p.originalAmount ?? p.amount).toFixed(2)}
+                      </span>
                     </div>
                     {p.changeGiven != null && p.changeGiven > 0.005 && (
                       <div className="flex justify-between text-xs text-emerald-600 mt-0.5">
-                        <span>Change given</span>
-                        <span>{formatCurrency(p.changeGiven)}</span>
+                        {/* Change is always in primary/store currency */}
+                        <span>Change ({storeCurrency})</span>
+                        <span>{CURRENCIES[storeCurrency]?.symbol ?? storeCurrency}{p.changeGiven.toFixed(2)}</span>
                       </div>
                     )}
                   </div>

@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 
 /** Schema version — increment whenever tables change */
-const SCHEMA_VERSION = 17
+const SCHEMA_VERSION = 18
 
 /**
  * Runs idempotent DDL migrations on first launch.
@@ -69,6 +69,9 @@ export function runMigrations(sqlite: Database.Database): void {
   }
   if (currentVersion < 17) {
     applyV17(sqlite)
+  }
+  if (currentVersion < 18) {
+    applyV18(sqlite)
   }
 
   if (currentVersion < SCHEMA_VERSION) {
@@ -613,4 +616,23 @@ function applyV17(sqlite: Database.Database): void {
   } catch {
     // Column already exists — ignore
   }
+}
+
+/**
+ * V18: Add original_amount to payments — the amount as tendered by the customer
+ * in their chosen currency (e.g. US$10.00 when currency='USD').  The existing
+ * `amount` column holds the store-currency equivalent used for accounting.
+ * Existing rows default to amount (no conversion possible after the fact).
+ */
+function applyV18(sqlite: Database.Database): void {
+  try {
+    sqlite.exec(`ALTER TABLE payments ADD COLUMN original_amount REAL`)
+  } catch {
+    // Column already exists — ignore
+  }
+  // Back-fill: for existing rows where original_amount is NULL, default to amount
+  // (they were single-currency stores so amount == original_amount).
+  try {
+    sqlite.exec(`UPDATE payments SET original_amount = amount WHERE original_amount IS NULL`)
+  } catch { /* ignore */ }
 }

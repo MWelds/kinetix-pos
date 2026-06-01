@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react'
 import { BarChart3, TrendingUp, Download, RefreshCw, Cloud, ChevronDown, Check, AlertCircle, Monitor } from 'lucide-react'
 import { api } from '../../lib/api'
 import { Button, PageSpinner } from '../../components/ui'
-import { useCurrencyStore } from '../../stores/currency.store'
+import { useCurrencyStore, } from '../../stores/currency.store'
+import { CURRENCIES } from '../../lib/currency'
 import { startOfDay, endOfDay, toISODate } from '../../lib/dates'
 import type { SalesSummary } from '../../types'
 
@@ -45,7 +46,7 @@ export function ReportsScreen() {
   const [byProduct, setByProduct] = useState<{ productName: string; quantity: number; revenue: number }[]>([])
   const [byStaff, setByStaff] = useState<{ name: string; orderCount: number; revenue: number }[]>([])
   const [byTerminal, setByTerminal] = useState<{ terminalId: string; orderCount: number; revenue: number }[]>([])
-  const [payments, setPayments] = useState<{ method: string; count: number; total: number }[]>([])
+  const [payments, setPayments] = useState<{ method: string; currency: string; count: number; total: number; originalTotal: number }[]>([])
 
   const [exportOpen, setExportOpen] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -278,18 +279,46 @@ export function ReportsScreen() {
                 </div>
                 <table className="w-full">
                   <thead className="bg-gray-50"><tr>
-                    {['Method', 'Count', 'Total'].map(h => <th key={h} className="px-4 py-2 text-left text-xs text-gray-500">{h}</th>)}
+                    <th className="px-4 py-2 text-left text-xs text-gray-500">Method</th>
+                    <th className="px-4 py-2 text-center text-xs text-gray-500">Txns</th>
+                    <th className="px-4 py-2 text-right text-xs text-gray-500">Received</th>
                   </tr></thead>
                   <tbody className="divide-y divide-gray-100">
                     {payments.map((p) => (
-                      <tr key={p.method} className="hover:bg-gray-50">
-                        <td className="px-4 py-2 text-sm text-gray-800 capitalize">{p.method.replace('_', ' ')}</td>
-                        <td className="px-4 py-2 text-sm text-gray-600">{p.count}</td>
-                        <td className="px-4 py-2 text-sm font-medium">{fmtRaw(p.total)}</td>
+                      <tr key={`${p.method}|${p.currency}`} className="hover:bg-gray-50">
+                        <td className="px-4 py-2.5">
+                          <span className="flex items-center gap-2">
+                            <span className="text-sm text-gray-800 capitalize font-medium">{p.method.replace(/_/g, ' ')}</span>
+                            <span className="text-[10px] font-bold text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">{p.currency}</span>
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-sm text-gray-500 text-center">{p.count}</td>
+                        <td className="px-4 py-2.5 text-sm font-bold text-gray-900 text-right">
+                          {CURRENCIES[p.currency]?.symbol ?? p.currency}{p.originalTotal.toFixed(2)}
+                        </td>
                       </tr>
                     ))}
                     {!payments.length && <tr><td colSpan={3} className="px-4 py-6 text-center text-gray-400 text-sm">No payments</td></tr>}
                   </tbody>
+                  {payments.length > 0 && (
+                    <tfoot>
+                      <tr className="border-t-2 border-gray-200 bg-gray-50">
+                        <td className="px-4 py-2.5 text-xs font-bold text-gray-500 uppercase tracking-wide" colSpan={2}>Total</td>
+                        <td className="px-4 py-2.5 text-right">
+                          {(() => {
+                            const byCur = new Map<string, number>()
+                            for (const p of payments) byCur.set(p.currency, (byCur.get(p.currency) ?? 0) + p.originalTotal)
+                            return Array.from(byCur.entries()).map(([cur, total]) => (
+                              <div key={cur} className="text-sm font-bold text-gray-900">
+                                {CURRENCIES[cur]?.symbol ?? cur}{total.toFixed(2)}
+                                <span className="text-[10px] text-gray-400 ml-1">{cur}</span>
+                              </div>
+                            ))
+                          })()}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  )}
                 </table>
               </div>
             </div>

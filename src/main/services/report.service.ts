@@ -134,7 +134,9 @@ export const reportService = {
     const payments = db
       .select({
         method: schema.payments.method,
+        currency: schema.payments.currency,
         amount: schema.payments.amount,
+        originalAmount: schema.payments.originalAmount,
         orderCreatedAt: schema.orders.createdAt
       })
       .from(schema.payments)
@@ -148,14 +150,19 @@ export const reportService = {
       )
       .all()
 
-    const map = new Map<string, { method: string; count: number; total: number }>()
+    // Group by method + currency. total = store-currency equivalent (accounting).
+    // originalTotal = sum of what customers actually handed over in that currency.
+    const map = new Map<string, { method: string; currency: string; count: number; total: number; originalTotal: number }>()
     for (const p of payments) {
-      const existing = map.get(p.method)
+      const key = `${p.method}|${p.currency ?? 'KYD'}`
+      const origAmt = p.originalAmount ?? p.amount
+      const existing = map.get(key)
       if (existing) {
         existing.count++
         existing.total += p.amount
+        existing.originalTotal += origAmt
       } else {
-        map.set(p.method, { method: p.method, count: 1, total: p.amount })
+        map.set(key, { method: p.method, currency: p.currency ?? 'KYD', count: 1, total: p.amount, originalTotal: origAmt })
       }
     }
 
@@ -308,13 +315,18 @@ export const reportService = {
         AND created_at <= ?
     `).all(fromDate, toDate)
 
-    // Fetch all payments for those orders
+    // Fetch all payments for those orders (include currency + original_amount for display)
     const payments = sqlite.prepare<[], {
       order_id: string
       method: string
+      currency: string
       amount: number
+      original_amount: number | null
     }>(`
-      SELECT p.order_id, p.method, p.amount
+      SELECT p.order_id, p.method,
+             COALESCE(p.currency, 'KYD') AS currency,
+             p.amount,
+             COALESCE(p.original_amount, p.amount) AS original_amount
       FROM payments p
       INNER JOIN orders o ON p.order_id = o.id
       WHERE o.status = 'completed'
@@ -323,10 +335,10 @@ export const reportService = {
     `).all(fromDate, toDate)
 
     // Group payments by orderId for quick lookup
-    const paymentsByOrder = new Map<string, Array<{ method: string; amount: number }>>()
+    const paymentsByOrder = new Map<string, Array<{ method: string; currency: string; amount: number; originalAmount: number }>>()
     for (const p of payments) {
       const arr = paymentsByOrder.get(p.order_id) ?? []
-      arr.push({ method: p.method, amount: p.amount })
+      arr.push({ method: p.method, currency: p.currency, amount: p.amount, originalAmount: p.original_amount ?? p.amount })
       paymentsByOrder.set(p.order_id, arr)
     }
 
@@ -337,7 +349,8 @@ export const reportService = {
       orderCount: number
       totalRevenue: number
       totalDiscount: number
-      paymentMap: Map<string, { method: string; count: number; total: number }>
+      // Keyed by "method|currency" so USD cash and KYD cash are separate rows
+      paymentMap: Map<string, { method: string; currency: string; count: number; total: number; originalTotal: number }>
     }
     const termMap = new Map<string, TerminalAgg>()
 
@@ -360,12 +373,14 @@ export const reportService = {
       agg.totalDiscount += o.discount_amount
 
       for (const p of paymentsByOrder.get(o.id) ?? []) {
-        const pm = agg.paymentMap.get(p.method)
+        const pmKey = `${p.method}|${p.currency}`
+        const pm = agg.paymentMap.get(pmKey)
         if (pm) {
           pm.count++
           pm.total += p.amount
+          pm.originalTotal += p.originalAmount
         } else {
-          agg.paymentMap.set(p.method, { method: p.method, count: 1, total: p.amount })
+          agg.paymentMap.set(pmKey, { method: p.method, currency: p.currency, count: 1, total: p.amount, originalTotal: p.originalAmount })
         }
       }
     }

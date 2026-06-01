@@ -193,6 +193,9 @@ export const payments = sqliteTable('payments', {
   /** The currency the customer paid in (e.g. 'USD', 'KYD'). Amount is stored
    *  in store currency; this field preserves the original payment currency. */
   currency: text('currency').notNull().default('KYD'),
+  /** Amount as tendered in the payment currency (e.g. 10.00 when currency='USD').
+   *  `amount` holds the store-currency equivalent used for accounting. */
+  originalAmount: real('original_amount'),
   reference: text('reference'),
   changeGiven: real('change_given'),
   status: text('status').notNull().default('completed'),

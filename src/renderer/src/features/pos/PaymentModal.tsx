@@ -418,14 +418,20 @@ export function PaymentModal({ isOpen, onClose, onComplete }: PaymentModalProps)
         notes: item.notes
       }))
 
-      const mappedPayments = payments.map((p) => ({
-        method: p.method,
-        amount: toStore(parseFloat(String(p.amount)) || 0, p.currency),
-        currency: p.currency,
-        reference: p.reference || undefined,
-        changeGiven: p.method === 'cash' ? changeStore : undefined,
-        giftCardCode: p.method === 'gift_card' ? p.giftCardCode : undefined,
-      }))
+      const mappedPayments = payments.map((p) => {
+        const displayAmt = parseFloat(String(p.amount)) || 0
+        return {
+          method: p.method,
+          // amount stored in store (primary) currency for accounting
+          amount: toStore(displayAmt, p.currency),
+          currency: p.currency,
+          // originalAmount = what the customer handed over in their chosen currency
+          originalAmount: displayAmt,
+          reference: p.reference || undefined,
+          changeGiven: p.method === 'cash' ? changeStore : undefined,
+          giftCardCode: p.method === 'gift_card' ? p.giftCardCode : undefined,
+        }
+      })
 
       let result: { order: { id: string; orderNumber: string } }
 
@@ -479,11 +485,13 @@ export function PaymentModal({ isOpen, onClose, onComplete }: PaymentModalProps)
         taxAmount: taxAmount(), total: orderTotal,
         payments: payments.map((p) => ({
           method: p.method,
+          // Show amount as tendered in the customer's chosen currency
           amount: parseFloat(String(p.amount)) || 0,
           currency: p.currency,
         })),
+        // Change is ALWAYS in the primary (store) currency
         change: changeInCurrency,
-        changeCurrency,
+        changeCurrency: storeCurrency,
         customerName: customer ? `${customer.firstName} ${customer.lastName}` : undefined,
         notes: notes || undefined,
       }
@@ -690,15 +698,23 @@ ${footer || customFooter ? `<div class="footer">${esc(footer)}${customFooter}</d
             <p className="text-gray-500 mt-1">Order #{orderNumber}</p>
           </div>
 
-          {/* Totals */}
+          {/* Totals — show what was received per currency, then change in primary */}
           <div className="bg-gray-50 rounded-xl p-4 text-left space-y-1.5">
             <div className="flex justify-between text-sm text-gray-600">
-              <span>Total charged</span>
+              <span>Total charged ({storeCurrency})</span>
               <span className="font-semibold">{fmtRaw(orderTotal)}</span>
             </div>
+            {receiptSnapshot && receiptSnapshot.payments.map((p, i) => (
+              <div key={i} className="flex justify-between text-sm text-gray-600">
+                <span className="capitalize">{p.method.replace(/_/g, ' ')} received ({p.currency})</span>
+                <span className="font-semibold">
+                  {CURRENCIES[p.currency as CurrencyCode]?.symbol ?? p.currency}{p.amount.toFixed(2)}
+                </span>
+              </div>
+            ))}
             {changeStore > 0.005 && (
-              <div className="flex justify-between text-sm text-emerald-600">
-                <span>Change ({changeCurrency})</span>
+              <div className="flex justify-between text-sm text-emerald-600 border-t border-gray-200 pt-1.5 mt-0.5">
+                <span className="font-semibold">Change ({changeCurrency})</span>
                 <span className="font-bold">{CURRENCIES[changeCurrency].symbol}{changeInCurrency.toFixed(2)}</span>
               </div>
             )}
@@ -991,25 +1007,52 @@ ${footer || customFooter ? `<div class="footer">${esc(footer)}${customFooter}</d
           </button>
         )}
 
-        {/* Running totals */}
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-1">
-          <div className="flex justify-between text-sm font-medium text-blue-800">
-            <span>Total paid</span>
-            <span>{fmtRaw(totalPaidStore)}</span>
-          </div>
-          {remainingStore > 0.01 && (
-            <div className="flex justify-between text-sm text-red-600 font-medium">
-              <span>Remaining</span>
-              <span>{fmtRaw(remainingStore)}</span>
+        {/* Running totals — group by currency so amounts show in what was actually paid */}
+        {(() => {
+          // Build per-currency totals from the display amounts (not store-converted)
+          const byCurrency = new Map<CurrencyCode, number>()
+          for (const p of payments) {
+            const amt = parseFloat(String(p.amount)) || 0
+            if (amt <= 0) continue
+            byCurrency.set(p.currency, (byCurrency.get(p.currency) ?? 0) + amt)
+          }
+          const currencyEntries = Array.from(byCurrency.entries())
+
+          return (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-1">
+              {/* One "paid" line per currency */}
+              {currencyEntries.length === 1 ? (
+                <div className="flex justify-between text-sm font-medium text-blue-800">
+                  <span>Total paid</span>
+                  <span>{CURRENCIES[currencyEntries[0][0]]?.symbol ?? currencyEntries[0][0]}{currencyEntries[0][1].toFixed(2)}</span>
+                </div>
+              ) : currencyEntries.length > 1 ? (
+                <>
+                  <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide">Paid</p>
+                  {currencyEntries.map(([cur, amt]) => (
+                    <div key={cur} className="flex justify-between text-sm font-medium text-blue-800">
+                      <span>{cur}</span>
+                      <span>{CURRENCIES[cur]?.symbol ?? cur}{amt.toFixed(2)}</span>
+                    </div>
+                  ))}
+                </>
+              ) : null}
+
+              {remainingStore > 0.01 && (
+                <div className="flex justify-between text-sm text-red-600 font-medium">
+                  <span>Remaining ({storeCurrency})</span>
+                  <span>{fmtRaw(remainingStore)}</span>
+                </div>
+              )}
+              {changeStore > 0.005 && (
+                <div className="flex justify-between text-sm text-emerald-700 font-bold">
+                  <span>Change ({changeCurrency})</span>
+                  <span>{CURRENCIES[changeCurrency].symbol}{changeInCurrency.toFixed(2)}</span>
+                </div>
+              )}
             </div>
-          )}
-          {changeStore > 0.005 && (
-            <div className="flex justify-between text-sm text-emerald-700 font-bold">
-              <span>Change ({changeCurrency})</span>
-              <span>{CURRENCIES[changeCurrency].symbol}{changeInCurrency.toFixed(2)}</span>
-            </div>
-          )}
-        </div>
+          )
+        })()}
 
         {/* Print toggle */}
         <div className="flex items-center gap-2 text-sm text-gray-600">

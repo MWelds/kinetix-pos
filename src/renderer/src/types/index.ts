@@ -157,8 +157,14 @@ export interface Payment {
   id: string
   orderId: string
   method: 'cash' | 'card' | 'store_credit' | 'gift_card' | 'layaway'
+  /** Amount in store (primary) currency — used for accounting totals. */
   amount: number
+  /** Currency the customer paid in (e.g. 'USD', 'KYD'). */
+  currency: string
+  /** Amount as tendered in the payment currency (what the customer handed over). */
+  originalAmount: number | null
   reference: string | null
+  /** Change given back to the customer, always in the store (primary) currency. */
   changeGiven: number | null
   status: 'completed' | 'pending' | 'failed'
   createdAt: string

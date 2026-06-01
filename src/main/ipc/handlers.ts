@@ -212,62 +212,65 @@ export function registerIpcHandlers(): void {
    *
    * Two authorization paths:
    * 1. Normal: a valid manager or admin PIN. Managers cannot reset admin PINs.
-   * 2. Emergency: the sync API key stored in settings. This path is unrestricted
-   *    (can reset any PIN including admin) and is the recovery route when no
-   *    admin can authenticate. The API key is never sent to the renderer; only
-   *    the comparison result is returned.
+   * 2. Emergency: the sync API key stored in settings. This path can reset any
+   *    role including admin, and is the recovery route when no admin can log in.
+   *    The API key is compared server-side and never returned to the renderer.
    *
-   * This handler intentionally does NOT call requireRole() so it is reachable
-   * from the login screen before any session exists.
+   * Does NOT call requireRole() — intentionally reachable before any session.
    */
   ipcMain.handle(IPC.STAFF_RESET_PIN, (_e, input: {
     staffId: string
-    /** Manager PIN or sync API key (emergency recovery). */
+    /** Manager PIN (normal path) or sync API key (emergency path). */
     adminPin: string
     newPin: string
-    /** When true, treat adminPin as the sync API key rather than a staff PIN. */
+    /** When true, treat adminPin as the sync API key for emergency recovery. */
     useRecoveryKey?: boolean
   }) => {
-    if (!input.staffId || !input.adminPin || !input.newPin) {
-      return { ok: false, error: 'Missing required fields' }
+    try {
+      if (!input.staffId || !input.adminPin || !input.newPin) {
+        return { ok: false, error: 'Missing required fields' }
+      }
+      if (input.newPin.length !== 4 || !/^\d{4}$/.test(input.newPin)) {
+        return { ok: false, error: 'New PIN must be exactly 4 digits' }
+      }
+
+      // Look up target staff via staffService — no raw DB access needed.
+      const allStaff = staffService.list()
+      const target = allStaff.find((s) => s.id === input.staffId)
+      if (!target) return { ok: false, error: 'Staff member not found' }
+
+      if (input.useRecoveryKey) {
+        // ── Emergency path: verify sync API key ───────────────────────────────
+        const storedKey = (settingsService.get('syncApiKey') ?? '').trim()
+        if (!storedKey) {
+          return {
+            ok: false,
+            error: 'No recovery key configured. Set a Sync API Key in Settings → Sync first.'
+          }
+        }
+        if (input.adminPin.trim() !== storedKey) {
+          return { ok: false, error: 'Invalid recovery key' }
+        }
+        // Recovery key grants full reset access including admin accounts.
+      } else {
+        // ── Normal path: verify authorizing manager/admin PIN ─────────────────
+        const authorizer = staffService.authenticate(input.adminPin)
+        if (!authorizer) return { ok: false, error: 'Invalid manager PIN' }
+        if (authorizer.role !== 'manager' && authorizer.role !== 'admin') {
+          return { ok: false, error: 'Only a manager or admin can reset PINs' }
+        }
+        // Managers cannot reset another admin's PIN — only an admin can.
+        if (target.role === 'admin' && authorizer.role !== 'admin') {
+          return { ok: false, error: "Only an admin can reset another admin's PIN" }
+        }
+      }
+
+      staffService.update(input.staffId, { pin: input.newPin })
+      return { ok: true }
+    } catch (err) {
+      console.error('[STAFF_RESET_PIN] unexpected error:', err)
+      return { ok: false, error: 'An unexpected error occurred during PIN reset' }
     }
-    if (input.newPin.length !== 4 || !/^\d{4}$/.test(input.newPin)) {
-      return { ok: false, error: 'New PIN must be exactly 4 digits' }
-    }
-
-    const { getDatabase } = require('../database/connection')
-    const { schema } = require('../database/schema')
-    const { eq } = require('drizzle-orm')
-    const db = getDatabase()
-
-    const target = db.select().from(schema.staff).where(eq(schema.staff.id, input.staffId)).get()
-    if (!target) return { ok: false, error: 'Staff member not found' }
-
-    if (input.useRecoveryKey) {
-      // ── Emergency path: verify sync API key ─────────────────────────────────
-      const storedKey = (settingsService.get('syncApiKey') ?? '').trim()
-      if (!storedKey) {
-        return { ok: false, error: 'No recovery key is configured. Set a Sync API Key in Settings to enable emergency recovery.' }
-      }
-      if (input.adminPin.trim() !== storedKey) {
-        return { ok: false, error: 'Invalid recovery key' }
-      }
-      // Recovery key grants full access — can reset any role including admin.
-    } else {
-      // ── Normal path: verify manager/admin PIN ────────────────────────────────
-      const authorizer = staffService.authenticate(input.adminPin)
-      if (!authorizer) return { ok: false, error: 'Invalid manager PIN' }
-      if (authorizer.role !== 'manager' && authorizer.role !== 'admin') {
-        return { ok: false, error: 'Only a manager or admin can reset PINs' }
-      }
-      // Managers cannot reset an admin's PIN — only another admin can.
-      if (target.role === 'admin' && authorizer.role !== 'admin') {
-        return { ok: false, error: "Only an admin can reset another admin's PIN" }
-      }
-    }
-
-    staffService.update(input.staffId, { pin: input.newPin })
-    return { ok: true }
   })
 
   ipcMain.handle(IPC.STAFF_CREATE, (e, input) => {

@@ -11,13 +11,23 @@ const METHOD_LABELS: Record<string, string> = {
   gift_card: 'Gift Card', layaway: 'Layaway',
 }
 
+interface PaymentRow {
+  method: string
+  currency: string
+  count: number
+  /** Accounting total in store (primary) currency */
+  total: number
+  /** Sum of original amounts tendered in this currency (what customers actually handed over) */
+  originalTotal: number
+}
+
 interface TerminalSummary {
   terminalId: string
   terminalName: string
   orderCount: number
   totalRevenue: number
   totalDiscount: number
-  paymentRows: { method: string; count: number; total: number }[]
+  paymentRows: PaymentRow[]
 }
 
 function esc(s: string): string {
@@ -32,59 +42,64 @@ function buildEodReceiptHtml(
   terminals: TerminalSummary[],
   totalRevenue: number,
   totalOrders: number,
-  payments: { method: string; count: number; total: number }[],
+  payments: PaymentRow[],
   primarySymbol: string
 ): string {
   const fmt = (n: number) => `${primarySymbol}${Math.abs(n).toFixed(2)}`
   const now = new Date().toLocaleString()
 
+  // Per-currency totals from payments
+  const byCur = new Map<string, number>()
+  for (const p of payments) byCur.set(p.currency, (byCur.get(p.currency) ?? 0) + p.originalTotal)
+  const currencyTotals = Array.from(byCur.entries())
+    .map(([cur, total]) => {
+      const sym = esc(CURRENCIES[cur]?.symbol ?? cur)
+      return `<div class="row bold"><span>${esc(cur)}</span><span>${sym}${total.toFixed(2)}</span></div>`
+    }).join('')
+
   const terminalRows = terminals.length >= 2
     ? terminals.map((t) => `
-        <div style="margin-bottom:10px;padding-bottom:6px;border-bottom:1px dashed #ccc">
-          <div style="font-weight:bold;font-size:12px;margin-bottom:3px">&#9632; ${esc(t.terminalName)}</div>
-          <div style="display:flex;justify-content:space-between"><span>Orders</span><span>${t.orderCount}</span></div>
-          <div style="display:flex;justify-content:space-between;font-weight:bold"><span>Revenue</span><span>${fmt(t.totalRevenue)}</span></div>
-          ${t.paymentRows.map((p) =>
-            `<div style="display:flex;justify-content:space-between;color:#555;font-size:11px;padding-left:8px">
-              <span>&#8627; ${esc(METHOD_LABELS[p.method] ?? p.method)} &times;${p.count}</span>
-              <span>${fmt(p.total)}</span>
-            </div>`
-          ).join('')}
-          ${t.totalDiscount > 0
-            ? `<div style="display:flex;justify-content:space-between;color:#b45309;font-size:11px;padding-left:8px"><span>&#8627; Discounts</span><span>-${fmt(t.totalDiscount)}</span></div>`
-            : ''}
-        </div>
-      `).join('')
+        <div style="margin-bottom:6px">
+          <div class="bold">${esc(t.terminalName)}</div>
+          <div class="row"><span class="label">Orders</span><span>${t.orderCount}</span></div>
+          <div class="row bold"><span>Revenue</span><span>${fmt(t.totalRevenue)}</span></div>
+          ${t.paymentRows.map((p) => {
+            const sym = esc(CURRENCIES[p.currency]?.symbol ?? p.currency)
+            return `<div class="row"><span class="label" style="padding-left:8px">&#8627; ${esc(METHOD_LABELS[p.method] ?? p.method)} (${esc(p.currency)}) &times;${p.count}</span><span>${sym}${p.originalTotal.toFixed(2)}</span></div>`
+          }).join('')}
+        </div>`).join('')
     : ''
 
-  const paymentRows = payments.map((p) =>
-    `<div style="display:flex;justify-content:space-between">
-      <span>${esc(METHOD_LABELS[p.method] ?? p.method)} &times;${p.count}</span>
-      <span>${fmt(p.total)}</span>
-    </div>`
-  ).join('')
+  const paymentRows = payments.map((p) => {
+    const sym = esc(CURRENCIES[p.currency]?.symbol ?? p.currency)
+    return `<div class="row"><span>${esc(METHOD_LABELS[p.method] ?? p.method)} (${esc(p.currency)}) &times;${p.count}</span><span>${sym}${p.originalTotal.toFixed(2)}</span></div>`
+  }).join('')
 
   return `<!DOCTYPE html><html><head><style>
     body { font-family: monospace; font-size: 12px; width: 280px; margin: 0 auto; }
-    h2 { text-align: center; font-size: 14px; margin: 8px 0 2px; }
-    .sub { text-align: center; font-size: 11px; color: #555; margin-bottom: 6px; }
-    hr { border: none; border-top: 1px dashed #999; margin: 8px 0; }
-    .section-label { font-weight: bold; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 5px; }
-    .total-row { display: flex; justify-content: space-between; font-weight: bold; font-size: 13px; margin-top: 4px; }
+    h2 { text-align: center; font-size: 15px; font-weight: bold; margin: 8px 0 2px; }
+    .center { text-align: center; }
+    .meta { text-align: center; font-size: 10px; color: #777; margin-bottom: 3px; }
+    hr { border: none; border-top: 1px dashed #bbb; margin: 7px 0; }
+    .section { font-size: 10px; font-weight: bold; text-transform: uppercase; letter-spacing: .08em; color: #444; margin: 4px 0 3px; }
+    .row { display: flex; justify-content: space-between; margin: 2px 0; }
+    .label { color: #666; }
+    .bold { font-weight: bold; }
+    .big { font-size: 14px; font-weight: bold; }
   </style></head><body>
     <h2>${esc(storeName)}</h2>
-    <div class="sub">END OF DAY REPORT</div>
-    <div class="sub">${esc(dateLabel)}</div>
-    <div class="sub" style="font-size:10px">${esc(now)}</div>
+    <div class="meta">END OF DAY &bull; ${esc(dateLabel)}</div>
+    <div class="meta">${esc(now)}</div>
     <hr/>
-    ${terminals.length >= 2 ? `<div class="section-label">By Register</div>${terminalRows}<hr/>` : ''}
-    <div class="section-label">Payment Summary</div>
+    <div class="row"><span class="label">Orders</span><span>${totalOrders}</span></div>
+    <div class="row big"><span>Net Revenue</span><span>${fmt(totalRevenue)}</span></div>
+    ${terminals.length >= 2 ? `<hr/><div class="section">By Register</div>${terminalRows}<div class="row bold"><span>Combined</span><span>${fmt(totalRevenue)}</span></div>` : ''}
+    <hr/>
+    <div class="section">Payments</div>
     ${paymentRows}
     <hr/>
-    <div style="display:flex;justify-content:space-between"><span>Total Orders</span><span>${totalOrders}</span></div>
-    <div class="total-row"><span>TOTAL REVENUE</span><span>${fmt(totalRevenue)}</span></div>
-    <hr/>
-    <div style="text-align:center;font-size:10px;color:#777;margin-top:6px">End of Day &mdash; ${esc(dateLabel)}</div>
+    ${currencyTotals}
+    <div class="center meta" style="margin-top:6px">End of Day &mdash; ${esc(dateLabel)}</div>
   </body></html>`
 }
 
@@ -98,7 +113,7 @@ export function EodReportScreen() {
   const [storeName, setStoreName] = useState('My Store')
 
   const [terminals, setTerminals] = useState<TerminalSummary[]>([])
-  const [payments, setPayments] = useState<{ method: string; count: number; total: number }[]>([])
+  const [payments, setPayments] = useState<PaymentRow[]>([])
   const [totalRevenue, setTotalRevenue] = useState(0)
   const [totalOrders, setTotalOrders] = useState(0)
   const [totalDiscount, setTotalDiscount] = useState(0)
@@ -121,7 +136,7 @@ export function EodReportScreen() {
       ])
       const eodTyped = eod as { terminals: TerminalSummary[] }
       const summaryTyped = summary as { orderCount: number; totalRevenue: number; totalDiscount: number }
-      const payTyped = pay as { method: string; count: number; total: number }[]
+      const payTyped = pay as PaymentRow[]
       setTerminals(eodTyped.terminals ?? [])
       setPayments(payTyped)
       setTotalRevenue(summaryTyped.totalRevenue)
@@ -159,17 +174,17 @@ export function EodReportScreen() {
   })
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
+    <div className="flex flex-col h-full" style={{ fontFamily: "'Segoe UI', system-ui, -apple-system, sans-serif", background: '#f0f4f8' }}>
       {/* Header */}
-      <div className="bg-white border-b border-gray-200 px-6 py-4">
+      <div className="bg-white border-b border-slate-200 px-6 py-4 shadow-sm">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-amber-100 flex items-center justify-center">
-              <Sun size={18} className="text-amber-500" />
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center shadow-sm">
+              <Sun size={20} className="text-white" />
             </div>
             <div>
-              <h1 className="text-lg font-bold text-gray-900">End of Day Report</h1>
-              <p className="text-xs text-gray-500">{dateLabel}</p>
+              <h1 className="text-xl font-bold tracking-tight text-slate-900">End of Day Report</h1>
+              <p className="text-xs text-slate-400 font-medium mt-0.5">{dateLabel}</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -177,12 +192,12 @@ export function EodReportScreen() {
               type="date"
               value={eodDate}
               onChange={(e) => setEodDate(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white text-slate-700"
             />
             <button
               onClick={load}
               title="Refresh"
-              className="p-2 rounded-lg border border-gray-300 hover:bg-gray-50 text-gray-600 transition-colors"
+              className="p-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-500 transition-colors"
             >
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             </button>
@@ -191,6 +206,7 @@ export function EodReportScreen() {
               onClick={handlePrint}
               loading={printing}
               disabled={loading || totalOrders === 0}
+              className="bg-amber-500 hover:bg-amber-600 text-white border-0"
             >
               Print Report
             </Button>
@@ -199,41 +215,47 @@ export function EodReportScreen() {
       </div>
 
       {/* Body */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+      <div className="flex-1 overflow-y-auto p-6 space-y-5">
         {loading ? <PageSpinner /> : (
           <>
             {/* Day totals banner */}
-            <div className="bg-gradient-to-r from-gray-900 to-gray-800 rounded-2xl p-6 text-white">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-4">
-                Combined Day Total
-              </p>
-              <div className="grid grid-cols-3 gap-6">
-                <div>
-                  <p className="text-xs text-gray-400 mb-1">Total Orders</p>
-                  <p className="text-3xl font-bold">{totalOrders}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-400 mb-1">Net Revenue</p>
-                  <p className="text-3xl font-bold text-emerald-400">{fmt(totalRevenue)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-400 mb-1">Discounts Given</p>
-                  <p className="text-3xl font-bold text-amber-400">{fmt(totalDiscount)}</p>
+            <div className="rounded-2xl overflow-hidden shadow-lg" style={{ background: 'linear-gradient(135deg, #1e3a5f 0%, #0f2744 60%, #162d4a 100%)' }}>
+              <div className="px-6 pt-5 pb-4">
+                <p className="text-xs font-bold text-blue-300 uppercase tracking-widest mb-4">Combined Day Total</p>
+                <div className="grid grid-cols-3 gap-6">
+                  <div>
+                    <p className="text-xs text-blue-300 font-medium mb-1 uppercase tracking-wide">Total Orders</p>
+                    <p className="text-4xl font-black text-white">{totalOrders}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-blue-300 font-medium mb-1 uppercase tracking-wide">Net Revenue</p>
+                    <p className="text-4xl font-black text-emerald-400">{fmt(totalRevenue)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-blue-300 font-medium mb-1 uppercase tracking-wide">Discounts Given</p>
+                    <p className="text-4xl font-black text-amber-400">{fmt(totalDiscount)}</p>
+                  </div>
                 </div>
               </div>
 
               {payments.length > 0 && (
-                <div className="mt-5 pt-4 border-t border-gray-700 grid grid-cols-2 gap-2">
-                  {payments.map((p) => (
-                    <div key={p.method} className="flex items-center justify-between text-sm">
-                      <span className="flex items-center gap-1.5 text-gray-300">
-                        {p.method === 'cash' ? <DollarSign size={12} /> : <CreditCard size={12} />}
-                        {METHOD_LABELS[p.method] ?? p.method}
-                        <span className="text-gray-500 text-xs">×{p.count}</span>
-                      </span>
-                      <span className="font-semibold">{fmt(p.total)}</span>
-                    </div>
-                  ))}
+                <div className="mx-6 mb-5 mt-2 rounded-xl p-4" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                  <p className="text-[10px] font-bold text-blue-300 uppercase tracking-widest mb-3">Payment Breakdown</p>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+                    {payments.map((p) => (
+                      <div key={`${p.method}|${p.currency}`} className="flex items-center justify-between">
+                        <span className="flex items-center gap-1.5 text-slate-300 text-sm">
+                          {p.method === 'cash' ? <DollarSign size={11} /> : <CreditCard size={11} />}
+                          <span className="font-medium">{METHOD_LABELS[p.method] ?? p.method}</span>
+                          <span className="text-[10px] font-bold text-blue-400 bg-blue-900/40 px-1.5 py-0.5 rounded">{p.currency}</span>
+                          <span className="text-slate-500 text-xs">×{p.count}</span>
+                        </span>
+                        <span className="font-bold text-white text-sm">
+                          {CURRENCIES[p.currency]?.symbol ?? p.currency}{p.originalTotal.toFixed(2)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -268,13 +290,16 @@ export function EodReportScreen() {
                           <span className="font-medium text-gray-900">{t.orderCount}</span>
                         </div>
                         {t.paymentRows.map((p) => (
-                          <div key={p.method} className="flex justify-between text-sm">
+                          <div key={`${p.method}|${p.currency}`} className="flex justify-between text-sm">
                             <span className="flex items-center gap-1.5 text-gray-500">
                               {p.method === 'cash' ? <DollarSign size={11} /> : <CreditCard size={11} />}
                               {METHOD_LABELS[p.method] ?? p.method}
+                              <span className="text-gray-400 text-xs font-semibold">{p.currency}</span>
                               <span className="text-gray-400 text-xs">×{p.count}</span>
                             </span>
-                            <span className="font-medium text-gray-700">{fmt(p.total)}</span>
+                            <span className="font-medium text-gray-700">
+                              {CURRENCIES[p.currency]?.symbol ?? p.currency}{p.originalTotal.toFixed(2)}
+                            </span>
                           </div>
                         ))}
                         {t.totalDiscount > 0 && (
@@ -295,44 +320,66 @@ export function EodReportScreen() {
               </div>
             )}
 
-            {/* Payment method table */}
+            {/* Payment method table — simplified */}
             {payments.length > 0 && (
-              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
+              <div className="bg-white rounded-2xl shadow-sm overflow-hidden border border-slate-100">
+                <div className="px-5 py-3.5 flex items-center gap-2 border-b border-slate-100" style={{ background: 'linear-gradient(to right, #f8fafc, #f1f5f9)' }}>
                   <TrendingUp size={15} className="text-emerald-600" />
-                  <h2 className="text-sm font-semibold text-gray-700">Payment Method Breakdown</h2>
+                  <h2 className="text-sm font-bold text-slate-700 tracking-tight">Payment Breakdown</h2>
                 </div>
                 <table className="w-full">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      {['Method', 'Transactions', 'Total'].map((h) => (
-                        <th key={h} className="px-4 py-2 text-left text-xs font-medium text-gray-500">{h}</th>
-                      ))}
+                  <thead>
+                    <tr style={{ background: '#f8fafc' }}>
+                      <th className="px-5 py-2 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">Method</th>
+                      <th className="px-5 py-2 text-center text-[10px] font-bold text-slate-400 uppercase tracking-wider">Txns</th>
+                      <th className="px-5 py-2 text-right text-[10px] font-bold text-slate-400 uppercase tracking-wider">Received</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100">
+                  <tbody className="divide-y divide-slate-50">
                     {payments.map((p) => (
-                      <tr key={p.method} className="hover:bg-gray-50">
-                        <td className="px-4 py-3 text-sm text-gray-800">
-                          <span className="flex items-center gap-2">
-                            {p.method === 'cash'
-                              ? <DollarSign size={13} className="text-gray-400" />
-                              : <CreditCard size={13} className="text-gray-400" />}
-                            {METHOD_LABELS[p.method] ?? p.method}
+                      <tr key={`${p.method}|${p.currency}`} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-5 py-3">
+                          <span className="flex items-center gap-2.5">
+                            <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${p.method === 'cash' ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600'}`}>
+                              {p.method === 'cash' ? <DollarSign size={13} /> : <CreditCard size={13} />}
+                            </span>
+                            <span>
+                              <span className="text-sm font-semibold text-slate-800">{METHOD_LABELS[p.method] ?? p.method}</span>
+                              <span className="ml-1.5 text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">{p.currency}</span>
+                            </span>
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-sm text-gray-600">{p.count}</td>
-                        <td className="px-4 py-3 text-sm font-semibold text-gray-900">{fmt(p.total)}</td>
+                        <td className="px-5 py-3 text-sm text-slate-400 text-center">{p.count}</td>
+                        <td className="px-5 py-3 text-right">
+                          <span className="text-sm font-bold text-slate-800">
+                            {CURRENCIES[p.currency]?.symbol ?? p.currency}{p.originalTotal.toFixed(2)}
+                          </span>
+                        </td>
                       </tr>
                     ))}
-                    <tr className="bg-gray-50">
-                      <td className="px-4 py-3 text-sm font-semibold text-gray-900">Total</td>
-                      <td className="px-4 py-3 text-sm font-semibold text-gray-700">
-                        {payments.reduce((s, p) => s + p.count, 0)}
-                      </td>
-                      <td className="px-4 py-3 text-sm font-semibold text-gray-900">{fmt(totalRevenue)}</td>
-                    </tr>
                   </tbody>
+                  {/* Per-currency totals footer */}
+                  <tfoot>
+                    <tr className="border-t-2 border-slate-200" style={{ background: '#f8fafc' }}>
+                      <td className="px-5 py-3 text-xs font-bold text-slate-500 uppercase tracking-wide" colSpan={2}>
+                        Total
+                      </td>
+                      <td className="px-5 py-3 text-right">
+                        {(() => {
+                          const byCur = new Map<string, number>()
+                          for (const p of payments) {
+                            byCur.set(p.currency, (byCur.get(p.currency) ?? 0) + p.originalTotal)
+                          }
+                          return Array.from(byCur.entries()).map(([cur, total]) => (
+                            <div key={cur} className="text-sm font-bold text-slate-900">
+                              {CURRENCIES[cur]?.symbol ?? cur}{total.toFixed(2)}
+                              <span className="text-[10px] font-bold text-slate-400 ml-1">{cur}</span>
+                            </div>
+                          ))
+                        })()}
+                      </td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             )}

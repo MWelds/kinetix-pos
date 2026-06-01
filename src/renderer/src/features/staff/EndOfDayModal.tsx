@@ -26,8 +26,8 @@ interface DaySummary {
   totalRevenue: number
   totalDiscount: number
   averageOrderValue: number
-  /** Raw payment breakdown from the DB */
-  paymentRows: { method: string; count: number; total: number }[]
+  /** Raw payment breakdown from the DB, grouped by method + currency */
+  paymentRows: { method: string; currency: string; count: number; total: number; originalTotal: number }[]
 }
 
 interface TerminalSummary {
@@ -36,7 +36,7 @@ interface TerminalSummary {
   orderCount: number
   totalRevenue: number
   totalDiscount: number
-  paymentRows: { method: string; count: number; total: number }[]
+  paymentRows: { method: string; currency: string; count: number; total: number; originalTotal: number }[]
 }
 
 /** One cash-count entry per method × currency that the cashier fills in */
@@ -94,88 +94,107 @@ function buildEodReceiptHtml(
   const primarySym = currencySymbol(cfg.primary)
   const fmt = (n: number) => `${primarySym}${Math.abs(n).toFixed(2)}`
 
+  // Convert entry amount from its currency to primary using the same rate.
+  const entryToPrimary = (amount: number, currency: string) => {
+    if (currency === cfg.primary) return amount
+    return cfg.rate > 0 ? amount / cfg.rate : amount
+  }
+
   // Convert all counted amounts to primary for reconciliation
   const countedPrimary = entries.reduce((s, e) => {
     const val = parseFloat(e.counted) || 0
-    if (e.currency === cfg.primary) return s + val
-    return s + (cfg.rate > 0 ? val / cfg.rate : val)
+    return s + entryToPrimary(val, e.currency)
   }, 0)
-  const expectedPrimary = entries.reduce((s, e) => s + e.expectedPrimary, 0)
+
+  // Use the same rate conversion so matched individual amounts produce zero variance
+  const expectedPrimary = entries.reduce((s, e) => {
+    return s + entryToPrimary(e.expectedPrimary, e.currency)
+  }, 0)
   const variance = countedPrimary - expectedPrimary
 
-  const entryRows = entries
-    .map((e) => {
-      const val = parseFloat(e.counted) || 0
-      const sym = esc(currencySymbol(e.currency))
-      return `<div class="row"><span class="label">${esc(e.label)} (${esc(e.currency)})</span><span>${sym}${val.toFixed(2)}</span></div>`
-    })
-    .join('')
+  // Reconciliation rows: one per entry, expected vs counted side by side
+  const recoRows = entries.map((e) => {
+    const counted = parseFloat(e.counted) || 0
+    const sym = esc(currencySymbol(e.currency))
+    const diff = counted - e.expectedPrimary
+    const diffStr = Math.abs(diff) >= 0.01
+      ? ` <span style="color:${diff >= 0 ? 'green' : 'red'}">(${diff > 0 ? '+' : ''}${sym}${diff.toFixed(2)})</span>`
+      : ''
+    return `<div class="row">
+      <span class="label">${esc(e.label)}</span>
+      <span>${sym}${e.expectedPrimary.toFixed(2)} &rarr; ${sym}${counted.toFixed(2)}${diffStr}</span>
+    </div>`
+  }).join('')
+
+  // Currency totals
+  const currencies = [...new Set(entries.map((e) => e.currency))]
+  const currencyTotals = currencies.map((cur) => {
+    const sym = esc(currencySymbol(cur))
+    const counted = entries.filter((e) => e.currency === cur).reduce((s, e) => s + (parseFloat(e.counted) || 0), 0)
+    return `<div class="row bold"><span>${esc(cur)} Total Counted</span><span>${sym}${counted.toFixed(2)}</span></div>`
+  }).join('')
 
   const totalVendorCogs = vendorPayables.reduce((s, v) => s + v.cogsToday, 0)
   const vendorSection = vendorPayables.length > 0
-    ? `<hr/>
-       <div class="sub" style="text-align:left;font-weight:bold;margin-bottom:4px">VENDOR PAYABLES (TODAY)</div>
+    ? `<hr/><div class="section">VENDOR PAYABLES</div>
        ${vendorPayables.map((v) =>
          `<div class="row"><span class="label">${esc(v.vendorName)}</span><span>${fmt(v.cogsToday)}</span></div>`
        ).join('')}
-       <div class="row total"><span>Total COGS</span><span>${fmt(totalVendorCogs)}</span></div>`
+       <div class="row bold"><span>Total COGS</span><span>${fmt(totalVendorCogs)}</span></div>`
     : ''
 
-  // Per-terminal section — only rendered when 2+ terminals exist
   const terminalSection = terminals.length >= 2
-    ? `<hr/>
-       <div class="sub" style="text-align:left;font-weight:bold;margin-bottom:4px">BY REGISTER</div>
+    ? `<hr/><div class="section">BY REGISTER</div>
        ${terminals.map((t) => `
          <div style="margin-bottom:6px">
-           <div style="font-weight:bold;font-size:11px;margin-bottom:2px">${esc(t.terminalName)}</div>
+           <div class="bold">${esc(t.terminalName)}</div>
            <div class="row"><span class="label">Orders</span><span>${t.orderCount}</span></div>
            <div class="row"><span class="label">Revenue</span><span>${fmt(t.totalRevenue)}</span></div>
-           ${t.paymentRows.map((p) =>
-             `<div class="row"><span class="label" style="padding-left:8px">&#8627; ${esc(METHOD_LABELS[p.method] ?? p.method)}</span><span>${fmt(p.total)}</span></div>`
-           ).join('')}
-         </div>
-       `).join('')}
-       <div class="row total"><span>COMBINED TOTAL</span><span>${fmt(summary.totalRevenue)}</span></div>`
+           ${t.paymentRows.map((p) => {
+             const sym = esc(currencySymbol(p.currency))
+             return `<div class="row"><span class="label" style="padding-left:8px">&#8627; ${esc(METHOD_LABELS[p.method] ?? p.method)} (${esc(p.currency)}) &times;${p.count}</span><span>${sym}${p.originalTotal.toFixed(2)}</span></div>`
+           }).join('')}
+         </div>`).join('')}
+       <div class="row bold"><span>Combined</span><span>${fmt(summary.totalRevenue)}</span></div>`
     : ''
 
   return `<!DOCTYPE html><html><head><style>
     body { font-family: monospace; font-size: 12px; width: 280px; margin: 0 auto; }
-    h2 { text-align: center; font-size: 14px; margin: 8px 0 4px; }
-    .sub { text-align: center; font-size: 11px; color: #555; margin-bottom: 12px; }
-    hr { border: none; border-top: 1px dashed #999; margin: 8px 0; }
-    .row { display: flex; justify-content: space-between; margin: 3px 0; }
-    .label { color: #555; }
-    .total { font-weight: bold; font-size: 13px; }
-    .variance { color: ${variance >= 0 ? 'green' : 'red'}; }
+    h2 { text-align: center; font-size: 15px; font-weight: bold; margin: 8px 0 2px; }
     .center { text-align: center; }
+    .meta { text-align: center; font-size: 10px; color: #777; margin-bottom: 4px; }
+    hr { border: none; border-top: 1px dashed #bbb; margin: 7px 0; }
+    .section { font-weight: bold; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: #444; margin: 4px 0 3px; }
+    .row { display: flex; justify-content: space-between; margin: 2px 0; font-size: 12px; }
+    .label { color: #666; }
+    .bold { font-weight: bold; }
+    .big { font-size: 14px; font-weight: bold; }
+    .variance { font-weight: bold; color: ${variance >= 0 ? 'green' : 'red'}; }
   </style></head><body>
     <h2>${esc(storeName)}</h2>
-    <div class="sub">END OF DAY REPORT</div>
-    <div class="sub">${now}</div>
+    <div class="meta">END OF DAY &bull; ${esc(now)}</div>
+    <div class="meta">Shift opened ${new Date(openedAt).toLocaleTimeString()}</div>
     <hr/>
-    <div class="row"><span class="label">Shift opened</span><span>${new Date(openedAt).toLocaleTimeString()}</span></div>
     <div class="row"><span class="label">Orders</span><span>${summary.orderCount}</span></div>
-    <hr/>
-    <div class="row"><span class="label">Discounts</span><span>-${fmt(summary.totalDiscount)}</span></div>
-    <div class="row total"><span>NET REVENUE</span><span>${fmt(summary.totalRevenue)}</span></div>
+    ${summary.totalDiscount > 0 ? `<div class="row"><span class="label">Discounts</span><span>-${fmt(summary.totalDiscount)}</span></div>` : ''}
+    <div class="row big"><span>Net Revenue</span><span>${fmt(summary.totalRevenue)}</span></div>
     ${terminalSection}
     <hr/>
-    <div class="sub" style="text-align:left;font-weight:bold;margin-bottom:4px">CASH COUNT</div>
-    ${entryRows}
+    <div class="section">Reconciliation &mdash; Expected &rarr; Counted</div>
+    ${recoRows}
     <hr/>
-    <div class="row"><span class="label">Expected (${cfg.primary})</span><span>${fmt(expectedPrimary)}</span></div>
-    <div class="row"><span class="label">Counted (${cfg.primary} equiv.)</span><span>${fmt(countedPrimary)}</span></div>
+    ${currencyTotals}
     <div class="row variance"><span>Variance</span><span>${variance >= 0 ? '+' : ''}${fmt(variance)}</span></div>
     ${vendorSection}
+    ${closingNote ? `<hr/><div style="font-size:11px;color:#555;word-break:break-word"><strong>Note:</strong> ${esc(closingNote)}</div>` : ''}
     <hr/>
-    ${closingNote ? `<div style="font-size:11px;color:#555;word-break:break-word"><strong>Note:</strong> ${esc(closingNote)}</div><hr/>` : ''}
-    <div class="center" style="margin-top:8px; font-size:11px; color:#777">Shift closed — have a great evening!</div>
+    <div class="center meta">Have a great evening!</div>
   </body></html>`
 }
 
 /** Build the count-entry rows based on enabled methods × configured currencies */
 function buildEntries(
-  paymentRows: { method: string; total: number }[],
+  paymentRows: { method: string; currency: string; total: number; originalTotal: number }[],
   enabledMethods: string[],
   cfg: CurrencyConfig
 ): CountEntry[] {
@@ -183,34 +202,44 @@ function buildEntries(
   const physicalMethods = enabledMethods.filter((m) => ['cash', 'card'].includes(m))
   const otherMethods = enabledMethods.filter((m) => !['cash', 'card'].includes(m))
 
+  // Sum store-currency totals for a method (primary rows)
+  const totalFor = (method: string, currency: string) =>
+    paymentRows.filter((r) => r.method === method && r.currency === currency).reduce((s, r) => s + r.total, 0)
+
+  // Sum original amounts for a method+currency (what customers physically handed over)
+  const originalTotalFor = (method: string, currency: string) =>
+    paymentRows.filter((r) => r.method === method && r.currency === currency).reduce((s, r) => s + r.originalTotal, 0)
+
   for (const method of physicalMethods) {
-    const expectedPrimary = paymentRows.find((r) => r.method === method)?.total ?? 0
     const methodLabel = METHOD_LABELS[method] ?? method
 
-    // Primary currency entry — carries the full expected total
+    // Primary currency entry — expected = store-currency total for primary-currency payments
+    const primExpected = totalFor(method, cfg.primary)
     rows.push({
       method,
       currency: cfg.primary,
       label: `${methodLabel} (${cfg.primary})`,
       counted: '',
-      expectedPrimary,
+      expectedPrimary: primExpected,
     })
 
-    // Secondary currency entry — cashier enters what they physically counted;
-    // amount is converted to primary on reconciliation, so expectedPrimary is 0 here
+    // Secondary currency entry — expected in the secondary currency (original tendered amount)
     if (cfg.secondary) {
+      const secOriginal = originalTotalFor(method, cfg.secondary)
       rows.push({
         method,
         currency: cfg.secondary,
         label: `${methodLabel} (${cfg.secondary})`,
         counted: '',
-        expectedPrimary: 0,
+        // Store the secondary-currency expected directly as a "primary" for display purposes;
+        // reconciliation converts back to primary when the cashier enters their count.
+        expectedPrimary: secOriginal,
       })
     }
   }
 
   for (const method of otherMethods) {
-    const expectedPrimary = paymentRows.find((r) => r.method === method)?.total ?? 0
+    const expectedPrimary = totalFor(method, cfg.primary)
     rows.push({
       method,
       currency: cfg.primary,
@@ -285,7 +314,7 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
         api.reports.vendorPayables(from, to),
         api.reports.eodByTerminal(from, to)
       ])
-      const payArr = payments as { method: string; count: number; total: number }[]
+      const payArr = payments as { method: string; currency: string; count: number; total: number; originalTotal: number }[]
       const s = sales as { orderCount: number; totalRevenue: number; totalDiscount: number; averageOrderValue: number }
       const daySummary: DaySummary = {
         orderCount: s.orderCount,
@@ -326,17 +355,28 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
     setEntries((prev) => prev.map((e, i) => (i === index ? { ...e, counted } : e)))
   }
 
+  /** Convert an amount from an entry's currency to primary, using the same rate as counted totals. */
+  const toPrimary = (amount: number, currency: string) => {
+    if (currency === primaryCurrency) return amount
+    return currencyCfg.rate > 0 ? amount / currencyCfg.rate : amount
+  }
+
   /** Total counted in primary currency (secondary entries converted via rate) */
   const totalCountedPrimary = entries.reduce((s, e) => {
     const val = parseFloat(e.counted) || 0
-    if (e.currency === primaryCurrency) return s + val
-    // secondary → primary: divide by rate (1 primary = rate secondary)
-    return s + (currencyCfg.rate > 0 ? val / currencyCfg.rate : val)
+    return s + toPrimary(val, e.currency)
   }, 0)
 
-  const totalExpectedPrimary = summary
-    ? summary.paymentRows.reduce((s, r) => s + r.total, 0)
-    : 0
+  /**
+   * Total expected in primary currency — uses the SAME rate conversion as counted
+   * so that when individual amounts match, the totals also match and variance is 0.
+   * Using the DB accounting totals directly would cause discrepancies because
+   * the stored KYD amount uses the rate at checkout time (which may differ from
+   * the current rate), causing a phantom variance when the cashier is correct.
+   */
+  const totalExpectedPrimary = entries.reduce((s, e) => {
+    return s + toPrimary(e.expectedPrimary, e.currency)
+  }, 0)
 
   const variance = totalCountedPrimary - totalExpectedPrimary
   const variancePositive = variance >= 0
@@ -365,22 +405,38 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
     }
   }
 
+  /** Build the shift close note shared by both close actions */
+  function buildCloseNote(): string {
+    const cashCount = entries.map((e) => `${e.label}: ${e.counted || '0'}`).join(', ')
+    return [
+      `EOD close. Variance: ${variancePositive ? '+' : ''}${primarySym}${Math.abs(variance).toFixed(2)}.`,
+      cashCount,
+      closingNote ? `Note: ${closingNote}` : ''
+    ].filter(Boolean).join(' ')
+  }
+
+  /** Close shift AND sign the cashier out */
   async function handleCloseDay() {
     setClosing(true)
     try {
       if (shift) {
-        const cashCount = entries
-          .map((e) => `${e.label}: ${e.counted || '0'}`)
-          .join(', ')
-        const notesParts = [
-          `EOD close. Variance: ${variancePositive ? '+' : ''}${primarySym}${Math.abs(variance).toFixed(2)}.`,
-          cashCount,
-          closingNote ? `Note: ${closingNote}` : ''
-        ].filter(Boolean)
-        await api.shifts.close(shift.id, totalCountedPrimary, notesParts.join(' '), staff?.id)
+        await api.shifts.close(shift.id, totalCountedPrimary, buildCloseNote(), staff?.id)
       }
       logout()
       navigate(ROUTES.LOGIN)
+      onClose()
+    } finally {
+      setClosing(false)
+    }
+  }
+
+  /** Close shift but stay logged in (e.g. manager stays on POS after closing) */
+  async function handleCloseShiftOnly() {
+    setClosing(true)
+    try {
+      if (shift) {
+        await api.shifts.close(shift.id, totalCountedPrimary, buildCloseNote(), staff?.id)
+      }
       onClose()
     } finally {
       setClosing(false)
@@ -524,7 +580,9 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                       </div>
                       <div className="w-20 text-right shrink-0">
                         <p className="text-[10px] text-gray-400">Expected</p>
-                        <p className="text-xs font-semibold text-gray-600">{primarySym}{entry.expectedPrimary.toFixed(2)}</p>
+                        <p className="text-xs font-semibold text-gray-600">
+                          {currencySymbol(entry.currency)}{entry.expectedPrimary.toFixed(2)}
+                        </p>
                       </div>
                     </div>
                   ))}
@@ -582,10 +640,11 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                           <span className="font-medium">{t.orderCount}</span>
                         </div>
                         {t.paymentRows.map((p) => (
-                          <div key={p.method} className="flex justify-between">
+                          <div key={`${p.method}|${p.currency}`} className="flex justify-between">
                             <span className="flex items-center gap-1.5">
                               {p.method === 'cash' ? <DollarSign size={10} /> : <CreditCard size={10} />}
                               {METHOD_LABELS[p.method] ?? p.method}
+                              <span className="text-gray-400 text-xs font-semibold">{p.currency}</span>
                               <span className="text-gray-400">×{p.count}</span>
                             </span>
                             <span>{formatCurrency(p.total, primaryCurrency)}</span>
@@ -616,13 +675,17 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                     {isMultiTerminal ? 'Payment Totals (All Registers)' : 'Sales by Payment Method'}
                   </p>
                   {summary.paymentRows.map((row) => (
-                    <div key={row.method} className="flex items-center justify-between text-sm">
+                    <div key={`${row.method}|${row.currency}`} className="flex items-center justify-between text-sm">
                       <span className="flex items-center gap-2 text-gray-600">
                         {row.method === 'cash' ? <DollarSign size={13} /> : <CreditCard size={13} />}
                         {METHOD_LABELS[row.method] ?? row.method}
+                        <span className="text-xs font-semibold text-gray-400">{row.currency}</span>
                         <span className="text-xs text-gray-400">×{row.count}</span>
                       </span>
-                      <span className="font-medium text-gray-900">{formatCurrency(row.total, primaryCurrency)}</span>
+                      {/* Show what was actually received in that currency */}
+                      <span className="font-medium text-gray-900">
+                        {CURRENCIES[row.currency]?.symbol ?? row.currency}{row.originalTotal.toFixed(2)}
+                      </span>
                     </div>
                   ))}
                   {summary.totalDiscount > 0 && (
@@ -657,39 +720,71 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                 </div>
               )}
 
-              {/* Cash count summary */}
-              <div className={`rounded-xl p-4 border ${variancePositive ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
-                <div className="flex items-center gap-2 mb-3">
-                  {variancePositive
-                    ? <CheckCircle size={14} className="text-emerald-600" />
-                    : <AlertTriangle size={14} className="text-red-600" />}
-                  <p className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Reconciliation</p>
+              {/* Cash count reconciliation — single compact table */}
+              <div className={`rounded-xl border overflow-hidden ${variancePositive ? 'border-emerald-200' : 'border-red-200'}`}>
+                {/* Header */}
+                <div className={`flex items-center justify-between px-4 py-2.5 ${variancePositive ? 'bg-emerald-50' : 'bg-red-50'}`}>
+                  <div className="flex items-center gap-2">
+                    {variancePositive
+                      ? <CheckCircle size={13} className="text-emerald-600" />
+                      : <AlertTriangle size={13} className="text-red-600" />}
+                    <p className="text-xs font-bold text-gray-700 uppercase tracking-wide">Reconciliation</p>
+                  </div>
+                  <span className={`text-sm font-bold ${variancePositive ? 'text-emerald-700' : 'text-red-700'}`}>
+                    Variance: {variancePositive ? '+' : ''}{primarySym}{variance.toFixed(2)}
+                  </span>
                 </div>
-                <div className="space-y-1 text-sm mb-3">
+
+                {/* Table: one row per entry, Expected | Counted side-by-side */}
+                <div className="bg-white">
+                  {/* Column headers */}
+                  <div className="grid grid-cols-3 px-4 py-1.5 border-b border-gray-100 bg-gray-50">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Method</span>
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide text-right">Expected</span>
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide text-right">Counted</span>
+                  </div>
                   {entries.map((e, i) => {
-                    const val = parseFloat(e.counted) || 0
-                    return val > 0 ? (
-                      <div key={i} className="flex justify-between text-gray-600">
-                        <span>{e.label}</span>
-                        <span>{currencySymbol(e.currency)}{val.toFixed(2)}</span>
+                    const counted = parseFloat(e.counted) || 0
+                    const diff = counted - e.expectedPrimary
+                    const sym = currencySymbol(e.currency)
+                    const rowMatch = Math.abs(diff) < 0.01
+                    return (
+                      <div key={i} className={`grid grid-cols-3 px-4 py-2 text-sm border-b border-gray-50 last:border-0 ${!rowMatch ? 'bg-red-50/40' : ''}`}>
+                        <span className="text-gray-700 font-medium">{e.label}</span>
+                        <span className="text-gray-500 text-right">{sym}{e.expectedPrimary.toFixed(2)}</span>
+                        <span className={`text-right font-semibold ${rowMatch ? 'text-gray-800' : 'text-red-600'}`}>
+                          {sym}{counted.toFixed(2)}
+                          {!rowMatch && (
+                            <span className="text-xs ml-1">({diff > 0 ? '+' : ''}{sym}{diff.toFixed(2)})</span>
+                          )}
+                        </span>
                       </div>
-                    ) : null
+                    )
                   })}
                 </div>
-                <div className="space-y-1 text-sm border-t border-gray-200 pt-2">
-                  <div className="flex justify-between text-gray-600">
-                    <span>Expected ({primaryCurrency})</span>
-                    <span>{primarySym}{totalExpectedPrimary.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between text-gray-600">
-                    <span>Counted ({primaryCurrency} equiv.)</span>
-                    <span>{primarySym}{totalCountedPrimary.toFixed(2)}</span>
-                  </div>
-                  <div className={`flex justify-between font-semibold pt-1 border-t ${variancePositive ? 'border-emerald-200 text-emerald-700' : 'border-red-200 text-red-700'}`}>
-                    <span>Variance</span>
-                    <span>{variancePositive ? '+' : ''}{primarySym}{variance.toFixed(2)}</span>
-                  </div>
-                </div>
+
+                {/* Currency totals footer */}
+                {(() => {
+                  const currencies = [...new Set(entries.map((e) => e.currency))]
+                  return (
+                    <div className={`border-t px-4 py-3 flex gap-6 flex-wrap ${variancePositive ? 'border-emerald-100 bg-emerald-50/60' : 'border-red-100 bg-red-50/40'}`}>
+                      {currencies.map((cur) => {
+                        const sym = currencySymbol(cur)
+                        const totalCounted = entries.filter((e) => e.currency === cur).reduce((s, e) => s + (parseFloat(e.counted) || 0), 0)
+                        const totalExpected = entries.filter((e) => e.currency === cur).reduce((s, e) => s + e.expectedPrimary, 0)
+                        return (
+                          <div key={cur} className="flex items-baseline gap-1.5">
+                            <span className="text-[10px] font-bold text-gray-400 uppercase">{cur}</span>
+                            <span className="text-sm font-bold text-gray-900">{sym}{totalCounted.toFixed(2)}</span>
+                            {Math.abs(totalCounted - totalExpected) > 0.01 && (
+                              <span className="text-xs text-red-500">(exp {sym}{totalExpected.toFixed(2)})</span>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                })()}
               </div>
 
               <div className="flex items-center justify-between">
@@ -774,18 +869,46 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                 />
               </div>
 
+              {/* Two close options */}
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={handleCloseShiftOnly}
+                  disabled={closing}
+                  className="flex flex-col items-center gap-2 px-4 py-4 rounded-xl border-2 border-gray-200 hover:border-amber-400 hover:bg-amber-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed group"
+                >
+                  <div className="w-10 h-10 rounded-full bg-amber-100 group-hover:bg-amber-200 flex items-center justify-center transition-colors">
+                    <Sun size={18} className="text-amber-600" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-bold text-gray-900">Close Shift Only</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Stay logged in</p>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCloseDay}
+                  disabled={closing}
+                  className="flex flex-col items-center gap-2 px-4 py-4 rounded-xl border-2 border-gray-200 hover:border-red-400 hover:bg-red-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed group"
+                >
+                  <div className="w-10 h-10 rounded-full bg-red-100 group-hover:bg-red-200 flex items-center justify-center transition-colors">
+                    <LogOut size={18} className="text-red-600" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-bold text-gray-900">Close & Sign Out</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Return to login screen</p>
+                  </div>
+                </button>
+              </div>
+
               <div className="flex items-center justify-between pt-1">
                 <button onClick={() => setStep('summary')} className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
                   <ChevronLeft size={14} /> Back
                 </button>
-                <Button
-                  onClick={handleCloseDay}
-                  loading={closing}
-                  icon={<LogOut size={14} />}
-                  className="bg-red-600 hover:bg-red-700 text-white border-red-600"
-                >
-                  End Day & Sign Out
-                </Button>
+                {closing && (
+                  <span className="text-sm text-gray-400 animate-pulse">Closing shift…</span>
+                )}
               </div>
             </div>
           )}

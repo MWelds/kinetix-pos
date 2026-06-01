@@ -35,9 +35,12 @@ export interface CompleteOrderInput {
   orderId: string
   payments: Array<{
     method: 'cash' | 'card' | 'store_credit' | 'gift_card' | 'layaway'
+    /** Amount in store (primary) currency — used for accounting. */
     amount: number
-    /** Currency the customer paid in (e.g. 'USD', 'KYD'). Stored for reporting; amount is in store currency. */
+    /** Currency the customer paid in (e.g. 'USD', 'KYD'). */
     currency?: string
+    /** Amount as tendered in the payment currency (e.g. 10.00 USD). */
+    originalAmount?: number
     reference?: string
     changeGiven?: number
     giftCardCode?: string
@@ -61,9 +64,12 @@ export interface UpdateAndCompleteInput {
   taxRate?: number
   payments: Array<{
     method: 'cash' | 'card' | 'store_credit' | 'gift_card' | 'layaway'
+    /** Amount in store (primary) currency — used for accounting. */
     amount: number
-    /** Currency the customer paid in (e.g. 'USD', 'KYD'). Stored for reporting; amount is in store currency. */
+    /** Currency the customer paid in (e.g. 'USD', 'KYD'). */
     currency?: string
+    /** Amount as tendered in the payment currency (e.g. 10.00 USD). */
+    originalAmount?: number
     reference?: string
     changeGiven?: number
     giftCardCode?: string
@@ -406,6 +412,7 @@ export const orderService = {
           method: payment.method,
           amount: payment.amount,
           currency: payment.currency ?? 'KYD',
+          originalAmount: payment.originalAmount ?? payment.amount,
           reference: payment.reference,
           changeGiven: payment.changeGiven,
           status: 'completed',
@@ -721,6 +728,7 @@ export const orderService = {
           method: payment.method,
           amount: payment.amount,
           currency: payment.currency ?? 'KYD',
+          originalAmount: payment.originalAmount ?? payment.amount,
           reference: payment.reference,
           changeGiven: payment.changeGiven,
           status: 'completed',

@@ -1,6 +1,6 @@
 {
   "name": "kinetix-pos",
-  "version": "1.0.78",
+  "version": "1.0.90",
   "description": "Offline-first Point of Sale system for Windows",
   "main": "./out/main/index.js",
   "scripts": {

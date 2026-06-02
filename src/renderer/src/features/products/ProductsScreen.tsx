@@ -812,9 +812,9 @@ function ProductFormModal({ product, categories, onClose, onSave }: ProductFormM
           </div>
         </div>
         <div className="grid grid-cols-3 gap-4">
-          <Input label="Price ($) *" type="number" step="0.01" value={form.basePrice} onChange={f('basePrice')} error={errors.basePrice} />
-          <Input label="Cost ($)" type="number" step="0.01" value={form.costPrice} onChange={f('costPrice')} />
-          <Input label="Tax Rate" type="number" step="0.001" value={form.taxRate} onChange={f('taxRate')} />
+          <Input label="Price ($) *" type="text" inputMode="decimal" placeholder="0.00" value={form.basePrice} onChange={f('basePrice')} error={errors.basePrice} />
+          <Input label="Cost ($)" type="text" inputMode="decimal" placeholder="0.00" value={form.costPrice} onChange={f('costPrice')} />
+          <Input label="Tax Rate" type="text" inputMode="decimal" placeholder="0.00" value={form.taxRate} onChange={f('taxRate')} />
         </div>
 
         {/* Product image */}
@@ -865,9 +865,8 @@ function ProductFormModal({ product, categories, onClose, onSave }: ProductFormM
               <div className="w-40">
                 <Input
                   label="Units per pack"
-                  type="number"
-                  min="2"
-                  step="1"
+                  type="text"
+                  inputMode="numeric"
                   value={form.unitsPerPack}
                   onChange={f('unitsPerPack')}
                   placeholder="e.g. 100"
@@ -922,9 +921,8 @@ function ProductFormModal({ product, categories, onClose, onSave }: ProductFormM
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Vendor cost per unit ($)</label>
                 <input
-                  type="number"
-                  min="0"
-                  step="0.01"
+                  type="text"
+                  inputMode="decimal"
                   value={form.vendorCost}
                   onChange={(e) => setForm((p) => ({ ...p, vendorCost: e.target.value }))}
                   placeholder="e.g. 10.00"

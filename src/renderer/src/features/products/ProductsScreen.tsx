@@ -613,6 +613,7 @@ interface ComponentRow {
 
 function ProductFormModal({ product, categories, onClose, onSave }: ProductFormModalProps) {
   const fmtRaw = useCurrencyStore((s) => s.fmtRaw)
+  const showToast = useUiStore((s) => s.showToast)
   const [form, setForm] = useState({
     name: product?.name ?? '',
     sku: product?.sku ?? '',
@@ -769,6 +770,8 @@ function ProductFormModal({ product, categories, onClose, onSave }: ProductFormM
         await api.products.setComponents(savedId, [])
       }
       onSave()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to save product', 'error')
     } finally { setSaving(false) }
   }
 

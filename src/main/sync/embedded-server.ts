@@ -804,7 +804,16 @@ function createHandler(apiKey: string) {
             if (table === 'settings') rows = rows.filter((r) => !MACHINE_SPECIFIC_SETTINGS.has(r['key'] as string))
             if (rows.length > 0) records[table] = rows
           }
-          send(res, 200, { serverTime: new Date().toISOString(), records }); return
+          // Always include ALL non-machine-specific settings regardless of `since`.
+          // Without this, a terminal set up AFTER the server's settings were last
+          // written (storeName, logo, currency, address, etc.) would never receive
+          // those values because their updated_at predates the terminal's lastSyncAt.
+          // Conflict resolution on the terminal side (timestamp-based) ensures a
+          // locally-newer value is never overwritten by a stale server value.
+          const allSettings = (db.prepare(
+            `SELECT * FROM settings`
+          ).all() as SyncRecord[]).filter((r) => !MACHINE_SPECIFIC_SETTINGS.has(r['key'] as string))
+          send(res, 200, { serverTime: new Date().toISOString(), records, baselineSettings: allSettings }); return
         }
         if (method === 'POST' && url === '/sync/push') {
           const body = await parseBody(req) as { terminalId?: string; records?: SyncPayload }

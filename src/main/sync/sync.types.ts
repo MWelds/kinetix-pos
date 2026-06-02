@@ -14,6 +14,10 @@ export type SyncPayload = Record<string, SyncRecord[]>
 export interface PullResponse {
   serverTime: string
   records: SyncPayload
+  /** All non-machine-specific settings from the server, regardless of timestamp.
+   *  Used to bootstrap terminals that were set up after the server's settings were
+   *  last written (logo, address, currency, etc. would otherwise never arrive). */
+  baselineSettings?: SyncRecord[]
 }
 
 export interface PushResponse {

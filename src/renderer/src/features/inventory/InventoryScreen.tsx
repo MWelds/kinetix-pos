@@ -20,7 +20,7 @@ export function InventoryScreen() {
   const [adjustItem, setAdjustItem] = useState<InventoryItem | null>(null)
   const [showReceiveModal, setShowReceiveModal] = useState(false)
   const [form, setForm] = useState({
-    type: 'receive' as 'receive' | 'transfer' | 'loss' | 'adjustment',
+    type: 'receive' as 'receive' | 'loss',
     quantity: '',
     note: ''
   })
@@ -433,7 +433,7 @@ export function InventoryScreen() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Adjustment Type</label>
             <div className="grid grid-cols-2 gap-2">
-              {(['receive', 'adjustment', 'loss', 'transfer'] as const).map((t) => (
+              {(['receive', 'loss'] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => setForm((f) => ({ ...f, type: t }))}

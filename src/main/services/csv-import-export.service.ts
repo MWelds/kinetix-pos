@@ -239,17 +239,32 @@ export async function importProductsCsv(csvText: string): Promise<ImportResult> 
       const taxRate = row['tax_rate'] ? parseFloat(row['tax_rate']) : undefined
       const isActive = row['is_active'] ? row['is_active'].toLowerCase() !== 'false' && row['is_active'] !== '0' : true
 
+      // Parse optional numeric / boolean fields once, shared by both branches
+      const stockQty = row['stock_quantity'] !== undefined && row['stock_quantity'] !== ''
+        ? parseInt(row['stock_quantity'], 10) : undefined
+      const lowStock = row['low_stock_threshold'] !== undefined && row['low_stock_threshold'] !== ''
+        ? parseInt(row['low_stock_threshold'], 10) : undefined
+
       if (existing) {
-        // Update existing product — only overwrite image if a new one was supplied
+        // Update existing product.
+        // Field-clearing rules:
+        //   - barcode / description: explicit empty string in CSV clears the field;
+        //     if the column is absent from the CSV row, keep the existing value.
+        //   - categoryId: if category_name column is present but empty, clear it;
+        //     if the column is absent entirely, keep existing.
+        const hasBarcodeCol    = 'barcode' in row
+        const hasDescriptionCol = 'description' in row
+        const hasCategoryCol   = ('category_name' in row) || ('category' in row)
+
         db.update(schema.products)
           .set({
             name,
-            barcode: row['barcode'] || existing.barcode,
-            description: row['description'] || existing.description,
-            categoryId: categoryId ?? existing.categoryId,
+            barcode:      hasBarcodeCol     ? (row['barcode'] || null)      : existing.barcode,
+            description:  hasDescriptionCol ? (row['description'] || null)  : existing.description,
+            categoryId:   hasCategoryCol    ? (categoryId ?? null)          : existing.categoryId,
             basePrice: price,
-            costPrice: isNaN(costPrice ?? NaN) ? existing.costPrice : costPrice,
-            taxRate: isNaN(taxRate ?? NaN) ? existing.taxRate : taxRate,
+            costPrice: isNaN(costPrice ?? NaN) ? existing.costPrice : (costPrice ?? null),
+            taxRate:   isNaN(taxRate   ?? NaN) ? existing.taxRate   : (taxRate   ?? 0),
             isActive,
             ...(imageUrl !== null ? { imageUrl } : {}),
             updatedAt: now
@@ -257,12 +272,7 @@ export async function importProductsCsv(csvText: string): Promise<ImportResult> 
           .where(eq(schema.products.id, existing.id))
           .run()
 
-        // Update inventory if stock_quantity provided
-        const stockQty = row['stock_quantity'] !== undefined && row['stock_quantity'] !== ''
-          ? parseInt(row['stock_quantity'], 10) : undefined
-        const lowStock = row['low_stock_threshold'] !== undefined && row['low_stock_threshold'] !== ''
-          ? parseInt(row['low_stock_threshold'], 10) : undefined
-
+        // Upsert inventory — create the record if it somehow doesn't exist yet
         if (stockQty !== undefined && !isNaN(stockQty)) {
           const inv = db.select().from(schema.inventory)
             .where(eq(schema.inventory.productId, existing.id)).get()
@@ -270,10 +280,20 @@ export async function importProductsCsv(csvText: string): Promise<ImportResult> 
             db.update(schema.inventory)
               .set({
                 quantity: stockQty,
-                lowStockThreshold: (!lowStock || isNaN(lowStock)) ? inv.lowStockThreshold : lowStock,
+                lowStockThreshold: (lowStock !== undefined && !isNaN(lowStock)) ? lowStock : inv.lowStockThreshold,
                 updatedAt: now
               })
               .where(eq(schema.inventory.productId, existing.id))
+              .run()
+          } else {
+            // Inventory record missing for an existing product — create it
+            db.insert(schema.inventory)
+              .values({
+                id: generateId(), productId: existing.id,
+                quantity: stockQty,
+                lowStockThreshold: (lowStock !== undefined && !isNaN(lowStock)) ? lowStock : 5,
+                createdAt: now, updatedAt: now
+              })
               .run()
           }
         }
@@ -284,26 +304,28 @@ export async function importProductsCsv(csvText: string): Promise<ImportResult> 
         db.insert(schema.products)
           .values({
             id, name, sku,
-            barcode: row['barcode'] || null,
+            barcode:     row['barcode']     || null,
             description: row['description'] || null,
             categoryId,
             basePrice: price,
             costPrice: (!costPrice || isNaN(costPrice)) ? null : costPrice,
-            taxRate: (!taxRate || isNaN(taxRate)) ? 0 : taxRate,
+            taxRate:   (!taxRate   || isNaN(taxRate))   ? 0    : taxRate,
             isComposite: false,
             isActive,
+            trackStock: true,
+            unitsPerPack: 1,
             imageUrl: imageUrl ?? null,
             createdAt: now, updatedAt: now
           })
           .run()
 
-        const stockQty = row['stock_quantity'] ? parseInt(row['stock_quantity'], 10) : 0
-        const lowStock = row['low_stock_threshold'] ? parseInt(row['low_stock_threshold'], 10) : 5
+        const qty = (stockQty !== undefined && !isNaN(stockQty)) ? stockQty : 0
+        const low = (lowStock  !== undefined && !isNaN(lowStock))  ? lowStock  : 5
         db.insert(schema.inventory)
           .values({
             id: generateId(), productId: id,
-            quantity: isNaN(stockQty) ? 0 : stockQty,
-            lowStockThreshold: isNaN(lowStock) ? 5 : lowStock,
+            quantity: qty,
+            lowStockThreshold: low,
             createdAt: now, updatedAt: now
           })
           .run()
@@ -355,7 +377,9 @@ export function exportProductsCsv(): string {
     'stock_quantity', 'low_stock_threshold', 'is_active',
     'image_url'
   ]
-  const rows = [headers.join(',')]
+  // Use csvRow for the header too so that any future header containing a comma
+  // or quote is quoted correctly and round-trips cleanly.
+  const rows = [csvRow(headers)]
 
   for (const p of products) {
     const inv = inventoryMap.get(p.sku)

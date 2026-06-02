@@ -1,7 +1,8 @@
 import Database from 'better-sqlite3'
+import bcrypt from 'bcryptjs'
 
 /** Schema version — increment whenever tables change */
-const SCHEMA_VERSION = 19
+const SCHEMA_VERSION = 20
 
 /**
  * Runs idempotent DDL migrations on first launch.
@@ -75,6 +76,9 @@ export function runMigrations(sqlite: Database.Database): void {
   }
   if (currentVersion < 19) {
     applyV19(sqlite)
+  }
+  if (currentVersion < 20) {
+    applyV19(sqlite) // Re-run with correct bcryptjs hash in case V19 used bad Python hash
   }
 
   if (currentVersion < SCHEMA_VERSION) {
@@ -641,13 +645,16 @@ function applyV18(sqlite: Database.Database): void {
 }
 
 /**
- * V19: Reset all admin staff PINs to '0000' (bcrypt hash, cost 10).
+ * V19: Reset all admin staff PINs to '0000'.
+ * Uses bcryptjs directly so the hash is guaranteed compatible with the auth system.
  * Runs once on upgrade so a locked-out admin can log in immediately.
  * Admins should change their PIN after first login.
  */
 function applyV19(sqlite: Database.Database): void {
-  const defaultHash = '$2b$10$zUm2nehgDAbhtXZP7/WYnOXcKs..xbFXqlxGAusMIJpAVkt4NBzPO'
   try {
-    sqlite.prepare(`UPDATE staff SET pin = ? WHERE role = 'admin'`).run(defaultHash)
-  } catch { /* ignore */ }
+    const hash = bcrypt.hashSync('0000', 10)
+    sqlite.prepare(`UPDATE staff SET pin = ? WHERE role = 'admin'`).run(hash)
+  } catch (err) {
+    console.error('[V19] Failed to reset admin PIN:', err)
+  }
 }

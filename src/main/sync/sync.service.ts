@@ -113,13 +113,18 @@ export async function runSync(): Promise<void> {
 
   setState({ status: 'syncing', error: null })
 
+  // Capture the start time BEFORE pushing so that any records written to the
+  // local DB during the push/pull window (updated_at between start and finish)
+  // are NOT skipped on the next cycle.  Saving 'now' captured after push would
+  // advance the watermark past those in-flight writes, causing them to be missed.
+  const syncStartedAt = new Date().toISOString()
+
   try {
     await pushChanges(serverUrl, apiKey, terminalId)
     await pullChanges(serverUrl, apiKey, terminalId)
 
-    const now = new Date().toISOString()
-    setState({ status: 'synced', lastSyncAt: now, error: null, pendingChanges: 0 })
-    settingsService.set('lastSyncAt', now)
+    setState({ status: 'synced', lastSyncAt: syncStartedAt, error: null, pendingChanges: 0 })
+    settingsService.set('lastSyncAt', syncStartedAt)
   } catch (err) {
     let msg = err instanceof Error ? err.message : String(err)
     // Node.js fetch wraps the real network error in err.cause. Expose it so
@@ -229,6 +234,16 @@ async function pullChanges(serverUrl: string, apiKey: string, terminalId: string
 
   const json = await res.json() as PullResponse
   applyPulledRecords(json.records)
+
+  // Apply the full settings snapshot returned by the server.  This covers
+  // store-level settings (name, logo, address, currency, tax, etc.) that were
+  // configured on the server before this terminal was set up — they predate
+  // lastSyncAt so they would never appear in the delta records above.
+  // applyBaselineSettings uses the same timestamp-based conflict resolution as
+  // normal settings sync, so a locally-newer value is never overwritten.
+  if (Array.isArray(json.baselineSettings) && json.baselineSettings.length > 0) {
+    applyBaselineSettings(json.baselineSettings)
+  }
 }
 
 function applyPulledRecords(records: SyncPayload): void {
@@ -302,6 +317,37 @@ function applyPulledRecords(records: SyncPayload): void {
     const affectedProductIds = [...new Set(pulledAdjustments.map((r) => r['product_id'] as string).filter(Boolean))]
     recomputeInventoryFromAdjustments(db, affectedProductIds)
   }
+}
+
+/**
+ * Apply the full settings snapshot sent by the server on every pull response.
+ * This ensures store-level settings (name, logo, address, currency, tax, etc.)
+ * reach terminals that were set up after those settings were last written on
+ * the server — their updated_at predates the terminal's lastSyncAt, so they
+ * would never appear in the normal delta pull.
+ *
+ * Conflict resolution: if the local value has a NEWER updated_at than the
+ * server value, the local value wins (e.g. a manager changed the tax rate at
+ * the terminal today — that should not be silently reverted by the server).
+ */
+function applyBaselineSettings(rows: SyncRecord[]): void {
+  const db = getSqlite()
+  const apply = db.transaction((settingRows: SyncRecord[]) => {
+    for (const row of settingRows) {
+      if (MACHINE_SPECIFIC_SETTINGS.has(row['key'] as string)) continue
+      const existing = db.prepare('SELECT updated_at FROM settings WHERE key = ?')
+        .get(row['key']) as { updated_at: string } | undefined
+      // Only apply if the server value is newer than (or same age as) what we have.
+      // Use >= so that a setting with no local copy is always written.
+      if (!existing || (row['updated_at'] as string) >= existing.updated_at) {
+        db.prepare(`
+          INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+        `).run(row['key'], row['value'], row['updated_at'])
+      }
+    }
+  })
+  apply(rows)
 }
 
 /**

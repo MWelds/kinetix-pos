@@ -242,12 +242,4 @@ export const vendors = sqliteTable('vendors', {
   ...timestamps
 })
 
-// ─── Vendor Payouts ───────────────────────────────────────────────────────────
-export const vendorPayouts = sqliteTable('vendor_payouts', {
-  id: text('id').primaryKey(),
-  vendorId: text('vendor_id').notNull().references(() => vendors.id),
-  amount: real('amount').notNull(),
-  note: text('note'),
-  staffId: text('staff_id'),
-  createdAt: text('created_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`)
-})
+// ─── Vendor Payouts ─────────────────────────────────────

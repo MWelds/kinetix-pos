@@ -374,38 +374,4 @@ export const reportService = {
 
       for (const p of paymentsByOrder.get(o.id) ?? []) {
         const pmKey = `${p.method}|${p.currency}`
-        const pm = agg.paymentMap.get(pmKey)
-        if (pm) {
-          pm.count++
-          pm.total += p.amount
-          pm.originalTotal += p.originalAmount
-        } else {
-          agg.paymentMap.set(pmKey, { method: p.method, currency: p.currency, count: 1, total: p.amount, originalTotal: p.originalAmount })
-        }
-      }
-    }
-
-    // Build output terminals array
-    const terminals = Array.from(termMap.values())
-      .sort((a, b) => b.totalRevenue - a.totalRevenue)
-      .map((t) => ({
-        terminalId: t.terminalId,
-        terminalName: t.terminalName,
-        orderCount: t.orderCount,
-        totalRevenue: t.totalRevenue,
-        totalDiscount: t.totalDiscount,
-        paymentRows: Array.from(t.paymentMap.values()).sort((a, b) => b.total - a.total),
-      }))
-
-    const combined = terminals.reduce(
-      (acc, t) => ({
-        orderCount: acc.orderCount + t.orderCount,
-        totalRevenue: acc.totalRevenue + t.totalRevenue,
-        totalDiscount: acc.totalDiscount + t.totalDiscount,
-      }),
-      { orderCount: 0, totalRevenue: 0, totalDiscount: 0 }
-    )
-
-    return { terminals, combined }
-  }
-}
+        cons

@@ -139,29 +139,4 @@ export async function sendGenericEmail(
     const cfg = loadSmtpConfig()
     if (!cfg) return { success: false, error: 'Email is not configured. Set up SMTP in Settings.' }
     const transporter = buildTransporter(cfg)
-    await transporter.sendMail({
-      from: `"${cfg.fromName}" <${cfg.fromAddress}>`,
-      to,
-      subject,
-      html: htmlBody,
-    })
-    return { success: true }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return { success: false, error: msg }
-  }
-}
-
-/**
- * Test SMTP connection using the provided config (not from DB — for the Settings test button).
- */
-export async function testSmtpConnection(cfg: SmtpConfig): Promise<EmailResult> {
-  try {
-    const transporter = buildTransporter(cfg)
-    await transporter.verify()
-    return { success: true }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return { success: false, error: msg }
-  }
-}
+    await 

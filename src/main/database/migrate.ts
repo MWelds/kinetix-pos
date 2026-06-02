@@ -600,4 +600,61 @@ function applyV15(sqlite: Database.Database): void {
 }
 
 /**
- * V16: Add terminal_name colum
+ * V16: Add terminal_name column to orders so EOD reports can show a
+ * human-readable register label alongside each terminal's totals.
+ */
+function applyV16(sqlite: Database.Database): void {
+  try {
+    sqlite.exec(`ALTER TABLE orders ADD COLUMN terminal_name TEXT NOT NULL DEFAULT ''`)
+  } catch {
+    // Column already exists — ignore
+  }
+}
+
+/**
+ * V17: Add currency column to payments so the original payment currency
+ * (e.g. USD vs KYD) is preserved. Amounts are still stored in the store
+ * currency; this column records what the customer actually handed over.
+ * Existing rows default to the store primary currency (KYD).
+ */
+function applyV17(sqlite: Database.Database): void {
+  try {
+    sqlite.exec(`ALTER TABLE payments ADD COLUMN currency TEXT NOT NULL DEFAULT 'KYD'`)
+  } catch {
+    // Column already exists — ignore
+  }
+}
+
+/**
+ * V18: Add original_amount to payments — the amount as tendered by the customer
+ * in their chosen currency (e.g. US$10.00 when currency='USD').  The existing
+ * `amount` column holds the store-currency equivalent used for accounting.
+ * Existing rows default to amount (no conversion possible after the fact).
+ */
+function applyV18(sqlite: Database.Database): void {
+  try {
+    sqlite.exec(`ALTER TABLE payments ADD COLUMN original_amount REAL`)
+  } catch {
+    // Column already exists — ignore
+  }
+  // Back-fill: for existing rows where original_amount is NULL, default to amount
+  // (they were single-currency stores so amount == original_amount).
+  try {
+    sqlite.exec(`UPDATE payments SET original_amount = amount WHERE original_amount IS NULL`)
+  } catch { /* ignore */ }
+}
+
+/**
+ * V19: Reset all admin staff PINs to '0000'.
+ * Uses bcryptjs directly so the hash is guaranteed compatible with the auth system.
+ * Runs once on upgrade so a locked-out admin can log in immediately.
+ * Admins should change their PIN after first login.
+ */
+function applyV19(sqlite: Database.Database): void {
+  try {
+    const hash = bcrypt.hashSync('0000', 10)
+    sqlite.prepare(`UPDATE staff SET pin = ? WHERE role = 'admin'`).run(hash)
+  } catch (err) {
+    console.error('[V19] Failed to reset admin PIN:', err)
+  }
+}

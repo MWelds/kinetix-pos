@@ -340,4 +340,41 @@ export function ReportsScreen() {
                         <td className="px-4 py-2 text-sm font-medium">{fmtRaw(s.revenue)}</td>
                       </tr>
                     ))}
-                    {!byStaff.length && <tr><td colSpan={
+                    {!byStaff.length && <tr><td colSpan={3} className="px-4 py-6 text-center text-gray-400 text-sm">No data</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
+                  <Monitor size={16} className="text-indigo-600" />
+                  <h2 className="text-sm font-semibold text-gray-700">Sales by Register</h2>
+                </div>
+                <table className="w-full">
+                  <thead className="bg-gray-50"><tr>
+                    {['Register', 'Orders', 'Revenue'].map(h => <th key={h} className="px-4 py-2 text-left text-xs text-gray-500">{h}</th>)}
+                  </tr></thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {byTerminal.map((t) => (
+                      <tr key={t.terminalId} className="hover:bg-gray-50">
+                        <td className="px-4 py-2 text-sm font-medium text-gray-800">
+                          <span className="flex items-center gap-1.5">
+                            <Monitor size={13} className="text-indigo-400 shrink-0" />
+                            {terminalLabel(t.terminalId)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-sm text-gray-600">{t.orderCount}</td>
+                        <td className="px-4 py-2 text-sm font-medium">{fmtRaw(t.revenue)}</td>
+                      </tr>
+                    ))}
+                    {!byTerminal.length && <tr><td colSpan={3} className="px-4 py-6 text-center text-gray-400 text-sm">No data</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}

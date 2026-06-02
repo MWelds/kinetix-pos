@@ -739,4 +739,29 @@ export const orderService = {
 
     // ── Award loyalty points ─────────────────────────────────────────────────
     const custId = input.customerId ?? existing.customerId
-    if (custId && Ma
+    if (custId && Math.floor(total) > 0) {
+      const customer = db
+        .select()
+        .from(schema.customers)
+        .where(eq(schema.customers.id, custId))
+        .get()
+      if (customer) {
+        db.update(schema.customers)
+          .set({
+            loyaltyPoints:
+              customer.loyaltyPoints + Math.floor(total) - (input.loyaltyPointsRedeemed ?? 0),
+            updatedAt: now,
+          })
+          .where(eq(schema.customers.id, custId))
+          .run()
+      }
+    }
+
+    // ── Deduct inventory for new items (pending orders never deducted) ───────
+    for (const item of input.items) {
+      deductInventory(db, item.productId, item.quantity, now)
+    }
+
+    return this.getWithItems(input.orderId)!
+  },
+}

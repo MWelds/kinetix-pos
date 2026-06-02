@@ -127,7 +127,11 @@ export const api = {
       bridge.staff.update(id, input),
     delete: (id: string): Promise<void> => bridge.staff.delete(id),
     resetPin: (input: { staffId: string; adminPin: string; newPin: string; useRecoveryKey?: boolean }): Promise<{ ok: boolean; error?: string }> =>
-      bridge.staff.resetPin(input)
+      bridge.staff.resetPin(input),
+    sendResetCode: (staffId: string): Promise<{ ok: boolean; maskedEmail?: string; error?: string }> =>
+      bridge.staff.sendResetCode(staffId),
+    verifyResetCode: (input: { staffId: string; code: string; newPin: string }): Promise<{ ok: boolean; error?: string }> =>
+      bridge.staff.verifyResetCode(input)
   },
 
   shifts: {

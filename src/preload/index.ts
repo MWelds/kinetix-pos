@@ -76,7 +76,11 @@ const api = {
     update: (id: string, input: unknown) => ipcRenderer.invoke(IPC.STAFF_UPDATE, id, input),
     delete: (id: string) => ipcRenderer.invoke(IPC.STAFF_DELETE, id),
     resetPin: (input: { staffId: string; adminPin: string; newPin: string; useRecoveryKey?: boolean }) =>
-      ipcRenderer.invoke(IPC.STAFF_RESET_PIN, input)
+      ipcRenderer.invoke(IPC.STAFF_RESET_PIN, input),
+    sendResetCode: (staffId: string) =>
+      ipcRenderer.invoke(IPC.STAFF_SEND_RESET_CODE, staffId),
+    verifyResetCode: (input: { staffId: string; code: string; newPin: string }) =>
+      ipcRenderer.invoke(IPC.STAFF_VERIFY_RESET_CODE, input)
   },
 
   // Shifts

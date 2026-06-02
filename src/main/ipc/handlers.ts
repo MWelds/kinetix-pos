@@ -16,7 +16,7 @@ import {
   forcePushCurrentState
 } from '../display/customer-display'
 import { IPC } from './channels'
-import { sendReceiptEmail, sendInvoiceEmail, testSmtpConnection } from '../services/email.service'
+import { sendReceiptEmail, sendInvoiceEmail, testSmtpConnection, sendGenericEmail } from '../services/email.service'
 import { productService } from '../services/product.service'
 import { orderService } from '../services/order.service'
 import { customerService } from '../services/customer.service'
@@ -37,6 +37,21 @@ import {
 } from '../sync/file-sync.service'
 import { startFileSyncServer, stopFileSyncServer, getDefaultLocalSharePath } from '../sync/file-sync-server'
 import { getLanIps, getLanIp } from '../lib/network'
+
+// ── PIN reset code store ─────────────────────────────────────────────────────
+
+/** In-memory, single-use, time-limited codes for email-based PIN reset. */
+interface ResetCode {
+  code: string
+  staffId: string
+  expiresAt: number // epoch ms
+}
+const resetCodeStore = new Map<string, ResetCode>() // keyed by staffId
+
+function generateResetCode(): string {
+  // 6-digit numeric code
+  return String(Math.floor(100000 + Math.random() * 900000))
+}
 
 // ── Role enforcement ────────────────────────────────────────────────────────
 
@@ -270,6 +285,84 @@ export function registerIpcHandlers(): void {
     } catch (err) {
       console.error('[STAFF_RESET_PIN] unexpected error:', err)
       return { ok: false, error: 'An unexpected error occurred during PIN reset' }
+    }
+  })
+
+  /**
+   * Send a 6-digit reset code to the staff member's registered email address.
+   * The code is valid for 15 minutes and is single-use.
+   * Does NOT require an active session — callable from the login screen.
+   */
+  ipcMain.handle(IPC.STAFF_SEND_RESET_CODE, async (_e, staffId: string) => {
+    try {
+      if (!staffId) return { ok: false, error: 'Missing staff ID' }
+      const allStaff = staffService.list()
+      const target = allStaff.find((s) => s.id === staffId)
+      if (!target) return { ok: false, error: 'Staff member not found' }
+      if (!target.email) {
+        return { ok: false, error: `No email address on file for ${target.firstName}. Ask your system administrator to add one in Staff settings.` }
+      }
+
+      const code = generateResetCode()
+      const expiresAt = Date.now() + 15 * 60 * 1000 // 15 minutes
+      resetCodeStore.set(staffId, { code, staffId, expiresAt })
+
+      const storeName = settingsService.get('storeName') ?? 'Kinetix POS'
+      const result = await sendGenericEmail(
+        target.email,
+        `${storeName} — PIN Reset Code`,
+        `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px">
+          <h2 style="color:#1e293b;margin-bottom:8px">PIN Reset Request</h2>
+          <p style="color:#475569">Hi ${target.firstName}, your PIN reset code for <strong>${storeName}</strong> is:</p>
+          <div style="font-size:42px;font-weight:900;letter-spacing:12px;color:#2563eb;text-align:center;padding:24px 0">${code}</div>
+          <p style="color:#64748b;font-size:14px">This code expires in <strong>15 minutes</strong> and can only be used once.</p>
+          <p style="color:#64748b;font-size:14px">If you did not request this reset, no action is needed — the code will expire automatically.</p>
+        </div>`
+      )
+      if (!result.success) return { ok: false, error: result.error ?? 'Failed to send email' }
+
+      // Mask email for display: ma***@example.com
+      const [user, domain] = target.email.split('@')
+      const maskedEmail = `${user.slice(0, 2)}***@${domain}`
+      return { ok: true, maskedEmail }
+    } catch (err) {
+      console.error('[STAFF_SEND_RESET_CODE]', err)
+      return { ok: false, error: 'Failed to send reset email' }
+    }
+  })
+
+  /**
+   * Verify the 6-digit code and reset the PIN if valid.
+   * Code must not be expired and must match exactly. It is deleted on first use.
+   */
+  ipcMain.handle(IPC.STAFF_VERIFY_RESET_CODE, (_e, input: {
+    staffId: string
+    code: string
+    newPin: string
+  }) => {
+    try {
+      if (!input.staffId || !input.code || !input.newPin) {
+        return { ok: false, error: 'Missing required fields' }
+      }
+      if (input.newPin.length !== 4 || !/^\d{4}$/.test(input.newPin)) {
+        return { ok: false, error: 'New PIN must be exactly 4 digits' }
+      }
+      const stored = resetCodeStore.get(input.staffId)
+      if (!stored) return { ok: false, error: 'No reset code found. Please request a new one.' }
+      if (Date.now() > stored.expiresAt) {
+        resetCodeStore.delete(input.staffId)
+        return { ok: false, error: 'Reset code has expired. Please request a new one.' }
+      }
+      if (input.code.trim() !== stored.code) {
+        return { ok: false, error: 'Incorrect code. Please try again.' }
+      }
+      // Single-use: delete immediately after successful verification
+      resetCodeStore.delete(input.staffId)
+      staffService.update(input.staffId, { pin: input.newPin })
+      return { ok: true }
+    } catch (err) {
+      console.error('[STAFF_VERIFY_RESET_CODE]', err)
+      return { ok: false, error: 'An unexpected error occurred' }
     }
   })
 

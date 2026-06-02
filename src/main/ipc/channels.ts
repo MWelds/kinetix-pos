@@ -64,6 +64,8 @@ export const IPC = {
   STAFF_AUTH: 'staff:auth',
   STAFF_LOGOUT: 'staff:logout',
   STAFF_RESET_PIN: 'staff:resetPin',
+  STAFF_SEND_RESET_CODE: 'staff:sendResetCode',
+  STAFF_VERIFY_RESET_CODE: 'staff:verifyResetCode',
 
   // Shifts
   SHIFTS_OPEN: 'shifts:open',

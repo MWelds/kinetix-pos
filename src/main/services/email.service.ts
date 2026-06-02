@@ -127,6 +127,32 @@ export async function sendInvoiceEmail(
 }
 
 /**
+ * Send a generic transactional email (e.g. PIN reset codes).
+ * Uses the SMTP settings configured in the DB.
+ */
+export async function sendGenericEmail(
+  to: string,
+  subject: string,
+  htmlBody: string
+): Promise<EmailResult> {
+  try {
+    const cfg = loadSmtpConfig()
+    if (!cfg) return { success: false, error: 'Email is not configured. Set up SMTP in Settings.' }
+    const transporter = buildTransporter(cfg)
+    await transporter.sendMail({
+      from: `"${cfg.fromName}" <${cfg.fromAddress}>`,
+      to,
+      subject,
+      html: htmlBody,
+    })
+    return { success: true }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return { success: false, error: msg }
+  }
+}
+
+/**
  * Test SMTP connection using the provided config (not from DB — for the Settings test button).
  */
 export async function testSmtpConnection(cfg: SmtpConfig): Promise<EmailResult> {

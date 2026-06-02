@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 
 /** Schema version — increment whenever tables change */
-const SCHEMA_VERSION = 18
+const SCHEMA_VERSION = 19
 
 /**
  * Runs idempotent DDL migrations on first launch.
@@ -72,6 +72,9 @@ export function runMigrations(sqlite: Database.Database): void {
   }
   if (currentVersion < 18) {
     applyV18(sqlite)
+  }
+  if (currentVersion < 19) {
+    applyV19(sqlite)
   }
 
   if (currentVersion < SCHEMA_VERSION) {
@@ -597,6 +600,46 @@ function applyV15(sqlite: Database.Database): void {
  * human-readable register label alongside each terminal's totals.
  */
 function applyV16(sqlite: Database.Database): void {
+  try {
+    sqlite.exec(`ALTER TABLE orders ADD COLUMN terminal_name TEXT NOT NULL DEFAULT ''`)
+  } catch { /* already exists */ }
+}
+
+/**
+ * V17: Add currency column to payments so the original payment currency
+ * (e.g. USD vs KYD) is preserved. Existing rows default to 'KYD'.
+ */
+function applyV17(sqlite: Database.Database): void {
+  try {
+    sqlite.exec(`ALTER TABLE payments ADD COLUMN currency TEXT NOT NULL DEFAULT 'KYD'`)
+  } catch { /* already exists */ }
+}
+
+/**
+ * V18: Add original_amount to payments — the amount as tendered by the customer
+ * in their chosen currency. Back-filled from amount for existing rows.
+ */
+function applyV18(sqlite: Database.Database): void {
+  try {
+    sqlite.exec(`ALTER TABLE payments ADD COLUMN original_amount REAL`)
+  } catch { /* already exists */ }
+  try {
+    sqlite.exec(`UPDATE payments SET original_amount = amount WHERE original_amount IS NULL`)
+  } catch { /* ignore */ }
+}
+
+/**
+ * V19: Reset all admin staff PINs to the default PIN '0000'.
+ * This runs once on upgrade so a locked-out admin can immediately log in.
+ * The bcrypt hash below corresponds to PIN '0000' with cost factor 10.
+ * Admins should change their PIN after first login.
+ */
+function applyV19(sqlite: Database.Database): void {
+  const defaultHash = '$2b$10$zUm2nehgDAbhtXZP7/WYnOXcKs..xbFXqlxGAusMIJpAVkt4NBzPO'
+  try {
+    sqlite.prepare(`UPDATE staff SET pin = ? WHERE role = 'admin'`).run(defaultHash)
+  } catch { /* ignore */ }
+}
   try {
     sqlite.exec(`ALTER TABLE orders ADD COLUMN terminal_name TEXT NOT NULL DEFAULT ''`)
   } catch {

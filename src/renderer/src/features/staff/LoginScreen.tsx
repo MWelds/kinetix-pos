@@ -9,7 +9,7 @@ import { ROUTES } from '../../constants'
 
 // ─── Forgot PIN modal ─────────────────────────────────────────────────────────
 
-type ResetStep = 'select' | 'authorize' | 'newpin' | 'done'
+type ResetStep = 'select' | 'authorize' | 'emailcode' | 'newpin' | 'done'
 
 interface StaffListItem {
   id: string
@@ -30,6 +30,9 @@ function ForgotPinModal({ onClose }: { onClose: () => void }) {
   /** When true, the "adminPin" field holds the sync API key for emergency recovery. */
   const [useRecoveryKey, setUseRecoveryKey] = useState(false)
   const [recoveryKey, setRecoveryKey] = useState('')
+  const [maskedEmail, setMaskedEmail] = useState('')
+  const [emailCode, setEmailCode] = useState('')
+  const [sendingCode, setSendingCode] = useState(false)
 
   useEffect(() => {
     api.staff.list().then((list) => setStaffList(list as StaffListItem[])).catch(() => {})
@@ -50,6 +53,26 @@ function ForgotPinModal({ onClose }: { onClose: () => void }) {
       setConfirmPin((p) => p + digit)
     }
     setError('')
+  }
+
+  async function handleSendCode() {
+    if (!selectedStaff) return
+    setSendingCode(true)
+    setError('')
+    try {
+      const result = await api.staff.sendResetCode(selectedStaff.id)
+      if (!result.ok) { setError(result.error ?? 'Failed to send code'); return }
+      setMaskedEmail(result.maskedEmail ?? '')
+      setStep('emailcode')
+    } catch { setError('Failed to send reset email') }
+    finally { setSendingCode(false) }
+  }
+
+  function handleVerifyCode() {
+    // Just validate format locally — the code is verified + PIN set atomically in handleReset
+    if (emailCode.trim().length !== 6) { setError('Enter the 6-digit code from your email'); return }
+    setError('')
+    setStep('newpin')
   }
 
   async function handleAuthorize() {
@@ -84,13 +107,17 @@ function ForgotPinModal({ onClose }: { onClose: () => void }) {
     setLoading(true)
     setError('')
     try {
-      const credential = useRecoveryKey ? recoveryKey.trim() : adminPin
-      const result = await api.staff.resetPin({
-        staffId: selectedStaff.id,
-        adminPin: credential,
-        newPin,
-        useRecoveryKey,
-      })
+      let result: { ok: boolean; error?: string }
+
+      if (emailCode) {
+        // Email code path: verify code + set PIN atomically
+        result = await api.staff.verifyResetCode({ staffId: selectedStaff.id, code: emailCode.trim(), newPin })
+      } else {
+        // Manager PIN or recovery key path
+        const credential = useRecoveryKey ? recoveryKey.trim() : adminPin
+        result = await api.staff.resetPin({ staffId: selectedStaff.id, adminPin: credential, newPin, useRecoveryKey })
+      }
+
       if (!result.ok) { setError(result.error ?? 'Reset failed'); return }
       setStep('done')
     } catch { setError('Reset failed') }
@@ -137,6 +164,7 @@ function ForgotPinModal({ onClose }: { onClose: () => void }) {
             <p className="text-xs text-gray-500">
               {step === 'select'    && 'Who needs a PIN reset?'}
               {step === 'authorize' && 'Manager authorization required'}
+              {step === 'emailcode' && 'Check your email for the code'}
               {step === 'newpin'    && `Set new PIN for ${selectedStaff?.firstName}`}
               {step === 'done'      && 'PIN updated successfully'}
             </p>
@@ -187,13 +215,23 @@ function ForgotPinModal({ onClose }: { onClose: () => void }) {
                 <Button className="w-full mt-4" disabled={adminPin.length !== 4 || loading} loading={loading} onClick={handleAuthorize}>
                   Authorize
                 </Button>
-                <button
-                  type="button"
-                  onClick={() => { setUseRecoveryKey(true); setAdminPin(''); setError('') }}
-                  className="mt-3 w-full text-xs text-gray-400 hover:text-blue-600 transition-colors"
-                >
-                  No manager available? Use recovery key instead
-                </button>
+                <div className="mt-3 flex flex-col gap-1.5">
+                  <button
+                    type="button"
+                    onClick={handleSendCode}
+                    disabled={sendingCode}
+                    className="w-full text-xs text-gray-400 hover:text-blue-600 transition-colors disabled:opacity-50"
+                  >
+                    {sendingCode ? 'Sending…' : '📧 Send reset code to email instead'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setUseRecoveryKey(true); setAdminPin(''); setError('') }}
+                    className="w-full text-xs text-gray-400 hover:text-blue-600 transition-colors"
+                  >
+                    No manager available? Use recovery key instead
+                  </button>
+                </div>
               </>
             ) : (
               <>
@@ -222,6 +260,39 @@ function ForgotPinModal({ onClose }: { onClose: () => void }) {
                 </button>
               </>
             )}
+          </div>
+        )}
+
+        {/* Step 2b — enter email code */}
+        {step === 'emailcode' && (
+          <div>
+            <p className="text-sm text-gray-600 mb-3 text-center">
+              A 6-digit code was sent to <span className="font-semibold text-gray-800">{maskedEmail}</span>.
+              Enter it below to continue.
+            </p>
+            <input
+              type="text"
+              inputMode="numeric"
+              maxLength={6}
+              autoFocus
+              value={emailCode}
+              onChange={(e) => { setEmailCode(e.target.value.replace(/\D/g, '')); setError('') }}
+              placeholder="000000"
+              className="w-full text-center text-2xl font-bold tracking-[0.5em] border-2 border-gray-300 rounded-xl px-3 py-4 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+              onKeyDown={(e) => { if (e.key === 'Enter') handleVerifyCode() }}
+            />
+            <p className="text-xs text-gray-400 text-center mt-2">Code expires in 15 minutes</p>
+            <Button className="w-full mt-4" disabled={emailCode.length !== 6 || loading} loading={loading} onClick={handleVerifyCode}>
+              Verify Code
+            </Button>
+            <button
+              type="button"
+              onClick={() => { setSendingCode(false); handleSendCode() }}
+              disabled={sendingCode}
+              className="mt-2 w-full text-xs text-gray-400 hover:text-blue-600 disabled:opacity-50 transition-colors"
+            >
+              {sendingCode ? 'Sending…' : 'Resend code'}
+            </button>
           </div>
         )}
 
@@ -266,16 +337,11 @@ function ForgotPinModal({ onClose }: { onClose: () => void }) {
           <button type="button"
             onClick={() => {
               if (step === 'authorize') {
-                setStep('select')
-                setAdminPin('')
-                setRecoveryKey('')
-                setUseRecoveryKey(false)
-                setError('')
+                setStep('select'); setAdminPin(''); setRecoveryKey(''); setUseRecoveryKey(false); setEmailCode(''); setError('')
+              } else if (step === 'emailcode') {
+                setStep('authorize'); setEmailCode(''); setError('')
               } else if (step === 'newpin') {
-                setStep('authorize')
-                setNewPin('')
-                setConfirmPin('')
-                setError('')
+                setStep(emailCode ? 'emailcode' : 'authorize'); setNewPin(''); setConfirmPin(''); setError('')
               } else {
                 onClose()
               }

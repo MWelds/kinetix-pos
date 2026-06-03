@@ -548,5 +548,48 @@ export const productService = {
     db.delete(schema.categories)
       .where(eq(schema.categories.id, id))
       .run()
+  },
+
+  // ── Variants ────────────────────────────────────────────────────────────────
+
+  listVariants(productId: string) {
+    const db = getDatabase()
+    return db.select().from(schema.productVariants)
+      .where(eq(schema.productVariants.productId, productId))
+      .orderBy(schema.productVariants.name)
+      .all()
+  },
+
+  createVariant(productId: string, input: {
+    name: string; sku: string; barcode?: string; priceModifier?: number; isActive?: boolean
+  }) {
+    const db = getDatabase()
+    const id = generateId()
+    const now = new Date().toISOString()
+    db.insert(schema.productVariants)
+      .values({
+        id, productId,
+        name: input.name,
+        sku: input.sku,
+        barcode: input.barcode ?? null,
+        priceModifier: input.priceModifier ?? 0,
+        isActive: input.isActive ?? true,
+        createdAt: now, updatedAt: now
+      })
+      .run()
+    return db.select().from(schema.productVariants)
+      .where(eq(schema.productVariants.id, id)).get()
+  },
+
+  updateVariant(variantId: string, input: {
+    name?: string; sku?: string; barcode?: string; priceModifier?: number; isActive?: boolean
+  }) {
+    const db = getDatabase()
+    db.update(schema.productVariants)
+      .set({ ...input, updatedAt: new Date().toISOString() })
+      .where(eq(schema.productVariants.id, variantId))
+      .run()
+    return db.select().from(schema.productVariants)
+      .where(eq(schema.productVariants.id, variantId)).get()
   }
 }

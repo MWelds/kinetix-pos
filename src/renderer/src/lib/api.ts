@@ -332,15 +332,6 @@ export const api = {
     discover: (): Promise<string[]> => bridge.sync.discover()
   },
 
-  adminServer: {
-    start: (): Promise<{ running: boolean; port: number; ip: string; token: string }> =>
-      bridge.adminServer.start(),
-    stop: (): Promise<{ running: boolean; port: number; ip: string; token: string }> =>
-      bridge.adminServer.stop(),
-    status: (): Promise<{ running: boolean; port: number; ip: string; token: string }> =>
-      bridge.adminServer.status()
-  },
-
   fileSync: {
     getState: (): Promise<unknown> => bridge.fileSync.getState(),
     runNow: (): Promise<{ ok: boolean; error?: string }> => bridge.fileSync.runNow(),

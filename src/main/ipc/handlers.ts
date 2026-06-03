@@ -29,6 +29,8 @@ import { qboService } from '../services/qbo.service'
 import { exportService } from '../services/export.service'
 import { csvImportExportService } from '../services/csv-import-export.service'
 import { vendorService } from '../services/vendor.service'
+import { discountService } from '../services/discount.service'
+import { giftCardService } from '../services/gift-card.service'
 import { getSyncState, runSync, testConnection, startSyncLoop, stopSyncLoop, onSyncStateChange } from '../sync/sync.service'
 import { startEmbeddedServer, stopEmbeddedServer, getEmbeddedServerStatus } from '../sync/embedded-server'
 import {
@@ -992,6 +994,40 @@ export function registerIpcHandlers(): void {
     BrowserWindow.getAllWindows().forEach((w) => {
       if (!w.isDestroyed()) w.webContents.send(IPC.FILE_SYNC_STATE_PUSH, state)
     })
+  })
+
+  // ── Product Variants ────────────────────────────────────────────────────────
+  ipcMain.handle(IPC.VARIANTS_LIST, (_e, productId: string) =>
+    productService.listVariants(productId)
+  )
+  ipcMain.handle(IPC.VARIANTS_CREATE, (e, productId: string, input: unknown) => {
+    requireRole(e, 'manager')
+    return productService.createVariant(productId, input)
+  })
+  ipcMain.handle(IPC.VARIANTS_UPDATE, (e, variantId: string, input: unknown) => {
+    requireRole(e, 'manager')
+    return productService.updateVariant(variantId, input)
+  })
+
+  // ── Discounts ───────────────────────────────────────────────────────────────
+  ipcMain.handle(IPC.DISCOUNTS_LIST, () => discountService.list())
+  ipcMain.handle(IPC.DISCOUNTS_CREATE, (e, input: unknown) => {
+    requireRole(e, 'manager')
+    return discountService.create(input)
+  })
+  ipcMain.handle(IPC.DISCOUNTS_UPDATE, (e, id: string, input: unknown) => {
+    requireRole(e, 'manager')
+    return discountService.update(id, input)
+  })
+  ipcMain.handle(IPC.DISCOUNTS_VALIDATE_COUPON, (_e, code: string, orderTotal: number) =>
+    discountService.validateCoupon(code, orderTotal)
+  )
+
+  // ── Gift Cards ──────────────────────────────────────────────────────────────
+  ipcMain.handle(IPC.GIFT_CARDS_GET, (_e, code: string) => giftCardService.getByCode(code))
+  ipcMain.handle(IPC.GIFT_CARDS_CREATE, (e, input: unknown) => {
+    requireRole(e, 'manager')
+    return giftCardService.create(input)
   })
 
 }

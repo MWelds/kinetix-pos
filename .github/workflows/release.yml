@@ -37,7 +37,7 @@ jobs:
       - name: Create GitHub Release and upload artifacts
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"
@@ -56,8 +56,10 @@ jobs:
           Run the Setup installer and follow the prompts. The app works fully offline." \
             --latest || echo "Release may already exist — continuing to upload assets"
 
-          # Upload all .exe artifacts from dist/
+          # Upload installers, blockmap, and latest.yml (required for auto-update)
           gh release upload "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --clobber \
-            dist/*.exe
+            dist/*.exe \
+            dist/*.blockmap \
+            dist/latest.yml

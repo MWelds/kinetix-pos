@@ -88,7 +88,9 @@ function buildEodReceiptHtml(
   cfg: CurrencyConfig,
   vendorPayables: VendorPayable[],
   terminals: TerminalSummary[],
-  closingNote?: string
+  closingNote?: string,
+  openingFloat?: number,
+  closingFloatAmt?: number
 ): string {
   const now = new Date().toLocaleString()
   const primarySym = currencySymbol(cfg.primary)
@@ -186,6 +188,13 @@ function buildEodReceiptHtml(
     ${currencyTotals}
     <div class="row variance"><span>Variance</span><span>${variance >= 0 ? '+' : ''}${fmt(variance)}</span></div>
     ${vendorSection}
+    ${(closingFloatAmt != null && closingFloatAmt >= 0) ? `
+    <hr/>
+    <div class="section">Cash Reconciliation</div>
+    ${openingFloat != null && openingFloat > 0 ? `<div class="row"><span class="label">Opening float</span><span>${fmt(openingFloat)}</span></div>` : ''}
+    <div class="row"><span class="label">Float left in drawer</span><span>${fmt(closingFloatAmt)}</span></div>
+    <div class="row bold"><span>Cash to Deposit</span><span>${fmt(Math.max(0, countedPrimary - closingFloatAmt))}</span></div>
+    ` : ''}
     ${closingNote ? `<hr/><div style="font-size:11px;color:#555;word-break:break-word"><strong>Note:</strong> ${esc(closingNote)}</div>` : ''}
     <hr/>
     <div class="center meta">Have a great evening!</div>
@@ -253,7 +262,7 @@ function buildEntries(
 }
 
 export function EndOfDayModal({ isOpen, onClose }: Props) {
-  const { staff, shift, logout } = useAuthStore()
+  const { staff, shift, logout, setShift } = useAuthStore()
   const { currency: primaryCurrency, kydToUsdRate, altCurrency } = useCurrencyStore()
   const secondaryCurrency = altCurrency()
   const navigate = useNavigate()
@@ -276,6 +285,8 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
   const [enabledMethods, setEnabledMethods] = useState<string[]>(['cash', 'card'])
   /** Optional free-text note attached to this shift close */
   const [closingNote, setClosingNote] = useState('')
+  /** Cash float to leave in the drawer for the next shift */
+  const [closingFloat, setClosingFloat] = useState('')
 
   // Reset and load when opened
   useEffect(() => {
@@ -286,6 +297,8 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
     setVendorPayables([])
     setTerminals([])
     setClosingNote('')
+    // Pre-fill closing float with the opening cash amount from this shift
+    setClosingFloat(shift?.openingCash != null && shift.openingCash > 0 ? String(shift.openingCash) : '')
 
     // Load store settings first, then immediately load summary so the
     // cash-count inputs are real state-backed fields from the start.
@@ -381,6 +394,13 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
   const variance = totalCountedPrimary - totalExpectedPrimary
   const variancePositive = variance >= 0
 
+  const closingFloatAmount = parseFloat(closingFloat) || 0
+  /** Cash collected = total counted cash − float left in drawer */
+  const cashOnlyCounted = entries
+    .filter((e) => e.method === 'cash')
+    .reduce((s, e) => s + (toPrimary(parseFloat(e.counted) || 0, e.currency)), 0)
+  const cashToDeposit = Math.max(0, cashOnlyCounted - closingFloatAmount)
+
   const primarySym = currencySymbol(primaryCurrency)
 
   /** Whether to show the per-terminal breakdown (only meaningful when 2+ registers) */
@@ -393,7 +413,9 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
       const openedAt = shift?.openedAt ?? new Date().toISOString()
       const html = buildEodReceiptHtml(
         storeName, summary, entries, openedAt, currencyCfg,
-        vendorPayables, terminals, closingNote || undefined
+        vendorPayables, terminals, closingNote || undefined,
+        (shift?.openingCash as number) ?? 0,
+        closingFloatAmount
       )
       const result = await api.receipt.print(html)
       if (!result?.success) throw new Error('Print returned failure')
@@ -437,6 +459,7 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
       if (shift) {
         await api.shifts.close(shift.id, totalCountedPrimary, buildCloseNote(), staff?.id)
       }
+      setShift(null)  // clear shift from auth store so UI reflects it as closed
       onClose()
     } finally {
       setClosing(false)
@@ -507,11 +530,17 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
               </div>
 
               {shift && (
-                <div className="bg-gray-50 rounded-xl p-4 text-sm">
+                <div className="bg-gray-50 rounded-xl p-4 text-sm space-y-1.5">
                   <div className="flex justify-between text-gray-600">
                     <span>Shift opened</span>
                     <span className="font-medium text-gray-900">{new Date(shift.openedAt).toLocaleTimeString()}</span>
                   </div>
+                  {(shift.openingCash ?? 0) > 0 && (
+                    <div className="flex justify-between text-gray-600">
+                      <span>Opening float</span>
+                      <span className="font-medium text-gray-900">{primarySym}{(shift.openingCash as number).toFixed(2)}</span>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -847,6 +876,36 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                   </div>
                 </div>
               )}
+
+              {/* Closing float + cash to deposit */}
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-blue-800 mb-1.5">
+                    Float to leave in drawer
+                    <span className="text-blue-500 font-normal ml-1">(pre-filled from opening amount)</span>
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">{primarySym}</span>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0.00"
+                      value={closingFloat}
+                      onChange={(e) => setClosingFloat(e.target.value)}
+                      className="w-full pl-8 pr-3 py-2.5 border border-blue-300 rounded-xl text-sm font-semibold text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-between items-center pt-1 border-t border-blue-200">
+                  <div>
+                    <p className="text-sm font-bold text-blue-900">Cash to Deposit</p>
+                    <p className="text-xs text-blue-600">Cash counted − float</p>
+                  </div>
+                  <p className="text-xl font-bold text-blue-900">
+                    {primarySym}{cashToDeposit.toFixed(2)}
+                  </p>
+                </div>
+              </div>
 
               {!variancePositive && Math.abs(variance) > 1 && (
                 <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">

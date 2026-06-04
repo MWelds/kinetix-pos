@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import bcrypt from 'bcryptjs'
 
 /** Schema version — increment whenever tables change */
-const SCHEMA_VERSION = 21
+const SCHEMA_VERSION = 22
 
 /**
  * Runs idempotent DDL migrations on first launch.
@@ -82,6 +82,11 @@ export function runMigrations(sqlite: Database.Database): void {
   // V21 heals any staff whose PIN was left as a bcrypt hash by V19/V20 by
   // re-hashing them to the correct SHA-256+salt format used by the auth system.
   if (currentVersion < 21) {
+    applyV21(sqlite)
+  }
+  // V22 re-runs V21 with the corrected substr() query — machines that already ran
+  // V21 had their PINs silently left broken due to the $2% named-parameter bug.
+  if (currentVersion < 22) {
     applyV21(sqlite)
   }
 
@@ -692,9 +697,11 @@ function applyV21(sqlite: Database.Database): void {
     const sha256of0000 = createHash('sha256').update(salt + '0000').digest('hex')
     const now = new Date().toISOString()
 
-    // Fix any staff member whose PIN is a bcrypt hash (starts with '$2')
+    // Fix any staff member whose PIN is a bcrypt hash (starts with '$2').
+    // Use a bound parameter for the pattern — '$2%' as a literal in SQLite is
+    // misinterpreted as a named parameter by better-sqlite3, causing no rows to match.
     const brokenStaff = sqlite.prepare(
-      `SELECT id FROM staff WHERE pin LIKE '$2%' AND (deleted_at IS NULL OR deleted_at = '')`
+      `SELECT id FROM staff WHERE substr(pin, 1, 2) = '$2' AND (deleted_at IS NULL OR deleted_at = '')`
     ).all() as { id: string }[]
 
     for (const row of brokenStaff) {

@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import bcrypt from 'bcryptjs'
 
 /** Schema version — increment whenever tables change */
-const SCHEMA_VERSION = 20
+const SCHEMA_VERSION = 21
 
 /**
  * Runs idempotent DDL migrations on first launch.
@@ -77,8 +77,12 @@ export function runMigrations(sqlite: Database.Database): void {
   if (currentVersion < 19) {
     applyV19(sqlite)
   }
-  if (currentVersion < 20) {
-    applyV19(sqlite) // Re-run with correct bcryptjs hash in case V19 used bad Python hash
+  // V20 previously called applyV19 again which re-ran the bcrypt PIN reset on every
+  // machine upgrading past V19. This was a bug — applyV19 is removed from V20.
+  // V21 heals any staff whose PIN was left as a bcrypt hash by V19/V20 by
+  // re-hashing them to the correct SHA-256+salt format used by the auth system.
+  if (currentVersion < 21) {
+    applyV21(sqlite)
   }
 
   if (currentVersion < SCHEMA_VERSION) {
@@ -656,5 +660,52 @@ function applyV19(sqlite: Database.Database): void {
     sqlite.prepare(`UPDATE staff SET pin = ? WHERE role = 'admin'`).run(hash)
   } catch (err) {
     console.error('[V19] Failed to reset admin PIN:', err)
+  }
+}
+
+/**
+ * V21: Fix PINs broken by V19/V20 calling bcrypt incorrectly.
+ *
+ * V19 and an erroneous V20 call reset admin PINs to bcrypt hashes of '0000'.
+ * The app's auth system uses SHA-256 + per-installation salt, not bcrypt, so
+ * those hashes never match and admins are locked out after every upgrade.
+ *
+ * This migration detects bcrypt-hashed PINs (they start with '$2') for ALL
+ * staff roles and re-hashes them to SHA-256('0000') using the correct system.
+ * Staff should change their PIN after logging in with '0000'.
+ */
+function applyV21(sqlite: Database.Database): void {
+  try {
+    const { createHash, randomBytes } = require('crypto') as typeof import('crypto')
+
+    // Get or create the per-installation PIN salt
+    const saltRow = sqlite.prepare(`SELECT value FROM settings WHERE key = 'pinSalt'`).get() as { value: string } | undefined
+    let salt: string
+    if (saltRow?.value) {
+      salt = saltRow.value
+    } else {
+      salt = randomBytes(32).toString('hex')
+      sqlite.prepare(`INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES ('pinSalt', ?, ?)`)
+        .run(salt, new Date().toISOString())
+    }
+
+    const sha256of0000 = createHash('sha256').update(salt + '0000').digest('hex')
+    const now = new Date().toISOString()
+
+    // Fix any staff member whose PIN is a bcrypt hash (starts with '$2')
+    const brokenStaff = sqlite.prepare(
+      `SELECT id FROM staff WHERE pin LIKE '$2%' AND (deleted_at IS NULL OR deleted_at = '')`
+    ).all() as { id: string }[]
+
+    for (const row of brokenStaff) {
+      sqlite.prepare(`UPDATE staff SET pin = ?, updated_at = ? WHERE id = ?`)
+        .run(sha256of0000, now, row.id)
+    }
+
+    if (brokenStaff.length > 0) {
+      console.log(`[V21] Fixed ${brokenStaff.length} staff PIN(s) — PIN reset to 0000. Staff should update their PIN after logging in.`)
+    }
+  } catch (err) {
+    console.error('[V21] Failed to fix bcrypt PINs:', err)
   }
 }

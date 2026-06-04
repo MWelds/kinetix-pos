@@ -137,8 +137,14 @@ export function ProductGrid() {
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Enter' && barcodeBuffer.current.length > 3) {
+        // Prevent the Enter key from also activating any currently-focused
+        // product card button — without this, clicking a card then scanning
+        // would add both the focused card AND the scanned product.
+        e.preventDefault()
         const code = barcodeBuffer.current
         barcodeBuffer.current = ''
+        // Blur the focused element so the card doesn't re-fire on next Enter
+        ;(document.activeElement as HTMLElement)?.blur()
         api.products.byBarcode(code).then((product) => {
           if (product) {
             handleAddProduct(product)

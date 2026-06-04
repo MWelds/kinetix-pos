@@ -1,6 +1,6 @@
 {
   "name": "kinetix-pos",
-  "version": "1.0.96",
+  "version": "1.0.97",
   "description": "Offline-first Point of Sale system for Windows",
   "main": "./out/main/index.js",
   "scripts": {
@@ -62,7 +62,7 @@
       ],
       "icon": "build/icon.ico",
       "requestedExecutionLevel": "asInvoker",
-      "artifactName": "${productName}-${version}-Setup.${ext}"
+      "artifactName": "Kinetix-POS-${version}-Setup.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -80,7 +80,7 @@
       "deleteAppDataOnUninstall": false
     },
     "portable": {
-      "artifactName": "${productName}-${version}-Portable.${ext}"
+      "artifactName": "Kinetix-POS-${version}-Portable.${ext}"
     },
     "publish": {
       "provider": "github",

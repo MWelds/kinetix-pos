@@ -128,13 +128,27 @@ function buildEodReceiptHtml(
     </div>`
   }).join('')
 
-  // Currency totals
+  // Currency totals (cash drawer)
   const currencies = [...new Set(entries.map((e) => e.currency))]
   const currencyTotals = currencies.map((cur) => {
     const sym = esc(currencySymbol(cur))
     const counted = entries.filter((e) => e.currency === cur).reduce((s, e) => s + (parseFloat(e.counted) || 0), 0)
-    return `<div class="row bold"><span>${esc(cur)} Total Counted</span><span>${sym}${counted.toFixed(2)}</span></div>`
+    return `<div class="row bold"><span>${esc(cur)} Cash Counted</span><span>${sym}${counted.toFixed(2)}</span></div>`
   }).join('')
+
+  // Sales breakdown by currency and method
+  const allCurrencies = [...new Set(summary.paymentRows.map((r) => r.currency))]
+  const salesByCurrency = allCurrencies.map((cur) => {
+    const sym = esc(currencySymbol(cur))
+    const cashTotal = summary.paymentRows.filter((r) => r.method === 'cash' && r.currency === cur).reduce((s, r) => s + r.originalTotal, 0)
+    const cardTotal = summary.paymentRows.filter((r) => r.method === 'card' && r.currency === cur).reduce((s, r) => s + r.originalTotal, 0)
+    const total = summary.paymentRows.filter((r) => r.currency === cur).reduce((s, r) => s + r.originalTotal, 0)
+    return `
+      <div class="section">${esc(cur)} Sales</div>
+      <div class="row"><span class="label">Cash</span><span>${sym}${cashTotal.toFixed(2)}</span></div>
+      <div class="row"><span class="label">Card</span><span>${sym}${cardTotal.toFixed(2)}</span></div>
+      <div class="row bold"><span>Total ${esc(cur)}</span><span>${sym}${total.toFixed(2)}</span></div>`
+  }).join('<hr/>')
 
   const totalVendorCogs = vendorPayables.reduce((s, v) => s + v.cogsToday, 0)
   const vendorSection = vendorPayables.length > 0
@@ -180,6 +194,8 @@ function buildEodReceiptHtml(
     <div class="row"><span class="label">Orders</span><span>${summary.orderCount}</span></div>
     ${summary.totalDiscount > 0 ? `<div class="row"><span class="label">Discounts</span><span>-${fmt(summary.totalDiscount)}</span></div>` : ''}
     <div class="row big"><span>Net Revenue</span><span>${fmt(summary.totalRevenue)}</span></div>
+    <hr/>
+    ${salesByCurrency}
     ${terminalSection}
     <hr/>
     <div class="section">Reconciliation &mdash; Expected &rarr; Counted</div>
@@ -201,15 +217,20 @@ function buildEodReceiptHtml(
   </body></html>`
 }
 
-/** Build the count-entry rows based on enabled methods × configured currencies */
+/**
+ * Build the count-entry rows for cash reconciliation only.
+ *
+ * Only CASH is included — card payments are processed electronically and are
+ * never physically in the cash drawer, so comparing them to a counted amount
+ * always produces a false "short" variance. Card totals are shown as
+ * informational on the summary screen instead.
+ */
 function buildEntries(
   paymentRows: { method: string; currency: string; total: number; originalTotal: number }[],
   enabledMethods: string[],
   cfg: CurrencyConfig
 ): CountEntry[] {
   const rows: CountEntry[] = []
-  const physicalMethods = enabledMethods.filter((m) => ['cash', 'card'].includes(m))
-  const otherMethods = enabledMethods.filter((m) => !['cash', 'card'].includes(m))
 
   // Sum store-currency totals for a method (primary rows)
   const totalFor = (method: string, currency: string) =>
@@ -219,34 +240,32 @@ function buildEntries(
   const originalTotalFor = (method: string, currency: string) =>
     paymentRows.filter((r) => r.method === method && r.currency === currency).reduce((s, r) => s + r.originalTotal, 0)
 
-  for (const method of physicalMethods) {
-    const methodLabel = METHOD_LABELS[method] ?? method
-
-    // Primary currency entry — expected = store-currency total for primary-currency payments
-    const primExpected = totalFor(method, cfg.primary)
+  // Only reconcile cash — it's the only thing physically in the drawer
+  if (enabledMethods.includes('cash')) {
+    const primExpected = totalFor('cash', cfg.primary)
     rows.push({
-      method,
+      method: 'cash',
       currency: cfg.primary,
-      label: `${methodLabel} (${cfg.primary})`,
+      label: `Cash (${cfg.primary})`,
       counted: '',
       expectedPrimary: primExpected,
     })
 
-    // Secondary currency entry — expected in the secondary currency (original tendered amount)
     if (cfg.secondary) {
-      const secOriginal = originalTotalFor(method, cfg.secondary)
+      const secOriginal = originalTotalFor('cash', cfg.secondary)
       rows.push({
-        method,
+        method: 'cash',
         currency: cfg.secondary,
-        label: `${methodLabel} (${cfg.secondary})`,
+        label: `Cash (${cfg.secondary})`,
         counted: '',
-        // Store the secondary-currency expected directly as a "primary" for display purposes;
-        // reconciliation converts back to primary when the cashier enters their count.
         expectedPrimary: secOriginal,
       })
     }
   }
 
+  // Non-cash physical methods like store credit / gift cards that may have
+  // a physical component (e.g. a gift card ledger to reconcile)
+  const otherMethods = enabledMethods.filter((m) => m !== 'cash' && m !== 'card')
   for (const method of otherMethods) {
     const expectedPrimary = totalFor(method, cfg.primary)
     rows.push({
@@ -525,8 +544,8 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
           {step === 'cash' && (
             <div className="space-y-5">
               <div>
-                <h3 className="text-sm font-semibold text-gray-900 mb-1">Count your drawer</h3>
-                <p className="text-xs text-gray-500">Enter the physical amount for each payment type and currency. Leave blank if none collected.</p>
+                <h3 className="text-sm font-semibold text-gray-900 mb-1">Count your cash drawer</h3>
+                <p className="text-xs text-gray-500">Enter the total cash in the drawer. Card payments are processed electronically and don't need to be counted.</p>
               </div>
 
               {shift && (
@@ -697,34 +716,64 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                 </div>
               )}
 
-              {/* Payment breakdown from DB */}
-              {summary.paymentRows.length > 0 && (
-                <div className="bg-gray-50 rounded-xl p-4 space-y-2">
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
-                    {isMultiTerminal ? 'Payment Totals (All Registers)' : 'Sales by Payment Method'}
-                  </p>
-                  {summary.paymentRows.map((row) => (
-                    <div key={`${row.method}|${row.currency}`} className="flex items-center justify-between text-sm">
-                      <span className="flex items-center gap-2 text-gray-600">
-                        {row.method === 'cash' ? <DollarSign size={13} /> : <CreditCard size={13} />}
-                        {METHOD_LABELS[row.method] ?? row.method}
-                        <span className="text-xs font-semibold text-gray-400">{row.currency}</span>
-                        <span className="text-xs text-gray-400">×{row.count}</span>
-                      </span>
-                      {/* Show what was actually received in that currency */}
-                      <span className="font-medium text-gray-900">
-                        {CURRENCIES[row.currency]?.symbol ?? row.currency}{row.originalTotal.toFixed(2)}
-                      </span>
+              {/* Payment breakdown — totals in both currencies */}
+              {summary.paymentRows.length > 0 && (() => {
+                const priSym = currencySymbol(primaryCurrency)
+                const secSym = secondaryCurrency ? currencySymbol(secondaryCurrency) : null
+                const sumBy = (method: string | null, currency: string) =>
+                  summary.paymentRows
+                    .filter((r) => (method ? r.method === method : true) && r.currency === currency)
+                    .reduce((s, r) => s + r.originalTotal, 0)
+                const rows = [
+                  { label: 'Total Sales', icon: <TrendingUp size={13} />, bold: true },
+                  { label: 'Cash',        icon: <DollarSign size={13} />,  bold: false },
+                  { label: 'Card',        icon: <CreditCard size={13} />,  bold: false },
+                ]
+                const methodKey = (label: string) =>
+                  label === 'Cash' ? 'cash' : label === 'Card' ? 'card' : null
+                return (
+                  <div className="bg-gray-50 rounded-xl overflow-hidden">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 pt-3 pb-2">
+                      {isMultiTerminal ? 'Payment Totals — All Registers' : 'Sales by Payment Method'}
+                    </p>
+                    {/* Header */}
+                    <div className="grid px-4 pb-1 border-b border-gray-200"
+                      style={{ gridTemplateColumns: secSym ? '1fr auto auto' : '1fr auto' }}>
+                      <span className="text-[10px] font-bold text-gray-400 uppercase"></span>
+                      <span className="text-[10px] font-bold text-gray-400 uppercase text-right w-24">{primaryCurrency}</span>
+                      {secSym && <span className="text-[10px] font-bold text-gray-400 uppercase text-right w-24">{secondaryCurrency}</span>}
                     </div>
-                  ))}
-                  {summary.totalDiscount > 0 && (
-                    <div className="flex items-center justify-between text-sm border-t border-gray-200 pt-2 mt-2">
-                      <span className="text-gray-500">Discounts given</span>
-                      <span className="text-amber-600 font-medium">-{formatCurrency(summary.totalDiscount, primaryCurrency)}</span>
-                    </div>
-                  )}
-                </div>
-              )}
+                    {rows.map(({ label, icon, bold }) => {
+                      const mk = methodKey(label)
+                      const priTotal = sumBy(mk, primaryCurrency)
+                      const secTotal = secSym ? sumBy(mk, secondaryCurrency!) : 0
+                      return (
+                        <div key={label}
+                          className={`grid px-4 py-2 text-sm border-b border-gray-100 last:border-0 ${bold ? 'bg-white font-semibold' : ''}`}
+                          style={{ gridTemplateColumns: secSym ? '1fr auto auto' : '1fr auto' }}>
+                          <span className={`flex items-center gap-2 ${bold ? 'text-gray-900' : 'text-gray-600'}`}>
+                            {icon}{label}
+                          </span>
+                          <span className={`text-right w-24 ${bold ? 'text-gray-900' : 'text-gray-700'}`}>
+                            {priSym}{priTotal.toFixed(2)}
+                          </span>
+                          {secSym && (
+                            <span className={`text-right w-24 ${bold ? 'text-gray-900' : 'text-gray-700'}`}>
+                              {secSym}{secTotal.toFixed(2)}
+                            </span>
+                          )}
+                        </div>
+                      )
+                    })}
+                    {summary.totalDiscount > 0 && (
+                      <div className="flex items-center justify-between text-sm px-4 py-2 border-t border-gray-200">
+                        <span className="text-gray-500">Discounts given</span>
+                        <span className="text-amber-600 font-medium">-{formatCurrency(summary.totalDiscount, primaryCurrency)}</span>
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
 
               {/* Vendor payables */}
               {vendorPayables.length > 0 && (

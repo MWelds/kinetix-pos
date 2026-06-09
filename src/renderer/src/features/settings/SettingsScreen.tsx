@@ -411,6 +411,7 @@ function SyncServerSection({
 }) {
   // ── HTTP sync state ──────────────────────────────────────────────────────────
   const [syncState, setSyncState] = useState<SyncStateShape | null>(null)
+  const [syncV2State, setSyncV2State] = useState<SyncStateShape | null>(null)
   const [testing, setTesting] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [localIps, setLocalIps] = useState<string[]>([])
@@ -430,11 +431,17 @@ function SyncServerSection({
   const nodeMode = settings.nodeMode ?? ''
   /** 'http' (default) | 'file' */
   const syncMode = settings.syncMode ?? 'http'
+  /** '' (legacy v1) | 'v1' | 'v2' */
+  const syncVersion = settings.syncVersion ?? ''
+  const isV2 = syncVersion === 'v2'
 
   // ── Effects ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     api.sync.getState().then(setSyncState).catch(() => {})
     const unsubHttp = api.sync.onStateChange((s: unknown) => setSyncState(s as SyncStateShape))
+
+    api.syncV2.getState().then(setSyncV2State).catch(() => {})
+    const unsubV2 = api.syncV2.onStateChange((s: unknown) => setSyncV2State(s as SyncStateShape))
 
     api.fileSync.getState().then(setFileSyncState).catch(() => {})
     const unsubFile = api.fileSync.onStateChange((s: unknown) => setFileSyncState(s as SyncStateShape))
@@ -444,7 +451,7 @@ function SyncServerSection({
     // Load the server's default local share path so we can display it
     api.fileSync.getLocalSharePath().then(setLocalSharePath).catch(() => {})
 
-    return () => { unsubHttp(); unsubFile() }
+    return () => { unsubHttp(); unsubV2(); unsubFile() }
   }, [])
 
   // Server machines must never run the HTTP sync client
@@ -468,11 +475,16 @@ function SyncServerSection({
         setApiKeyDirty(false)
       }
       const interval = parseInt(settings.syncIntervalSeconds || '30', 10)
-      await api.sync.start(interval)
+      if (isV2) {
+        await api.syncV2.start(interval)
+      } else {
+        await api.sync.start(interval)
+      }
       showToast('Sync enabled — connecting to server…', 'info')
     } else {
       await api.settings.set('syncEnabled', 'false')
       await api.sync.stop()
+      await api.syncV2.stop()
       showToast('Sync disabled', 'info')
     }
   }
@@ -490,13 +502,50 @@ function SyncServerSection({
   async function handleSyncNow() {
     setSyncing(true)
     try {
-      await api.sync.runNow()
+      if (isV2) {
+        await api.syncV2.runNow()
+      } else {
+        await api.sync.runNow()
+      }
       showToast('Sync complete', 'success')
     } catch {
       showToast('Sync failed — check error below', 'error')
     } finally {
       setSyncing(false)
     }
+  }
+
+  async function handleForceFullSync() {
+    setSyncing(true)
+    try {
+      if (isV2) {
+        await api.syncV2.forceFull()
+      } else {
+        await api.sync.forceFull()
+      }
+      showToast('Full resync complete — all products, inventory and settings pulled from server', 'success')
+    } catch {
+      showToast('Full resync failed — check connection', 'error')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  async function handleSyncVersionChange(version: 'v1' | 'v2') {
+    field('syncVersion')(version)
+    await api.settings.set('syncVersion', version)
+    // Stop whichever protocol is running and restart with the selected one
+    await api.sync.stop()
+    await api.syncV2.stop()
+    if (enabled && nodeMode !== 'server') {
+      const interval = parseInt(settings.syncIntervalSeconds || '30', 10)
+      if (version === 'v2') {
+        await api.syncV2.start(interval)
+      } else {
+        await api.sync.start(interval)
+      }
+    }
+    showToast(`Switched to Sync ${version.toUpperCase()}`, 'info')
   }
 
   async function handleDiscoverLan() {
@@ -563,7 +612,11 @@ function SyncServerSection({
     await onSave()
     if (syncMode === 'http' && enabled && nodeMode !== 'server') {
       const interval = parseInt(settings.syncIntervalSeconds || '30', 10)
-      await api.sync.start(interval)
+      if (isV2) {
+        await api.syncV2.start(interval)
+      } else {
+        await api.sync.start(interval)
+      }
     }
     if (syncMode === 'file' && nodeMode === 'terminal') {
       const sharePath = settings.syncSharePath?.trim()
@@ -576,17 +629,19 @@ function SyncServerSection({
   }
 
   // ── Status helpers ────────────────────────────────────────────────────────────
+  const activeHttpState = isV2 ? syncV2State : syncState
+
   const httpStatusColor =
-    syncState?.status === 'synced'   ? 'text-green-600' :
-    syncState?.status === 'syncing'  ? 'text-blue-600'  :
-    syncState?.status === 'error'    ? 'text-red-600'   :
-    syncState?.status === 'disabled' ? 'text-gray-400'  : 'text-gray-500'
+    activeHttpState?.status === 'synced'   ? 'text-green-600' :
+    activeHttpState?.status === 'syncing'  ? 'text-blue-600'  :
+    activeHttpState?.status === 'error'    ? 'text-red-600'   :
+    activeHttpState?.status === 'disabled' ? 'text-gray-400'  : 'text-gray-500'
 
   const httpStatusLabel =
-    syncState?.status === 'synced'   ? `Synced${syncState.lastSyncAt ? ` · ${new Date(syncState.lastSyncAt).toLocaleTimeString()}` : ''}` :
-    syncState?.status === 'syncing'  ? 'Syncing…'  :
-    syncState?.status === 'error'    ? 'Error'     :
-    syncState?.status === 'disabled' ? 'Disabled'  : 'Idle'
+    activeHttpState?.status === 'synced'   ? `Synced${activeHttpState.lastSyncAt ? ` · ${new Date(activeHttpState.lastSyncAt).toLocaleTimeString()}` : ''}` :
+    activeHttpState?.status === 'syncing'  ? 'Syncing…'  :
+    activeHttpState?.status === 'error'    ? 'Error'     :
+    activeHttpState?.status === 'disabled' ? 'Disabled'  : 'Idle'
 
   function fileSyncStatusBadge(state: SyncStateShape | null) {
     if (!state) return null
@@ -998,34 +1053,85 @@ function SyncServerSection({
             </div>
           )}
 
+          {/* ── Sync protocol selector (terminal only) ──────────────────────── */}
+          {nodeMode === 'terminal' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Sync protocol</label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => handleSyncVersionChange('v1')}
+                  className={`flex flex-col items-start gap-1 rounded-xl border-2 px-4 py-3 text-left transition-all ${
+                    !isV2
+                      ? 'border-blue-500 bg-blue-50'
+                      : 'border-gray-200 bg-white hover:border-gray-300'
+                  }`}
+                >
+                  <span className={`text-sm font-semibold ${!isV2 ? 'text-blue-700' : 'text-gray-800'}`}>
+                    v1 — Timestamp (default)
+                  </span>
+                  <span className="text-xs text-gray-500">
+                    Last-write-wins on wall-clock time. Works without any server migration.
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSyncVersionChange('v2')}
+                  className={`flex flex-col items-start gap-1 rounded-xl border-2 px-4 py-3 text-left transition-all ${
+                    isV2
+                      ? 'border-violet-500 bg-violet-50'
+                      : 'border-gray-200 bg-white hover:border-gray-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className={`text-sm font-semibold ${isV2 ? 'text-violet-700' : 'text-gray-800'}`}>
+                      v2 — Append-only log
+                    </span>
+                    <span className="text-xs font-semibold px-1.5 py-0.5 rounded bg-violet-100 text-violet-700">
+                      Recommended
+                    </span>
+                  </div>
+                  <span className="text-xs text-gray-500">
+                    Sequence-based — no clock skew issues, reliable even with VMs and time drift.
+                  </span>
+                </button>
+              </div>
+              {isV2 && (
+                <p className="text-xs text-violet-600 mt-2">
+                  ✦ v2 requires the server to be running Kinetix POS v25 or later (schema migration 25).
+                </p>
+              )}
+            </div>
+          )}
+
           {/* HTTP sync status */}
-          {nodeMode !== 'server' && syncState && (
+          {nodeMode !== 'server' && activeHttpState && (
             <div className={`rounded-xl border px-4 py-3 text-sm ${
-              syncState.status === 'error'   ? 'bg-red-50 border-red-200'       :
-              syncState.status === 'synced'  ? 'bg-emerald-50 border-emerald-200' :
-              syncState.status === 'syncing' ? 'bg-blue-50 border-blue-200'     :
+              activeHttpState.status === 'error'   ? 'bg-red-50 border-red-200'       :
+              activeHttpState.status === 'synced'  ? 'bg-emerald-50 border-emerald-200' :
+              activeHttpState.status === 'syncing' ? 'bg-blue-50 border-blue-200'     :
               'bg-gray-50 border-gray-200'
             }`}>
               <div className="flex items-center justify-between">
-                <span className={`font-semibold capitalize ${
-                  syncState.status === 'error'   ? 'text-red-700'     :
-                  syncState.status === 'synced'  ? 'text-emerald-700' :
-                  syncState.status === 'syncing' ? 'text-blue-700'    :
+                <span className={`font-semibold ${
+                  activeHttpState.status === 'error'   ? 'text-red-700'     :
+                  activeHttpState.status === 'synced'  ? 'text-emerald-700' :
+                  activeHttpState.status === 'syncing' ? 'text-blue-700'    :
                   'text-gray-600'
                 }`}>
-                  {syncState.status === 'syncing' ? '⟳ Syncing…' :
-                   syncState.status === 'synced'  ? '✓ Synced'   :
-                   syncState.status === 'error'   ? '✗ Sync Error' :
+                  {activeHttpState.status === 'syncing' ? '⟳ Syncing…' :
+                   activeHttpState.status === 'synced'  ? `✓ Synced${isV2 ? ' (v2)' : ''}` :
+                   activeHttpState.status === 'error'   ? '✗ Sync Error' :
                    'Sync Disabled'}
                 </span>
-                {syncState.lastSyncAt && (
+                {activeHttpState.lastSyncAt && (
                   <span className="text-xs text-gray-400">
-                    Last sync: {new Date(syncState.lastSyncAt).toLocaleTimeString()}
+                    Last sync: {new Date(activeHttpState.lastSyncAt).toLocaleTimeString()}
                   </span>
                 )}
               </div>
-              {syncState.status === 'error' && syncState.error && (
-                <p className="mt-2 text-red-700 text-xs font-mono break-all">{syncState.error}</p>
+              {activeHttpState.status === 'error' && activeHttpState.error && (
+                <p className="mt-2 text-red-700 text-xs font-mono break-all">{activeHttpState.error}</p>
               )}
               {!settings.syncUrl && nodeMode !== 'server' && (
                 <p className="mt-2 text-amber-700 text-xs">
@@ -1044,6 +1150,12 @@ function SyncServerSection({
             {nodeMode !== 'server' && (
               <Button variant="secondary" onClick={handleSyncNow} disabled={syncing || !settings.syncUrl}>
                 {syncing ? 'Syncing…' : 'Sync Now'}
+              </Button>
+            )}
+            {nodeMode !== 'server' && (
+              <Button variant="secondary" onClick={handleForceFullSync} disabled={syncing || !settings.syncUrl}
+                title="Clears sync history and re-pulls everything from the server — use when products, inventory or settings are missing">
+                {syncing ? 'Syncing…' : 'Force Full Resync'}
               </Button>
             )}
             <Button onClick={handleSyncSave}>Save</Button>

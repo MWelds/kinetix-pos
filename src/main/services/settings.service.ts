@@ -4,28 +4,91 @@ import * as schema from '../database/schema'
 import { hashPin } from '../lib/pin'
 
 export const DEFAULT_SETTINGS = {
+  // ── Store ──────────────────────────────────────────────────────────────────
   storeName: '',
   storeAddress: '',
   storePhone: '',
   storeLogo: '',
+  logoBase64: '',
   taxRate: '0',
   taxName: 'Tax',
+  taxEnabled: 'true',
   receiptFooter: 'Thank you for your purchase!',
   currency: 'USD',
   currency2: 'KYD',
   currencySymbol: '$',
+  kydToUsdRate: '0.82',
   loyaltyPointsPerDollar: '1',
+  enabledPaymentMethods: '["cash","card","store_credit","gift_card","layaway"]',
+  terminalName: 'Terminal 1',
+
+  // ── Hardware ───────────────────────────────────────────────────────────────
   receiptPrinterPort: '',
   cashDrawerPort: '',
+  receiptPrinterName: '',
+  invoicePrinterName: '',
+  tagPrinterName: '',
+  receiptPaperSize: 'auto',
+  tagPaperSize: 'auto',
+
+  // ── Receipt & Invoice templates ────────────────────────────────────────────
+  receiptTemplate: 'classic',
+  receiptShowLogo: 'true',
+  receiptFooterText: 'Thank you for your business!',
+  receiptPrimaryColor: '#1e293b',
+  receiptAccentColor: '#3b82f6',
+  receiptFontFamily: 'system',
+  receiptShowTaxLine: 'true',
+  receiptShowDiscountLine: 'true',
+  receiptShowNotes: 'true',
+  receiptHeaderMessage: '',
+  receiptCustomField1: '',
+  receiptCustomField2: '',
+  receiptCustomField3: '',
+  invoiceShowLogo: 'true',
+  invoiceFooterText: 'Payment due on receipt. Thank you!',
+  invoicePrimaryColor: '#1e293b',
+  invoiceAccentColor: '#10b981',
+  invoiceHeaderMessage: '',
+  invoiceShowTaxLine: 'true',
+  invoiceShowDiscountLine: 'true',
+  invoiceCustomField1: '',
+  invoiceCustomField2: '',
+  invoiceCustomField3: '',
+
+  // ── Customer display ───────────────────────────────────────────────────────
+  displayBgColor: '#0f172a',
+  displayBgImage: '',
+
+  // ── Sync — shared ─────────────────────────────────────────────────────────
   syncEnabled: 'false',
   syncUrl: '',
   syncApiKey: '',
   syncIntervalSeconds: '30',
+  syncMode: 'http',          // 'http' | 'file'
+  syncSharePath: '',
+
+  // ── Sync — node identity ───────────────────────────────────────────────────
   terminalId: '',
   setupComplete: 'false',
-  nodeMode: '',
+  nodeMode: '',              // '' | 'server' | 'terminal'
+  lastSyncAt: '',
+
+  // ── Sync — embedded server (server mode only) ──────────────────────────────
   embeddedServerPort: '3030',
   embeddedServerApiKey: '',
+  dashboardAdminPin: '',
+
+  // ── Sync — v2 protocol ─────────────────────────────────────────────────────
+  syncVersion: '',           // '' | 'v1' | 'v2'  ('' defaults to v1 behaviour)
+  v2TerminalPushSeq: '0',    // highest seq this terminal has pushed & had acked
+  v2ServerPullSeq: '0',      // highest server seq this terminal has applied
+
+  // ── Sync — file sync (server + terminal) ──────────────────────────────────
+  fileSyncLastPullAt: '',
+  fileSyncServerLastExport: '',
+
+  // ── Email ──────────────────────────────────────────────────────────────────
   emailHost: '',
   emailPort: '587',
   emailSecure: 'false',
@@ -33,9 +96,12 @@ export const DEFAULT_SETTINGS = {
   emailPassword: '',
   emailFromName: 'Kinetix POS',
   emailFromAddress: '',
-  dashboardAdminPin: '',
-  receiptPaperSize: 'auto',
-  tagPaperSize: 'auto'
+
+  // ── QuickBooks Online ──────────────────────────────────────────────────────
+  qboClientId: '',
+  qboClientSecret: '',
+  qboSandbox: 'false',
+  qboRealmId: '',
 }
 
 export type SettingKey = keyof typeof DEFAULT_SETTINGS

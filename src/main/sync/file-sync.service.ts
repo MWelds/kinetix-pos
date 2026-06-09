@@ -21,32 +21,10 @@ import path from 'path'
 import { getSqlite } from '../database/connection'
 import { settingsService } from '../services/settings.service'
 import type { SyncState, SyncRecord, SyncPayload } from './sync.types'
-
-// ─── Tables ───────────────────────────────────────────────────────────────────
-
-const SYNC_TABLES = [
-  'categories', 'products', 'product_variants', 'product_components',
-  'inventory', 'inventory_adjustments',
-  'customers', 'discount_rules', 'gift_cards',
-  'orders', 'order_items', 'payments',
-  'staff', 'vendors', 'vendor_payouts', 'settings'
-] as const
-
-type SyncTable = (typeof SYNC_TABLES)[number]
-
-const HAS_UPDATED_AT = new Set<SyncTable>([
-  'categories', 'products', 'product_variants', 'customers',
-  'discount_rules', 'gift_cards', 'orders', 'order_items',
-  'staff', 'vendors', 'settings', 'inventory'
-])
-
-/** Settings that are machine-specific and must never cross machine boundaries. */
-const MACHINE_SPECIFIC_SETTINGS = new Set([
-  'nodeMode', 'setupComplete', 'terminalId',
-  'syncEnabled', 'syncUrl', 'syncApiKey', 'syncIntervalSeconds', 'lastSyncAt',
-  'embeddedServerPort', 'embeddedServerApiKey', 'dashboardAdminPin',
-  'syncMode', 'syncSharePath', 'fileSyncLastPullAt'
-])
+import {
+  SYNC_TABLES, HAS_UPDATED_AT, MACHINE_SPECIFIC_SETTINGS, LWW_EXCLUDE_COLS,
+  type SyncTable,
+} from './sync.constants'
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -255,6 +233,7 @@ function applyPulledRecords(records: SyncPayload): void {
     const tableColsRaw = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
     const tableColSet = new Set(tableColsRaw.map((r) => r.name))
     const updateCol = HAS_UPDATED_AT.has(table as SyncTable) ? 'updated_at' : 'created_at'
+    const lwwExclude = LWW_EXCLUDE_COLS[table as SyncTable] ?? new Set<string>()
 
     for (const row of rows) {
       const cols = Object.keys(row).filter((c) => tableColSet.has(c))
@@ -262,7 +241,7 @@ function applyPulledRecords(records: SyncPayload): void {
 
       const placeholders = cols.map(() => '?').join(', ')
       const setClauses = cols
-        .filter((c) => c !== 'id')
+        .filter((c) => c !== 'id' && !lwwExclude.has(c))
         .map((c) => `${c} = CASE WHEN excluded.${updateCol} >= COALESCE(${table}.${updateCol}, '') THEN excluded.${c} ELSE ${table}.${c} END`)
         .join(', ')
 

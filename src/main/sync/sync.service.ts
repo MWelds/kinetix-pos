@@ -1,38 +1,10 @@
 import { getSqlite } from '../database/connection'
 import { settingsService } from '../services/settings.service'
 import type { SyncState, SyncRecord, SyncPayload, PullResponse, PushResponse } from './sync.types'
-
-// ─── Tables that participate in sync ──────────────────────────────────────────
-const SYNC_TABLES = [
-  'categories', 'products', 'product_variants', 'product_components',
-  'inventory', 'inventory_adjustments',
-  'customers', 'discount_rules', 'gift_cards',
-  'orders', 'order_items', 'payments',
-  'staff', 'vendors', 'vendor_payouts', 'settings'
-] as const
-
-type SyncTable = (typeof SYNC_TABLES)[number]
-
-/** Tables tracked by updated_at (bidirectional upsert). */
-const HAS_UPDATED_AT = new Set<SyncTable>([
-  'categories', 'products', 'product_variants', 'customers',
-  'discount_rules', 'gift_cards', 'orders', 'order_items',
-  'staff', 'vendors', 'settings', 'inventory'
-])
-
-/**
- * Settings keys that are machine-specific and must NEVER cross machine
- * boundaries via sync.  Syncing these would overwrite a terminal's sync
- * URL with the server's blank value (or vice-versa), breaking future syncs.
- *
- * Only business-level settings (store name, tax rates, receipt templates,
- * currency config, loyalty rules, etc.) should travel between machines.
- */
-const MACHINE_SPECIFIC_SETTINGS = new Set([
-  'nodeMode', 'setupComplete', 'terminalId',
-  'syncEnabled', 'syncUrl', 'syncApiKey', 'syncIntervalSeconds', 'lastSyncAt',
-  'embeddedServerPort', 'embeddedServerApiKey', 'dashboardAdminPin'
-])
+import {
+  SYNC_TABLES, HAS_UPDATED_AT, MACHINE_SPECIFIC_SETTINGS, LWW_EXCLUDE_COLS,
+  type SyncTable,
+} from './sync.constants'
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let state: SyncState = {
@@ -70,6 +42,13 @@ export function initSync(): void {
     return
   }
 
+  // v2 sync takes over when enabled — don't run both simultaneously
+  const syncVersion = settingsService.get('syncVersion' as never)
+  if (syncVersion === 'v2') {
+    setState({ status: 'disabled' })
+    return
+  }
+
   const enabled = settingsService.get('syncEnabled') === 'true'
   if (!enabled) {
     setState({ status: 'disabled' })
@@ -97,6 +76,19 @@ export function stopSyncLoop(): void {
     intervalHandle = null
   }
   setState({ status: 'disabled' })
+}
+
+/**
+ * Force a full resync by clearing lastSyncAt so the next pull fetches ALL
+ * records from the server — products, inventory, staff, settings (logo,
+ * address, currency, etc.) — regardless of when they were last modified.
+ * Use when a terminal is missing data or settings from the server.
+ */
+export async function forceFullSync(): Promise<void> {
+  // Clear the watermark so the next push sends everything local and the
+  // next pull requests everything from the server since the beginning of time.
+  settingsService.set('lastSyncAt', '1970-01-01T00:00:00.000Z')
+  return runSync()
 }
 
 // ─── Core sync logic ──────────────────────────────────────────────────────────
@@ -274,6 +266,9 @@ function applyPulledRecords(records: SyncPayload): void {
     const tableColsRaw = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
     const tableColSet = new Set(tableColsRaw.map((r) => r.name))
     const updateCol = HAS_UPDATED_AT.has(table as SyncTable) ? 'updated_at' : 'created_at'
+    // Columns that must never be overwritten by LWW — e.g. inventory.quantity
+    // is always recomputed from adjustments and must not be set by a pulled row.
+    const lwwExclude = LWW_EXCLUDE_COLS[table as SyncTable] ?? new Set<string>()
 
     for (const row of rows) {
       const cols = Object.keys(row).filter((c) => tableColSet.has(c))
@@ -281,7 +276,7 @@ function applyPulledRecords(records: SyncPayload): void {
 
       const placeholders = cols.map(() => '?').join(', ')
       const setClauses = cols
-        .filter((c) => c !== 'id')
+        .filter((c) => c !== 'id' && !lwwExclude.has(c))
         .map((c) => `${c} = CASE WHEN excluded.${updateCol} >= COALESCE(${table}.${updateCol}, '') THEN excluded.${c} ELSE ${table}.${c} END`)
         .join(', ')
 

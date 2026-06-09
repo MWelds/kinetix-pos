@@ -251,3 +251,17 @@ export const vendorPayouts = sqliteTable('vendor_payouts', {
   staffId: text('staff_id'),
   createdAt: text('created_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`)
 })
+
+// ─── Sync Queue (outbox for terminal → server reliable delivery) ──────────────
+export const syncQueue = sqliteTable('sync_queue', {
+  id: text('id').primaryKey(),
+  tableName: text('table_name').notNull(),
+  recordId: text('record_id').notNull(),
+  /** Full JSON-serialised record to upsert on the server */
+  payload: text('payload').notNull(),
+  createdAt: text('created_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+  attempts: integer('attempts').notNull().default(0),
+  lastAttemptedAt: text('last_attempted_at'),
+  /** 1 once the server has confirmed receipt */
+  delivered: integer('delivered', { mode: 'boolean' }).notNull().default(false),
+})

@@ -323,6 +323,7 @@ export const api = {
   sync: {
     getState: (): Promise<unknown> => bridge.sync.getState(),
     runNow: (): Promise<unknown> => bridge.sync.runNow(),
+    forceFull: (): Promise<unknown> => bridge.sync.forceFull(),
     testConnection: (url: string, apiKey: string): Promise<{ ok: boolean; message: string }> =>
       bridge.sync.testConnection(url, apiKey),
     start: (intervalSeconds?: number): Promise<void> => bridge.sync.start(intervalSeconds),
@@ -330,6 +331,16 @@ export const api = {
     onStateChange: (callback: (state: unknown) => void): (() => void) =>
       bridge.sync.onStateChange(callback),
     discover: (): Promise<string[]> => bridge.sync.discover()
+  },
+
+  syncV2: {
+    getState: (): Promise<unknown> => bridge.syncV2.getState(),
+    runNow: (): Promise<unknown> => bridge.syncV2.runNow(),
+    forceFull: (): Promise<unknown> => bridge.syncV2.forceFull(),
+    start: (intervalSeconds?: number): Promise<void> => bridge.syncV2.start(intervalSeconds),
+    stop: (): Promise<void> => bridge.syncV2.stop(),
+    onStateChange: (callback: (state: unknown) => void): (() => void) =>
+      bridge.syncV2.onStateChange(callback)
   },
 
   fileSync: {

@@ -170,9 +170,10 @@ export const IPC = {
   VENDORS_PAYOUT_HISTORY: 'vendors:payoutHistory',
   VENDORS_PRODUCTS: 'vendors:products',
 
-  // Multi-terminal sync
+  // Multi-terminal sync (v1)
   SYNC_GET_STATE: 'sync:getState',
   SYNC_RUN_NOW: 'sync:runNow',
+  SYNC_FORCE_FULL: 'sync:forceFull',
   SYNC_TEST_CONNECTION: 'sync:testConnection',
   SYNC_START: 'sync:start',
   SYNC_STOP: 'sync:stop',
@@ -181,6 +182,15 @@ export const IPC = {
 
   /** Scan the local subnet for running Kinetix POS server nodes. Returns found server URLs. */
   SYNC_DISCOVER: 'sync:discover',
+
+  // Multi-terminal sync (v2)
+  SYNC_V2_GET_STATE: 'sync:v2:getState',
+  SYNC_V2_RUN_NOW: 'sync:v2:runNow',
+  SYNC_V2_FORCE_FULL: 'sync:v2:forceFull',
+  SYNC_V2_START: 'sync:v2:start',
+  SYNC_V2_STOP: 'sync:v2:stop',
+  /** Push channel — main → renderer, fires on every v2 state change */
+  SYNC_V2_STATE_PUSH: 'sync:v2:statePush',
 
   // Setup wizard + embedded server
   SETUP_GET: 'setup:get',

@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mavrick Welds — IT Technician</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=Figtree:wght@300;400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ─── Reset & Base ──────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --black:   #0a0a0a;
+      --white:   #f5f4f0;
+      --mid:     #6b6b6b;
+      --border:  #d8d6d0;
+      --accent:  #0057FF;
+      --accent-dim: rgba(0, 87, 255, 0.08);
+
+      --font-display: 'Syne', sans-serif;
+      --font-body:    'Figtree', sans-serif;
+      --font-mono:    'Space Mono', monospace;
+
+      --text-sm:   clamp(0.8rem,  0.75rem + 0.25vw, 0.9rem);
+      --text-base: clamp(1rem,    0.9rem  + 0.5vw,  1.1rem);
+      --text-lg:   clamp(1.1rem,  1rem    + 0.6vw,  1.3rem);
+      --text-xl:   clamp(1.4rem,  1.2rem  + 1vw,    1.8rem);
+      --text-2xl:  clamp(2rem,    1.5rem  + 2.5vw,  3.5rem);
+      --text-hero: clamp(3.5rem,  2.5rem  + 5vw,    8.5rem);
+      --text-num:  clamp(6rem,    4rem    + 8vw,    14rem);
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font-body);
+      background-color: var(--white);
+      color: var(--black);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* ─── Custom Cursor ──────────────────────────────────────────────── */
+    .cursor {
+      width: 10px; height: 10px;
+      background: var(--accent);
+      border-radius: 50%;
+      position: fixed;
+      top: 0; left: 0;
+      pointer-events: none;
+      z-index: 9999;
+      transform: translate(-50%, -50%);
+      transition: transform 0.08s ease, width 0.2s ease, height 0.2s ease, background 0.2s ease;
+      mix-blend-mode: multiply;
+    }
+    .cursor.hover {
+      width: 40px; height: 40px;
+      background: var(--black);
+      mix-blend-mode: normal;
+      opacity: 0.12;
+    }
+    @media (pointer: coarse) { .cursor { display: none; } }
+
+    /* ─── Nav ────────────────────────────────────────────────────────── */
+    nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1.5rem 3rem;
+      background: rgba(245, 244, 240, 0.9);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid transparent;
+      transition: border-color 0.3s ease;
+    }
+    nav.scrolled { border-color: var(--border); }
+
+    .nav-logo {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 1rem;
+      letter-spacing: -0.02em;
+      color: var(--black);
+      text-decoration: none;
+    }
+    .nav-logo span { color: var(--accent); }
+
+    .nav-links {
+      display: flex;
+      gap: 2.5rem;
+      list-style: none;
+    }
+    .nav-links a {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--mid);
+      text-decoration: none;
+      position: relative;
+      transition: color 0.2s ease;
+    }
+    .nav-links a::after {
+      content: '';
+      position: absolute;
+      bottom: -2px; left: 0;
+      width: 0; height: 1px;
+      background: var(--accent);
+      transition: width 0.3s ease;
+    }
+    .nav-links a:hover { color: var(--black); }
+    .nav-links a:hover::after { width: 100%; }
+
+    .nav-cta {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--white);
+      background: var(--black);
+      padding: 0.6rem 1.4rem;
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.2s ease, transform 0.15s ease;
+    }
+    .nav-cta:hover { background: var(--accent); transform: translateY(-1px); }
+
+    @media (max-width: 768px) {
+      nav { padding: 1.25rem 1.5rem; }
+      .nav-links { display: none; }
+    }
+
+    /* ─── Hero ────────────────────────────────────────────────────────── */
+    #hero {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      padding: 0 3rem 5rem;
+      border-bottom: 1px solid var(--border);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero-status {
+      position: absolute;
+      top: 7rem; right: 3rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.05em;
+      color: var(--mid);
+    }
+    .hero-status::before {
+      content: '';
+      width: 7px; height: 7px;
+      background: #22c55e;
+      border-radius: 50%;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.8); }
+    }
+
+    .hero-tag {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 1.5rem;
+      opacity: 0;
+      transform: translateY(20px);
+      animation: fadeUp 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.2s forwards;
+    }
+
+    .hero-headline {
+      font-family: var(--font-display);
+      font-size: var(--text-hero);
+      font-weight: 800;
+      line-height: 0.92;
+      letter-spacing: -0.04em;
+      color: var(--black);
+      opacity: 0;
+      transform: translateY(30px);
+      animation: fadeUp 0.8s cubic-bezier(0.22, 1, 0.36, 1) 0.35s forwards;
+    }
+    .hero-headline .outlined {
+      -webkit-text-stroke: 2px var(--black);
+      color: transparent;
+    }
+
+    .hero-meta {
+      margin-top: 3rem;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 2rem;
+      opacity: 0;
+      transform: translateY(20px);
+      animation: fadeUp 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.55s forwards;
+    }
+
+    .hero-desc {
+      max-width: 38ch;
+      font-size: var(--text-base);
+      color: var(--mid);
+      line-height: 1.65;
+      font-weight: 300;
+    }
+
+    .hero-scroll {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--mid);
+    }
+    .scroll-line {
+      width: 60px; height: 1px;
+      background: var(--mid);
+      position: relative;
+      overflow: hidden;
+    }
+    .scroll-line::after {
+      content: '';
+      position: absolute;
+      top: 0; left: -100%;
+      width: 100%; height: 100%;
+      background: var(--accent);
+      animation: scrollLine 2s ease-in-out 1.2s infinite;
+    }
+    @keyframes scrollLine {
+      0% { left: -100%; }
+      50% { left: 0%; }
+      100% { left: 100%; }
+    }
+
+    @keyframes fadeUp {
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 768px) {
+      #hero { padding: 0 1.5rem 4rem; }
+      .hero-status { top: 5rem; right: 1.5rem; }
+      .hero-headline .outlined { -webkit-text-stroke: 1.5px var(--black); }
+    }
+
+    /* ─── Section Shared ────────────────────────────────────────────── */
+    section { border-bottom: 1px solid var(--border); }
+
+    .section-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 6rem 3rem;
+    }
+
+    .section-label {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--mid);
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 4rem;
+    }
+    .section-label::before {
+      content: '';
+      width: 30px; height: 1px;
+      background: var(--border);
+    }
+
+    .reveal {
+      opacity: 0;
+      transform: translateY(28px);
+      transition: opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+                  transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .reveal.visible { opacity: 1; transform: translateY(0); }
+
+    /* ─── About ─────────────────────────────────────────────────────── */
+    #about .section-inner {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6rem;
+      align-items: start;
+    }
+
+    .about-left {}
+    .about-num {
+      font-family: var(--font-display);
+      font-size: var(--text-num);
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -0.05em;
+      color: var(--border);
+      margin-bottom: -1rem;
+      user-select: none;
+    }
+    .about-heading {
+      font-family: var(--font-display);
+      font-size: var(--text-2xl);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      color: var(--black);
+    }
+
+    .about-right { padding-top: 1.5rem; }
+    .about-body {
+      font-size: var(--text-base);
+      color: var(--mid);
+      line-height: 1.75;
+      font-weight: 300;
+      margin-bottom: 2rem;
+    }
+    .about-body strong { color: var(--black); font-weight: 600; }
+
+    .about-facts {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      margin-top: 2.5rem;
+      padding-top: 2.5rem;
+      border-top: 1px solid var(--border);
+    }
+    .fact-item {}
+    .fact-value {
+      font-family: var(--font-display);
+      font-size: var(--text-xl);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--black);
+    }
+    .fact-value span { color: var(--accent); }
+    .fact-label {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--mid);
+      margin-top: 0.25rem;
+    }
+
+    @media (max-width: 900px) {
+      #about .section-inner { grid-template-columns: 1fr; gap: 2.5rem; }
+      .about-right { padding-top: 0; }
+    }
+    @media (max-width: 768px) {
+      .section-inner { padding: 4rem 1.5rem; }
+    }
+
+    /* ─── Skills ─────────────────────────────────────────────────────── */
+    #skills {}
+    .skills-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0;
+    }
+
+    .skill-category {
+      border-right: 1px solid var(--border);
+      padding: 2.5rem 2.5rem 2.5rem 0;
+    }
+    .skill-category:last-child { border-right: none; }
+    .skill-category:not(:first-child) { padding-left: 2.5rem; }
+
+    .skill-cat-title {
+      font-family: var(--font-display);
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      color: var(--black);
+      margin-bottom: 1.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .skill-cat-title .dot {
+      width: 8px; height: 8px;
+      background: var(--accent);
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .skill-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .skill-tag {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.04em;
+      color: var(--mid);
+      background: transparent;
+      border: 1px solid var(--border);
+      padding: 0.4rem 0.8rem;
+      cursor: default;
+      transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+    }
+    .skill-tag:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: var(--accent-dim);
+    }
+
+    @media (max-width: 900px) {
+      .skills-grid { grid-template-columns: 1fr; }
+      .skill-category {
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        padding: 2rem 0;
+      }
+      .skill-category:last-child { border-bottom: none; }
+      .skill-category:not(:first-child) { padding-left: 0; }
+    }
+
+    /* ─── Projects ────────────────────────────────────────────────────── */
+    #projects {}
+
+    .projects-header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      margin-bottom: 4rem;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+    }
+    .projects-heading {
+      font-family: var(--font-display);
+      font-size: var(--text-2xl);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+    }
+
+    .projects-list { display: flex; flex-direction: column; }
+
+    .project-item {
+      display: grid;
+      grid-template-columns: 80px 1fr auto;
+      gap: 2.5rem;
+      align-items: start;
+      padding: 2.5rem 0;
+      border-top: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.2s ease;
+      position: relative;
+    }
+    .project-item:last-child { border-bottom: 1px solid var(--border); }
+    .project-item::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: var(--accent-dim);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      pointer-events: none;
+    }
+    .project-item:hover::after { opacity: 1; }
+    .project-item:hover .project-arrow { transform: translate(4px, -4px); }
+
+    .project-num {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      color: var(--mid);
+      padding-top: 0.2rem;
+    }
+
+    .project-content {}
+    .project-title {
+      font-family: var(--font-display);
+      font-size: var(--text-lg);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--black);
+      margin-bottom: 0.5rem;
+      transition: color 0.2s ease;
+    }
+    .project-item:hover .project-title { color: var(--accent); }
+
+    .project-desc {
+      font-size: var(--text-sm);
+      color: var(--mid);
+      line-height: 1.6;
+      max-width: 55ch;
+      font-weight: 300;
+    }
+
+    .project-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-top: 1rem;
+    }
+    .project-tag {
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--accent);
+      background: var(--accent-dim);
+      padding: 0.25rem 0.6rem;
+    }
+
+    .project-arrow {
+      font-size: 1.2rem;
+      color: var(--mid);
+      transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), color 0.2s ease;
+      padding-top: 0.2rem;
+      flex-shrink: 0;
+    }
+    .project-item:hover .project-arrow { color: var(--accent); }
+
+    @media (max-width: 768px) {
+      .project-item { grid-template-columns: 50px 1fr; gap: 1rem; }
+      .project-arrow { display: none; }
+    }
+
+    /* ─── Footer ─────────────────────────────────────────────────────── */
+    footer {
+      padding: 3rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+    }
+
+    .footer-left {
+      font-family: var(--font-display);
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .footer-left span { color: var(--accent); }
+
+    .footer-links {
+      display: flex;
+      gap: 2rem;
+      list-style: none;
+    }
+    .footer-links a {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--mid);
+      text-decoration: none;
+      transition: color 0.2s ease;
+    }
+    .footer-links a:hover { color: var(--accent); }
+
+    .footer-right {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.04em;
+      color: var(--border);
+    }
+
+    @media (max-width: 768px) {
+      footer { padding: 2.5rem 1.5rem; flex-direction: column; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Custom Cursor -->
+  <div class="cursor" id="cursor"></div>
+
+  <!-- Navigation -->
+  <nav id="nav">
+    <a class="nav-logo" href="#hero">MW<span>.</span></a>
+    <ul class="nav-links">
+      <li><a href="#about">About</a></li>
+      <li><a href="#skills">Skills</a></li>
+      <li><a href="#projects">Projects</a></li>
+    </ul>
+    <a class="nav-cta" href="mailto:mavwelds@gmail.com">Get In Touch</a>
+  </nav>
+
+  <!-- Hero -->
+  <section id="hero">
+    <div class="hero-status">Available for hire</div>
+
+    <div class="hero-tag">IT Technician &amp; Systems Specialist</div>
+
+    <h1 class="hero-headline">
+      Mavrick<br/>
+      <span class="outlined">Welds</span>
+    </h1>
+
+    <div class="hero-meta">
+      <p class="hero-desc">
+        Keeping systems running, networks secure, and teams unblocked.
+        Specializing in infrastructure, support, and making technology
+        work the way it should.
+      </p>
+      <div class="hero-scroll">
+        <div class="scroll-line"></div>
+        Scroll to explore
+      </div>
+    </div>
+  </section>
+
+  <!-- About -->
+  <section id="about">
+    <div class="section-inner">
+      <div class="section-label">01 / About</div>
+
+      <div class="about-left reveal">
+        <div class="about-num">01</div>
+        <h2 class="about-heading">The person<br/>behind the helpdesk.</h2>
+      </div>
+
+      <div class="about-right reveal" style="transition-delay: 0.12s">
+        <p class="about-body">
+          I'm an IT Technician with a passion for <strong>building reliable infrastructure</strong>
+          and solving the problems nobody else wants to touch. Whether it's a network that won't
+          cooperate, a server migration that needs to go right the first time, or a user who
+          just needs to get back to work — I show up with a plan.
+        </p>
+        <p class="about-body">
+          My experience spans <strong>Windows Server environments</strong>, endpoint management,
+          network configuration, and hands-on helpdesk support. I care about documentation,
+          clean setups, and systems that don't need babysitting.
+        </p>
+
+        <div class="about-facts">
+          <div class="fact-item">
+            <div class="fact-value">5<span>+</span></div>
+            <div class="fact-label">Years Experience</div>
+          </div>
+          <div class="fact-item">
+            <div class="fact-value">200<span>+</span></div>
+            <div class="fact-label">Tickets Resolved</div>
+          </div>
+          <div class="fact-item">
+            <div class="fact-value">15<span>+</span></div>
+            <div class="fact-label">Projects Delivered</div>
+          </div>
+          <div class="fact-item">
+            <div class="fact-value">99<span>%</span></div>
+            <div class="fact-label">Uptime Target</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Skills -->
+  <section id="skills">
+    <div class="section-inner">
+      <div class="section-label">02 / Skills &amp; Tech Stack</div>
+
+      <div class="skills-grid">
+
+        <div class="skill-category reveal">
+          <div class="skill-cat-title">
+            <span class="dot"></span>
+            Infrastructure
+          </div>
+          <div class="skill-tags">
+            <span class="skill-tag">Windows Server 2019/2022</span>
+            <span class="skill-tag">Active Directory</span>
+            <span class="skill-tag">Group Policy</span>
+            <span class="skill-tag">DNS / DHCP</span>
+            <span class="skill-tag">Hyper-V</span>
+            <span class="skill-tag">VMware</span>
+            <span class="skill-tag">Azure AD</span>
+            <span class="skill-tag">Office 365</span>
+          </div>
+        </div>
+
+        <div class="skill-category reveal" style="transition-delay: 0.1s">
+          <div class="skill-cat-title">
+            <span class="dot"></span>
+            Networking
+          </div>
+          <div class="skill-tags">
+            <span class="skill-tag">TCP/IP</span>
+            <span class="skill-tag">VLANs</span>
+            <span class="skill-tag">Firewall Config</span>
+            <span class="skill-tag">VPN Setup</span>
+            <span class="skill-tag">Cisco</span>
+            <span class="skill-tag">UniFi</span>
+            <span class="skill-tag">Network Monitoring</span>
+            <span class="skill-tag">Wireshark</span>
+          </div>
+        </div>
+
+        <div class="skill-category reveal" style="transition-delay: 0.2s">
+          <div class="skill-cat-title">
+            <span class="dot"></span>
+            Support &amp; Tools
+          </div>
+          <div class="skill-tags">
+            <span class="skill-tag">Helpdesk / Tier 1–3</span>
+            <span class="skill-tag">Remote Support</span>
+            <span class="skill-tag">Linux</span>
+            <span class="skill-tag">PowerShell</span>
+            <span class="skill-tag">ConnectWise</span>
+            <span class="skill-tag">Backup & Recovery</span>
+            <span class="skill-tag">Endpoint Security</span>
+            <span class="skill-tag">Hardware Repair</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- Projects -->
+  <section id="projects">
+    <div class="section-inner">
+      <div class="section-label">03 / Projects</div>
+
+      <div class="projects-header">
+        <h2 class="projects-heading reveal">Selected<br/>work.</h2>
+      </div>
+
+      <div class="projects-list">
+
+        <div class="project-item reveal">
+          <div class="project-num">001</div>
+          <div class="project-content">
+            <div class="project-title">Multi-Site Network Overhaul</div>
+            <p class="project-desc">
+              Redesigned the network infrastructure for a 3-location business — replacing aging hardware,
+              implementing VLANs for department segmentation, and cutting ticket response time by 40%
+              through improved monitoring and alerting.
+            </p>
+            <div class="project-tags">
+              <span class="project-tag">Cisco</span>
+              <span class="project-tag">VLANs</span>
+              <span class="project-tag">UniFi</span>
+              <span class="project-tag">Network Design</span>
+            </div>
+          </div>
+          <div class="project-arrow">↗</div>
+        </div>
+
+        <div class="project-item reveal" style="transition-delay: 0.08s">
+          <div class="project-num">002</div>
+          <div class="project-content">
+            <div class="project-title">Windows Server Migration</div>
+            <p class="project-desc">
+              Led zero-downtime migration of Active Directory and file services from Windows Server 2012
+              to 2022 for a 60-user organization. Includes Group Policy restructure and documented
+              rollback plan.
+            </p>
+            <div class="project-tags">
+              <span class="project-tag">Windows Server</span>
+              <span class="project-tag">Active Directory</span>
+              <span class="project-tag">Migration</span>
+            </div>
+          </div>
+          <div class="project-arrow">↗</div>
+        </div>
+
+        <div class="project-item reveal" style="transition-delay: 0.16s">
+          <div class="project-num">003</div>
+          <div class="project-content">
+            <div class="project-title">IT Asset Management System</div>
+            <p class="project-desc">
+              Built and deployed an internal asset tracking system for 150+ endpoints using PowerShell
+              automation for inventory collection, integrated with ConnectWise for ticketing and lifecycle
+              management.
+            </p>
+            <div class="project-tags">
+              <span class="project-tag">PowerShell</span>
+              <span class="project-tag">ConnectWise</span>
+              <span class="project-tag">Automation</span>
+              <span class="project-tag">Asset Management</span>
+            </div>
+          </div>
+          <div class="project-arrow">↗</div>
+        </div>
+
+        <div class="project-item reveal" style="transition-delay: 0.24s">
+          <div class="project-num">004</div>
+          <div class="project-content">
+            <div class="project-title">Hybrid Cloud Identity Setup</div>
+            <p class="project-desc">
+              Configured Azure AD Connect for a hybrid identity environment, enabling SSO across on-prem
+              and Microsoft 365. Reduced login issues by 70% and improved onboarding time from 2 days to
+              under 2 hours.
+            </p>
+            <div class="project-tags">
+              <span class="project-tag">Azure AD</span>
+              <span class="project-tag">Office 365</span>
+              <span class="project-tag">SSO</span>
+              <span class="project-tag">Identity</span>
+            </div>
+          </div>
+          <div class="project-arrow">↗</div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="footer-left">Mavrick Welds<span>.</span></div>
+    <ul class="footer-links">
+      <li><a href="mailto:mavwelds@gmail.com">Email</a></li>
+      <li><a href="https://linkedin.com" target="_blank">LinkedIn</a></li>
+      <li><a href="https://github.com" target="_blank">GitHub</a></li>
+    </ul>
+    <div class="footer-right">&copy; 2026</div>
+  </footer>
+
+  <script>
+    // ─── Custom Cursor ─────────────────────────────────────
+    const cursor = document.getElementById('cursor');
+    let mouseX = 0, mouseY = 0;
+
+    document.addEventListener('mousemove', e => {
+      mouseX = e.clientX;
+      mouseY = e.clientY;
+      cursor.style.left = mouseX + 'px';
+      cursor.style.top  = mouseY + 'px';
+    });
+
+    document.querySelectorAll('a, button, .project-item, .skill-tag').forEach(el => {
+      el.addEventListener('mouseenter', () => cursor.classList.add('hover'));
+      el.addEventListener('mouseleave', () => cursor.classList.remove('hover'));
+    });
+
+    // ─── Nav scroll state ──────────────────────────────────
+    const nav = document.getElementById('nav');
+    window.addEventListener('scroll', () => {
+      nav.classList.toggle('scrolled', window.scrollY > 40);
+    }, { passive: true });
+
+    // ─── Reveal on scroll ──────────────────────────────────
+    const reveals = document.querySelectorAll('.reveal');
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible');
+          observer.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+
+    reveals.forEach(el => observer.observe(el));
+  </script>
+</body>
+</html>

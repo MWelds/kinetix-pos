@@ -11,36 +11,14 @@ import { settingsService } from '../services/settings.service'
 import { getSqlite } from '../database/connection'
 import { hashPin } from '../lib/pin'
 import { getLanIp } from '../lib/network'
+import {
+  SYNC_TABLES, HAS_UPDATED_AT, MACHINE_SPECIFIC_SETTINGS, LWW_EXCLUDE_COLS,
+  type SyncTable,
+} from './sync.constants'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type SyncRecord = Record<string, unknown>
 type SyncPayload = Record<string, SyncRecord[]>
-
-const SYNC_TABLES = [
-  'categories', 'products', 'product_variants', 'product_components',
-  'inventory', 'inventory_adjustments',
-  'customers', 'discount_rules', 'gift_cards',
-  'orders', 'order_items', 'payments',
-  'staff', 'vendors', 'vendor_payouts', 'settings'
-] as const
-type SyncTable = (typeof SYNC_TABLES)[number]
-
-const TABLES_WITH_UPDATED_AT = new Set<SyncTable>([
-  'categories', 'products', 'product_variants', 'customers',
-  'discount_rules', 'gift_cards', 'orders', 'order_items',
-  'staff', 'vendors', 'settings', 'inventory'
-])
-
-/**
- * Settings keys that are machine-specific and must NEVER cross machine
- * boundaries via sync. The server must not send these to terminals (pull),
- * and the server must not accept them from terminals (push).
- */
-const MACHINE_SPECIFIC_SETTINGS = new Set([
-  'nodeMode', 'setupComplete', 'terminalId',
-  'syncEnabled', 'syncUrl', 'syncApiKey', 'syncIntervalSeconds', 'lastSyncAt',
-  'embeddedServerPort', 'embeddedServerApiKey', 'dashboardAdminPin'
-])
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let server: http.Server | null = null
@@ -60,7 +38,7 @@ function getServerDb() {
 // ─── Sync helpers ─────────────────────────────────────────────────────────────
 function getRecordsSince(table: SyncTable, since: string): SyncRecord[] {
   const db = getServerDb()
-  const col = TABLES_WITH_UPDATED_AT.has(table) ? 'updated_at' : 'created_at'
+  const col = HAS_UPDATED_AT.has(table) ? 'updated_at' : 'created_at'
   return db.prepare(`SELECT * FROM ${table} WHERE ${col} > ? ORDER BY ${col} ASC`).all(since) as SyncRecord[]
 }
 
@@ -105,8 +83,11 @@ function upsertRecords(table: SyncTable, records: SyncRecord[]): void {
   }
 
   const placeholders = cols.map(() => '?').join(', ')
-  const updateCol = TABLES_WITH_UPDATED_AT.has(table) ? 'updated_at' : 'created_at'
-  const setClauses = cols.filter((c) => c !== 'id')
+  const updateCol = HAS_UPDATED_AT.has(table) ? 'updated_at' : 'created_at'
+  // Never overwrite LWW-excluded columns (e.g. inventory.quantity — it must
+  // always be derived from inventory_adjustments, not from a pushed value).
+  const lwwExclude = LWW_EXCLUDE_COLS[table as SyncTable] ?? new Set<string>()
+  const setClauses = cols.filter((c) => c !== 'id' && !lwwExclude.has(c))
     .map((c) => `${c} = CASE WHEN excluded.${updateCol} >= COALESCE(${table}.${updateCol}, '') THEN excluded.${c} ELSE ${table}.${c} END`)
     .join(', ')
   const stmt = db.prepare(`INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders}) ON CONFLICT(id) DO UPDATE SET ${setClauses}`)
@@ -172,13 +153,14 @@ function validateAdminPin(pin: string): boolean {
   // 2. Check central.db for any staff member with dashboard access enabled and matching PIN.
   try {
     const db = getServerDb()
+    // Note: staff table does NOT have deleted_at — only is_active tracks soft deletes for staff
     const staffRow = db.prepare(
-      `SELECT id FROM staff WHERE pin=? AND is_active=1 AND can_access_dashboard=1 AND (deleted_at IS NULL OR deleted_at='')`
+      `SELECT id FROM staff WHERE pin=? AND is_active=1 AND can_access_dashboard=1`
     ).get(hashed)
     if (staffRow) return true
     // 3. Legacy fallback: admin-role staff (before can_access_dashboard column existed).
     const adminRow = db.prepare(
-      `SELECT id FROM staff WHERE pin=? AND role='admin' AND is_active=1 AND (deleted_at IS NULL OR deleted_at='')`
+      `SELECT id FROM staff WHERE pin=? AND role='admin' AND is_active=1`
     ).get(hashed)
     if (adminRow) return true
   } catch { /* central.db not ready */ }
@@ -641,6 +623,83 @@ if(token){fetch('/api/products',{headers:{'Authorization':'Bearer '+token}}).the
 </html>`
 }
 
+// ─── Sync v2 helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Query the server's sync_log for all change entries since `since` (exclusive),
+ * then fetch the current row state for INSERT/UPDATE entries and collect row_ids
+ * for DELETE entries.  Used by the /sync/v2/pull route.
+ *
+ * Returns at most 1 000 log entries per call so the response stays bounded.
+ * Terminals that are far behind will catch up over multiple pull cycles.
+ */
+function getServerV2Changes(since: number): {
+  records: Record<string, { upserts: SyncRecord[]; deletes: string[] }>
+  maxServerSeq: number
+} {
+  const db = getServerDb()
+
+  const entries = db.prepare(`
+    SELECT seq, table_name, row_id, operation
+    FROM sync_log
+    WHERE seq > ?
+    ORDER BY seq ASC
+    LIMIT 1000
+  `).all(since) as { seq: number; table_name: string; row_id: string; operation: string }[]
+
+  if (entries.length === 0) return { records: {}, maxServerSeq: since }
+
+  const maxServerSeq = entries[entries.length - 1].seq
+
+  // Group by table, dedup row_ids — DELETE wins over pending INSERT/UPDATE for the same id
+  const byTable = new Map<string, { upsertIds: Set<string>; deleteIds: Set<string> }>()
+  for (const entry of entries) {
+    if (!SYNC_TABLES.includes(entry.table_name as SyncTable)) continue
+    if (!byTable.has(entry.table_name)) {
+      byTable.set(entry.table_name, { upsertIds: new Set(), deleteIds: new Set() })
+    }
+    const group = byTable.get(entry.table_name)!
+    if (entry.operation === 'DELETE') {
+      group.deleteIds.add(entry.row_id)
+      group.upsertIds.delete(entry.row_id)
+    } else if (!group.deleteIds.has(entry.row_id)) {
+      group.upsertIds.add(entry.row_id)
+    }
+  }
+
+  const records: Record<string, { upserts: SyncRecord[]; deletes: string[] }> = {}
+
+  for (const [table, { upsertIds, deleteIds }] of byTable) {
+    const pkCol = table === 'settings' ? 'key' : 'id'
+    const tableOut: { upserts: SyncRecord[]; deletes: string[] } = {
+      upserts: [],
+      deletes: [...deleteIds],
+    }
+
+    if (upsertIds.size > 0) {
+      const ids = [...upsertIds]
+      const placeholders = ids.map(() => '?').join(', ')
+      try {
+        let rows = db.prepare(
+          `SELECT * FROM ${table} WHERE ${pkCol} IN (${placeholders})`
+        ).all(ids) as SyncRecord[]
+        if (table === 'settings') {
+          rows = rows.filter((r) => !MACHINE_SPECIFIC_SETTINGS.has(r['key'] as string))
+        }
+        tableOut.upserts = rows
+      } catch (err) {
+        console.warn(`[embedded-server v2] pull: could not fetch from ${table}:`, (err as Error).message)
+      }
+    }
+
+    if (tableOut.upserts.length > 0 || tableOut.deletes.length > 0) {
+      records[table] = tableOut
+    }
+  }
+
+  return { records, maxServerSeq }
+}
+
 // ─── API route handlers ───────────────────────────────────────────────────────
 async function handleApiRoute(req: http.IncomingMessage, res: http.ServerResponse, url: string, method: string): Promise<void> {
   const db = getServerDb()
@@ -783,34 +842,33 @@ function createHandler(apiKey: string) {
         if (!tok || !validateSessionToken(tok)) { send(res, 401, { error: 'Unauthorized' }); return }
         await handleApiRoute(req, res, url, method); return
       }
-      // Sync routes — require the shared API key so only authorised terminals can sync.
-      // /sync/status is deliberately left open so terminals can test connectivity.
+      // ── Sync routes ────────────────────────────────────────────────────────
+      // Open status endpoints — no auth required (used for connectivity probes).
       if (method === 'GET' && url === '/sync/status') {
         send(res, 200, { ok: true, version: '1.0.0', serverTime: new Date().toISOString() }); return
       }
+      if (method === 'GET' && url === '/sync/v2/status') {
+        send(res, 200, { ok: true, version: '2.0.0', protocol: 'seq', serverTime: new Date().toISOString() }); return
+      }
+
       if (url.startsWith('/sync/')) {
-        // If an API key is configured, every sync request must carry it.
+        // All /sync/* routes beyond the status probes require the shared API key.
         if (apiKey) {
           const tok = getBearerToken(req)
           if (tok !== apiKey) { send(res, 401, { error: 'Invalid sync API key' }); return }
         }
+
+        // ── v1 routes (legacy — kept live until all terminals migrate to v2) ──
         if (method === 'POST' && url === '/sync/pull') {
           const body = await parseBody(req) as { since?: string }
           if (!body.since || typeof body.since !== 'string') { send(res, 400, { error: '`since` is required' }); return }
           const records: SyncPayload = {}
           for (const table of SYNC_TABLES) {
             let rows = getRecordsSince(table, body.since)
-            // Never send machine-specific settings keys to terminals
             if (table === 'settings') rows = rows.filter((r) => !MACHINE_SPECIFIC_SETTINGS.has(r['key'] as string))
             if (rows.length > 0) records[table] = rows
           }
-          // Always include ALL non-machine-specific settings regardless of `since`.
-          // Without this, a terminal set up AFTER the server's settings were last
-          // written (storeName, logo, currency, address, etc.) would never receive
-          // those values because their updated_at predates the terminal's lastSyncAt.
-          // Conflict resolution on the terminal side (timestamp-based) ensures a
-          // locally-newer value is never overwritten by a stale server value.
-          const allSettings = (db.prepare(
+          const allSettings = (getServerDb().prepare(
             `SELECT * FROM settings`
           ).all() as SyncRecord[]).filter((r) => !MACHINE_SPECIFIC_SETTINGS.has(r['key'] as string))
           send(res, 200, { serverTime: new Date().toISOString(), records, baselineSettings: allSettings }); return
@@ -831,6 +889,71 @@ function createHandler(apiKey: string) {
           }
           if (adjPids.length > 0) recomputeServerInventory([...new Set(adjPids)])
           send(res, 200, { ok: true, serverTime: new Date().toISOString(), rowsApplied: total }); return
+        }
+
+        // ── v2 routes — seq-based, no clock dependency ──────────────────────
+        if (method === 'POST' && url === '/sync/v2/push') {
+          const body = await parseBody(req) as {
+            terminalId?: string
+            maxSeq?: number
+            records?: Record<string, { upserts?: SyncRecord[]; deletes?: string[] }>
+          }
+          if (!body.terminalId) { send(res, 400, { error: '`terminalId` is required' }); return }
+          if (typeof body.maxSeq !== 'number') { send(res, 400, { error: '`maxSeq` must be a number' }); return }
+
+          let rowsApplied = 0
+          const adjPids: string[] = []
+
+          for (const table of SYNC_TABLES) {
+            const tablePayload = body.records?.[table]
+            if (!tablePayload) continue
+
+            // Apply upserts
+            const upserts = tablePayload.upserts
+            if (Array.isArray(upserts) && upserts.length > 0) {
+              upsertRecords(table, upserts)
+              rowsApplied += upserts.length
+              if (table === 'inventory_adjustments') {
+                for (const row of upserts) {
+                  const pid = row['product_id'] as string; if (pid) adjPids.push(pid)
+                }
+              }
+            }
+
+            // Apply hard deletes (rare — most deletes are soft via deleted_at)
+            const deletes = tablePayload.deletes
+            if (Array.isArray(deletes) && deletes.length > 0) {
+              const pkCol = table === 'settings' ? 'key' : 'id'
+              const db = getServerDb()
+              const placeholders = deletes.map(() => '?').join(', ')
+              try {
+                db.prepare(`DELETE FROM ${table} WHERE ${pkCol} IN (${placeholders})`).run(...deletes)
+                rowsApplied += deletes.length
+              } catch (err) {
+                console.warn(`[embedded-server v2] delete failed for ${table}:`, (err as Error).message)
+              }
+            }
+          }
+
+          if (adjPids.length > 0) recomputeServerInventory([...new Set(adjPids)])
+
+          send(res, 200, {
+            ok: true,
+            ackedSeq: body.maxSeq,
+            rowsApplied,
+            serverTime: new Date().toISOString(),
+          })
+          return
+        }
+
+        if (method === 'POST' && url === '/sync/v2/pull') {
+          const body = await parseBody(req) as { terminalId?: string; since?: number }
+          if (!body.terminalId) { send(res, 400, { error: '`terminalId` is required' }); return }
+          if (typeof body.since !== 'number') { send(res, 400, { error: '`since` must be a number' }); return }
+
+          const { records, maxServerSeq } = getServerV2Changes(body.since)
+          send(res, 200, { ok: true, records, maxServerSeq, serverTime: new Date().toISOString() })
+          return
         }
       }
       send(res, 404, { error: 'Not found' })

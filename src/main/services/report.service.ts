@@ -137,6 +137,7 @@ export const reportService = {
         currency: schema.payments.currency,
         amount: schema.payments.amount,
         originalAmount: schema.payments.originalAmount,
+        changeGiven: schema.payments.changeGiven,
         orderCreatedAt: schema.orders.createdAt
       })
       .from(schema.payments)
@@ -152,17 +153,20 @@ export const reportService = {
 
     // Group by method + currency. total = store-currency equivalent (accounting).
     // originalTotal = sum of what customers actually handed over in that currency.
-    const map = new Map<string, { method: string; currency: string; count: number; total: number; originalTotal: number }>()
+    // changeTotal   = sum of change given back (always in store/primary currency).
+    const map = new Map<string, { method: string; currency: string; count: number; total: number; originalTotal: number; changeTotal: number }>()
     for (const p of payments) {
       const key = `${p.method}|${p.currency ?? 'KYD'}`
       const origAmt = p.originalAmount ?? p.amount
+      const changAmt = p.changeGiven ?? 0
       const existing = map.get(key)
       if (existing) {
         existing.count++
         existing.total += p.amount
         existing.originalTotal += origAmt
+        existing.changeTotal += changAmt
       } else {
-        map.set(key, { method: p.method, currency: p.currency ?? 'KYD', count: 1, total: p.amount, originalTotal: origAmt })
+        map.set(key, { method: p.method, currency: p.currency ?? 'KYD', count: 1, total: p.amount, originalTotal: origAmt, changeTotal: changAmt })
       }
     }
 

@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import bcrypt from 'bcryptjs'
 
 /** Schema version — increment whenever tables change */
-const SCHEMA_VERSION = 22
+const SCHEMA_VERSION = 25
 
 /**
  * Runs idempotent DDL migrations on first launch.
@@ -88,6 +88,24 @@ export function runMigrations(sqlite: Database.Database): void {
   // V21 had their PINs silently left broken due to the $2% named-parameter bug.
   if (currentVersion < 22) {
     applyV21(sqlite)
+  }
+  // V23: Add sync_queue outbox table for reliable terminal → server delivery.
+  if (currentVersion < 23) {
+    applyV23(sqlite)
+  }
+  // V24: Add updated_at and deleted_at to shifts so they can participate in
+  // bidirectional sync. Without updated_at, closing a shift on one terminal
+  // would never propagate to other terminals or the server.
+  if (currentVersion < 24) {
+    applyV24(sqlite)
+  }
+  // V25: Add sync_log table and SQLite triggers for the new seq-based sync
+  // protocol (v2). The log captures every INSERT/UPDATE/DELETE on synced tables
+  // as an append-only sequence of change events.  The v2 push/pull uses these
+  // sequence numbers as cursors instead of wall-clock timestamps, eliminating
+  // clock-skew bugs and race conditions in the v1 watermark approach.
+  if (currentVersion < 25) {
+    applyV25(sqlite)
   }
 
   if (currentVersion < SCHEMA_VERSION) {
@@ -714,5 +732,227 @@ function applyV21(sqlite: Database.Database): void {
     }
   } catch (err) {
     console.error('[V21] Failed to fix bcrypt PINs:', err)
+  }
+}
+
+/**
+ * V23: Add sync_queue outbox table.
+ *
+ * Terminals write completed orders, payments and inventory adjustments to this
+ * table immediately.  A background sync worker flushes pending items to the
+ * server and marks them delivered once the server confirms receipt.
+ * This ensures nothing is lost even when the server is temporarily unreachable.
+ */
+function applyV23(sqlite: Database.Database): void {
+  try {
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS sync_queue (
+        id             TEXT    PRIMARY KEY,
+        table_name     TEXT    NOT NULL,
+        record_id      TEXT    NOT NULL,
+        payload        TEXT    NOT NULL,
+        created_at     TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        attempts       INTEGER NOT NULL DEFAULT 0,
+        last_attempted_at TEXT,
+        delivered      INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_sync_queue_pending
+        ON sync_queue (delivered, created_at)
+        WHERE delivered = 0;
+    `)
+  } catch (err) {
+    console.error('[V23] Failed to create sync_queue:', err)
+  }
+}
+
+/**
+ * V24: Add updated_at and deleted_at to shifts for sync support.
+ *
+ * Shifts need updated_at so that closing a shift (setting closed_at, closing_cash)
+ * on one terminal propagates to other terminals and the server via the normal
+ * last-write-wins delta sync. Without this, shift close events were silently
+ * terminal-local and never appeared in central reports.
+ *
+ * deleted_at follows the same soft-delete pattern used by all other synced tables.
+ */
+function applyV24(sqlite: Database.Database): void {
+  const cols = [
+    `ALTER TABLE shifts ADD COLUMN updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+    `ALTER TABLE shifts ADD COLUMN deleted_at TEXT`,
+  ]
+  for (const ddl of cols) {
+    try {
+      sqlite.exec(ddl)
+    } catch {
+      // Column already exists — idempotent
+    }
+  }
+  // Back-fill updated_at for existing rows using opened_at as a proxy.
+  // opened_at is the closest available timestamp for historical shifts.
+  try {
+    sqlite.exec(`UPDATE shifts SET updated_at = opened_at WHERE updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now'))`)
+  } catch { /* non-fatal */ }
+}
+
+/**
+ * V25: Append-only sync_log table + per-table SQLite triggers.
+ *
+ * Every INSERT / UPDATE / DELETE on a synced table writes one row to sync_log
+ * with an AUTOINCREMENT seq.  The v2 sync protocol uses these seqs as cursors
+ * instead of wall-clock timestamps, which eliminates:
+ *   - Clock-skew bugs (terminal clock wrong → wrong LWW winner)
+ *   - Watermark race conditions (records written between push & pull missed)
+ *   - Partial-delivery ambiguity (acked seq proves exactly what the server saw)
+ *
+ * The v1 sync routes (/sync/push, /sync/pull) are untouched and remain active
+ * until every terminal is switched to v2 via the syncVersion setting.
+ */
+function applyV25(sqlite: Database.Database): void {
+  // ── 1. sync_log table ───────────────────────────────────────────────────────
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS sync_log (
+      seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+      site_id    TEXT    NOT NULL DEFAULT 'local',
+      table_name TEXT    NOT NULL,
+      row_id     TEXT    NOT NULL,
+      operation  TEXT    NOT NULL,
+      written_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_sync_log_seq
+      ON sync_log (seq);
+    CREATE INDEX IF NOT EXISTS idx_sync_log_site_seq
+      ON sync_log (site_id, seq);
+  `)
+
+  // ── 2. Triggers ─────────────────────────────────────────────────────────────
+  //
+  // Pattern: AFTER INSERT / AFTER UPDATE record the new row_id so the push
+  // service can SELECT the current state at flush time.  BEFORE DELETE captures
+  // the row_id before the row disappears (most "deletes" in this schema are
+  // actually soft-deletes via deleted_at, so hard DELETEs are rare).
+  //
+  // The site_id is read from the settings table at trigger time; it defaults to
+  // 'local' on a fresh machine that hasn't been assigned a terminalId yet.
+  const siteExpr = `COALESCE((SELECT value FROM settings WHERE key='terminalId'), 'local')`
+
+  // Tables with `id` TEXT primary key
+  const idTables = [
+    'categories', 'products', 'product_variants', 'product_components',
+    'inventory', 'inventory_adjustments', 'customers', 'discount_rules',
+    'gift_cards', 'orders', 'order_items', 'payments', 'staff', 'shifts',
+    'vendors', 'vendor_payouts',
+  ]
+
+  for (const table of idTables) {
+    // AFTER INSERT
+    try {
+      sqlite.exec(`
+        CREATE TRIGGER IF NOT EXISTS _sl_${table}_ins
+        AFTER INSERT ON ${table} FOR EACH ROW BEGIN
+          INSERT INTO sync_log (site_id, table_name, row_id, operation)
+          VALUES (${siteExpr}, '${table}', NEW.id, 'INSERT');
+        END
+      `)
+    } catch { /* already exists — idempotent */ }
+
+    // AFTER UPDATE
+    try {
+      sqlite.exec(`
+        CREATE TRIGGER IF NOT EXISTS _sl_${table}_upd
+        AFTER UPDATE ON ${table} FOR EACH ROW BEGIN
+          INSERT INTO sync_log (site_id, table_name, row_id, operation)
+          VALUES (${siteExpr}, '${table}', NEW.id, 'UPDATE');
+        END
+      `)
+    } catch { /* already exists */ }
+
+    // BEFORE DELETE — capture row_id before the row is gone
+    try {
+      sqlite.exec(`
+        CREATE TRIGGER IF NOT EXISTS _sl_${table}_del
+        BEFORE DELETE ON ${table} FOR EACH ROW BEGIN
+          INSERT INTO sync_log (site_id, table_name, row_id, operation)
+          VALUES (${siteExpr}, '${table}', OLD.id, 'DELETE');
+        END
+      `)
+    } catch { /* already exists */ }
+  }
+
+  // Settings table uses `key` TEXT as its primary key, not `id`
+  try {
+    sqlite.exec(`
+      CREATE TRIGGER IF NOT EXISTS _sl_settings_ins
+      AFTER INSERT ON settings FOR EACH ROW BEGIN
+        INSERT INTO sync_log (site_id, table_name, row_id, operation)
+        VALUES (${siteExpr}, 'settings', NEW.key, 'INSERT');
+      END
+    `)
+  } catch { /* already exists */ }
+  try {
+    sqlite.exec(`
+      CREATE TRIGGER IF NOT EXISTS _sl_settings_upd
+      AFTER UPDATE ON settings FOR EACH ROW BEGIN
+        INSERT INTO sync_log (site_id, table_name, row_id, operation)
+        VALUES (${siteExpr}, 'settings', NEW.key, 'UPDATE');
+      END
+    `)
+  } catch { /* already exists */ }
+  try {
+    sqlite.exec(`
+      CREATE TRIGGER IF NOT EXISTS _sl_settings_del
+      BEFORE DELETE ON settings FOR EACH ROW BEGIN
+        INSERT INTO sync_log (site_id, table_name, row_id, operation)
+        VALUES (${siteExpr}, 'settings', OLD.key, 'DELETE');
+      END
+    `)
+  } catch { /* already exists */ }
+
+  // ── 3. Backfill existing rows ───────────────────────────────────────────────
+  //
+  // Insert one synthetic INSERT entry per existing row so that when a terminal
+  // first upgrades to v2, its initial push sends all locally-held data to the
+  // server rather than starting from an empty log.  Uses written_at = epoch so
+    // these backfill entries sort before any real-time entries.
+  const siteId = (
+    sqlite.prepare(`SELECT value FROM settings WHERE key='terminalId'`).get() as
+      { value: string } | undefined
+  )?.value ?? 'local'
+
+  const backfillTables: Array<{ table: string; pk: string }> = [
+    { table: 'categories',            pk: 'id'  },
+    { table: 'products',              pk: 'id'  },
+    { table: 'product_variants',      pk: 'id'  },
+    { table: 'product_components',    pk: 'id'  },
+    { table: 'inventory',             pk: 'id'  },
+    { table: 'inventory_adjustments', pk: 'id'  },
+    { table: 'customers',             pk: 'id'  },
+    { table: 'discount_rules',        pk: 'id'  },
+    { table: 'gift_cards',            pk: 'id'  },
+    { table: 'orders',                pk: 'id'  },
+    { table: 'order_items',           pk: 'id'  },
+    { table: 'payments',              pk: 'id'  },
+    { table: 'staff',                 pk: 'id'  },
+    { table: 'shifts',                pk: 'id'  },
+    { table: 'vendors',               pk: 'id'  },
+    { table: 'vendor_payouts',        pk: 'id'  },
+    { table: 'settings',              pk: 'key' },
+  ]
+
+  const backfillInsert = sqlite.prepare(`
+    INSERT INTO sync_log (site_id, table_name, row_id, operation, written_at)
+    VALUES (?, ?, ?, 'INSERT', '1970-01-01T00:00:00.000Z')
+  `)
+  const backfillAll = sqlite.transaction(() => {
+    for (const { table, pk } of backfillTables) {
+      try {
+        const rows = sqlite.prepare(`SELECT ${pk} AS pk FROM ${table}`).all() as { pk: string }[]
+        for (const { pk: rowId } of rows) {
+          backfillInsert.run(siteId, table, rowId)
+        }
+      } catch { /* table may not exist on very old schemas — skip */ }
+    }
+  })
+  try { backfillAll() } catch (err) {
+    console.warn('[V25] backfill partial failure:', (err as Error).message)
   }
 }

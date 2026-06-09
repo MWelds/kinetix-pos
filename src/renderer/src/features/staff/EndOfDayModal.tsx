@@ -27,7 +27,7 @@ interface DaySummary {
   totalDiscount: number
   averageOrderValue: number
   /** Raw payment breakdown from the DB, grouped by method + currency */
-  paymentRows: { method: string; currency: string; count: number; total: number; originalTotal: number }[]
+  paymentRows: { method: string; currency: string; count: number; total: number; originalTotal: number; changeTotal: number }[]
 }
 
 interface TerminalSummary {
@@ -36,7 +36,7 @@ interface TerminalSummary {
   orderCount: number
   totalRevenue: number
   totalDiscount: number
-  paymentRows: { method: string; currency: string; count: number; total: number; originalTotal: number }[]
+  paymentRows: { method: string; currency: string; count: number; total: number; originalTotal: number; changeTotal: number }[]
 }
 
 /** One cash-count entry per method × currency that the cashier fills in */
@@ -226,7 +226,7 @@ function buildEodReceiptHtml(
  * informational on the summary screen instead.
  */
 function buildEntries(
-  paymentRows: { method: string; currency: string; total: number; originalTotal: number }[],
+  paymentRows: { method: string; currency: string; total: number; originalTotal: number; changeTotal: number }[],
   enabledMethods: string[],
   cfg: CurrencyConfig
 ): CountEntry[] {
@@ -240,9 +240,18 @@ function buildEntries(
   const originalTotalFor = (method: string, currency: string) =>
     paymentRows.filter((r) => r.method === method && r.currency === currency).reduce((s, r) => s + r.originalTotal, 0)
 
+  // Sum change given for a method across ALL currencies.
+  // changeGiven is always stored in primary (store) currency, so we sum it all to
+  // reduce the primary-currency cash expected — regardless of what the customer paid in.
+  const changeTotalForMethod = (method: string) =>
+    paymentRows.filter((r) => r.method === method).reduce((s, r) => s + r.changeTotal, 0)
+
   // Only reconcile cash — it's the only thing physically in the drawer
   if (enabledMethods.includes('cash')) {
-    const primExpected = totalFor('cash', cfg.primary)
+    // Net primary cash in drawer = tendered (primary) − all change given back (always primary currency)
+    const primTendered = totalFor('cash', cfg.primary)
+    const totalChange  = changeTotalForMethod('cash')
+    const primExpected = primTendered - totalChange
     rows.push({
       method: 'cash',
       currency: cfg.primary,
@@ -252,6 +261,8 @@ function buildEntries(
     })
 
     if (cfg.secondary) {
+      // Secondary-currency cash: customers hand over foreign notes; change is always
+      // returned in primary, so the physical secondary drawer = full amount tendered.
       const secOriginal = originalTotalFor('cash', cfg.secondary)
       rows.push({
         method: 'cash',

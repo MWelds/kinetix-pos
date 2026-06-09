@@ -18,34 +18,15 @@ import path from 'path'
 import { getSqlite } from '../database/connection'
 import { settingsService } from '../services/settings.service'
 import type { SyncRecord, SyncPayload } from './sync.types'
+import {
+  SYNC_TABLES, HAS_UPDATED_AT, MACHINE_SPECIFIC_SETTINGS, LWW_EXCLUDE_COLS,
+  type SyncTable,
+} from './sync.constants'
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 /** Pull files older than this are deleted to prevent the share from filling up. */
 const PULL_FILE_TTL_DAYS = 7
-
-const SYNC_TABLES = [
-  'categories', 'products', 'product_variants', 'product_components',
-  'inventory', 'inventory_adjustments',
-  'customers', 'discount_rules', 'gift_cards',
-  'orders', 'order_items', 'payments',
-  'staff', 'vendors', 'vendor_payouts', 'settings'
-] as const
-
-type SyncTable = (typeof SYNC_TABLES)[number]
-
-const TABLES_WITH_UPDATED_AT = new Set<SyncTable>([
-  'categories', 'products', 'product_variants', 'customers',
-  'discount_rules', 'gift_cards', 'orders', 'order_items',
-  'staff', 'vendors', 'settings', 'inventory'
-])
-
-const MACHINE_SPECIFIC_SETTINGS = new Set([
-  'nodeMode', 'setupComplete', 'terminalId',
-  'syncEnabled', 'syncUrl', 'syncApiKey', 'syncIntervalSeconds', 'lastSyncAt',
-  'embeddedServerPort', 'embeddedServerApiKey', 'dashboardAdminPin',
-  'syncMode', 'syncSharePath', 'fileSyncLastPullAt'
-])
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
 
@@ -184,9 +165,10 @@ function applyPushPayload(records: SyncPayload): void {
     }
 
     const placeholders = cols.map(() => '?').join(', ')
-    const updateCol = TABLES_WITH_UPDATED_AT.has(table) ? 'updated_at' : 'created_at'
+    const updateCol = HAS_UPDATED_AT.has(table) ? 'updated_at' : 'created_at'
+    const lwwExclude = LWW_EXCLUDE_COLS[table as SyncTable] ?? new Set<string>()
     const setClauses = cols
-      .filter((c) => c !== 'id')
+      .filter((c) => c !== 'id' && !lwwExclude.has(c))
       .map((c) =>
         `${c} = CASE WHEN excluded.${updateCol} >= COALESCE(${table}.${updateCol}, '') THEN excluded.${c} ELSE ${table}.${c} END`
       )
@@ -247,7 +229,7 @@ async function exportServerChanges(root: string): Promise<void> {
   const records: SyncPayload = {}
 
   for (const table of SYNC_TABLES) {
-    const col = TABLES_WITH_UPDATED_AT.has(table) ? 'updated_at' : 'created_at'
+    const col = HAS_UPDATED_AT.has(table) ? 'updated_at' : 'created_at'
     try {
       const rows = db.prepare(
         `SELECT * FROM ${table} WHERE ${col} > ? ORDER BY ${col} ASC`

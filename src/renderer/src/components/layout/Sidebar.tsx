@@ -12,51 +12,73 @@ import { ROUTES, ROLE_LEVEL } from '../../constants'
 import { ShiftModal } from '../../features/staff/ShiftModal'
 import { EndOfDayModal } from '../../features/staff/EndOfDayModal'
 
-/** Sync status bar + manual Sync Now button shown at the bottom of the sidebar. */
+type SyncShape = { status: string; error: string | null; lastSyncAt: string | null }
+
+/** Sync status bar + manual Sync Now button shown at the bottom of the sidebar.
+ *  Automatically shows v2 state when syncVersion is set to 'v2'. */
 function SyncIndicator() {
-  const [syncState, setSyncState] = useState<{ status: string; error: string | null; lastSyncAt: string | null } | null>(null)
+  const [syncVersion, setSyncVersion] = useState<string>('')
+  const [syncState, setSyncState] = useState<SyncShape | null>(null)
+  const [syncV2State, setSyncV2State] = useState<SyncShape | null>(null)
   const [syncing, setSyncing] = useState(false)
 
   useEffect(() => {
+    // Load initial version setting
+    api.settings.get('syncVersion').then((v) => setSyncVersion(v ?? '')).catch(() => {})
+
+    // Subscribe to both protocol state streams; only one will be active at a time
     api.sync.getState().then(setSyncState).catch(() => {})
-    const unsub = api.sync.onStateChange((s: unknown) =>
-      setSyncState(s as typeof syncState)
-    )
-    return unsub
+    const unsubV1 = api.sync.onStateChange((s: unknown) => setSyncState(s as SyncShape))
+
+    api.syncV2.getState().then(setSyncV2State).catch(() => {})
+    const unsubV2 = api.syncV2.onStateChange((s: unknown) => {
+      setSyncV2State(s as SyncShape)
+      // When v2 fires state, we're definitely on v2
+      setSyncVersion('v2')
+    })
+
+    return () => { unsubV1(); unsubV2() }
   }, [])
 
-  if (!syncState || syncState.status === 'disabled') return null
+  const isV2 = syncVersion === 'v2'
+  const activeState = isV2 ? syncV2State : syncState
 
-  const isSyncing = syncState.status === 'syncing' || syncing
+  if (!activeState || activeState.status === 'disabled') return null
+
+  const isSyncing = activeState.status === 'syncing' || syncing
 
   const icon =
-    isSyncing                       ? <RefreshCw size={11} className="animate-spin" /> :
-    syncState.status === 'synced'   ? <CheckCircle2 size={11} /> :
-    syncState.status === 'error'    ? <AlertCircle size={11} /> :
+    isSyncing                        ? <RefreshCw size={11} className="animate-spin" /> :
+    activeState.status === 'synced'  ? <CheckCircle2 size={11} /> :
+    activeState.status === 'error'   ? <AlertCircle size={11} /> :
     <WifiOff size={11} />
 
   const color =
-    syncState.status === 'synced'  ? 'text-green-400' :
-    isSyncing                      ? 'text-blue-400'  :
-    syncState.status === 'error'   ? 'text-red-400'   : 'text-slate-400'
+    activeState.status === 'synced'  ? 'text-green-400' :
+    isSyncing                        ? 'text-blue-400'  :
+    activeState.status === 'error'   ? 'text-red-400'   : 'text-slate-400'
 
   const label =
-    isSyncing                      ? 'Syncing\u2026' :
-    syncState.status === 'synced'  ? `Synced${syncState.lastSyncAt ? ' ' + new Date(syncState.lastSyncAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}` :
-    syncState.status === 'error'   ? 'Sync error' : 'Offline'
+    isSyncing                        ? 'Syncing\u2026' :
+    activeState.status === 'synced'  ? `Synced${activeState.lastSyncAt ? ' ' + new Date(activeState.lastSyncAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}${isV2 ? ' \u00b7v2' : ''}` :
+    activeState.status === 'error'   ? 'Sync error' : 'Offline'
 
   async function handleSyncNow() {
     if (isSyncing) return
     setSyncing(true)
     try {
-      await api.sync.runNow()
+      if (isV2) {
+        await api.syncV2.runNow()
+      } else {
+        await api.sync.runNow()
+      }
     } catch { /* error state shown via onStateChange */ }
     finally { setSyncing(false) }
   }
 
   return (
     <div className="border-t border-gray-800 px-3 py-2 flex items-center justify-between gap-2">
-      <div className={`flex items-center gap-1.5 ${color} text-xs min-w-0`} title={syncState.error ?? label}>
+      <div className={`flex items-center gap-1.5 ${color} text-xs min-w-0`} title={activeState.error ?? label}>
         {icon}
         <span className="truncate">{label}</span>
       </div>

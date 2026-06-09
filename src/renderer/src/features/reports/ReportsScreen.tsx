@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { BarChart3, TrendingUp, Download, RefreshCw, Cloud, ChevronDown, Check, AlertCircle, Monitor } from 'lucide-react'
+import { BarChart3, TrendingUp, Download, RefreshCw, Cloud, ChevronDown, Check, AlertCircle, Monitor, DollarSign, CreditCard } from 'lucide-react'
 import { api } from '../../lib/api'
 import { Button, PageSpinner } from '../../components/ui'
-import { useCurrencyStore, } from '../../stores/currency.store'
+import { useCurrencyStore } from '../../stores/currency.store'
 import { CURRENCIES } from '../../lib/currency'
 import { startOfDay, endOfDay, toISODate } from '../../lib/dates'
 import type { SalesSummary } from '../../types'
@@ -38,8 +38,29 @@ interface ExportOption {
   fn: () => Promise<void>
 }
 
+function useTodayLabel(): string {
+  const [label, setLabel] = useState(() =>
+    new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+  )
+  useEffect(() => {
+    // Refresh at midnight so the displayed date rolls over without a page reload
+    function scheduleNextMidnight() {
+      const now = new Date()
+      const msUntilMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() - now.getTime()
+      return setTimeout(() => {
+        setLabel(new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }))
+        scheduleNextMidnight()
+      }, msUntilMidnight)
+    }
+    const t = scheduleNextMidnight()
+    return () => clearTimeout(t)
+  }, [])
+  return label
+}
+
 export function ReportsScreen() {
   const fmtRaw = useCurrencyStore((s) => s.fmtRaw)
+  const todayLabel = useTodayLabel()
   const [preset, setPreset] = useState<DatePreset>('today')
   const [loading, setLoading] = useState(true)
   const [summary, setSummary] = useState<SalesSummary | null>(null)
@@ -172,7 +193,10 @@ export function ReportsScreen() {
       {/* Header */}
       <div className="bg-white border-b border-gray-200 px-6 py-4">
         <div className="flex items-center justify-between">
-          <h1 className="text-xl font-bold text-gray-900">Reports</h1>
+          <div>
+            <h1 className="text-xl font-bold text-gray-900">Reports</h1>
+            <p className="text-sm text-gray-500 mt-0.5">{todayLabel}</p>
+          </div>
           <div className="flex items-center gap-3">
             <div className="flex rounded-lg overflow-hidden border border-gray-300">
               {(['today', 'week', 'month'] as DatePreset[]).map((p) => (
@@ -234,19 +258,72 @@ export function ReportsScreen() {
         {loading ? <PageSpinner /> : (
           <>
             {summary && (
-              <div className="grid grid-cols-4 gap-4">
-                {[
-                  { label: 'Orders', value: summary.orderCount, color: 'blue' },
-                  { label: 'Revenue', value: fmtRaw(summary.totalRevenue), color: 'emerald' },
-                  { label: 'Avg Order', value: fmtRaw(summary.averageOrderValue), color: 'purple' },
-                  { label: 'Discounts', value: fmtRaw(summary.totalDiscount), color: 'amber' }
-                ].map((card) => (
-                  <div key={card.label} className="bg-white rounded-xl border border-gray-200 p-4">
-                    <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">{card.label}</p>
-                    <p className={`text-2xl font-bold mt-1 text-${card.color}-600`}>{card.value}</p>
-                  </div>
-                ))}
-              </div>
+              <>
+                {/* KPI cards */}
+                <div className="grid grid-cols-4 gap-4">
+                  {[
+                    { label: 'Orders', value: summary.orderCount, color: 'blue' },
+                    { label: 'Total Sales', value: fmtRaw(summary.totalRevenue), color: 'emerald' },
+                    { label: 'Avg Order', value: fmtRaw(summary.averageOrderValue), color: 'purple' },
+                    { label: 'Discounts', value: fmtRaw(summary.totalDiscount), color: 'amber' }
+                  ].map((card) => (
+                    <div key={card.label} className="bg-white rounded-xl border border-gray-200 p-4">
+                      <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">{card.label}</p>
+                      <p className={`text-2xl font-bold mt-1 text-${card.color}-600`}>{card.value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Cash / Card totals in both currencies */}
+                {payments.length > 0 && (() => {
+                  const { currency: primaryCurrency, altCurrency } = useCurrencyStore.getState()
+                  const secondaryCurrency = altCurrency()
+                  const allCurrencies = [...new Set(payments.map((r) => r.currency))]
+                  const sumBy = (method: string | null, currency: string) =>
+                    payments.filter((r) => (method ? r.method === method : true) && r.currency === currency)
+                      .reduce((s, r) => s + r.originalTotal, 0)
+                  const rows = [
+                    { label: 'Total Sales', icon: <TrendingUp size={14} />, method: null,   bold: true  },
+                    { label: 'Cash',        icon: <DollarSign size={14} />, method: 'cash', bold: false },
+                    { label: 'Card',        icon: <CreditCard size={14} />, method: 'card', bold: false },
+                  ]
+                  return (
+                    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                      <div className="px-4 py-3 border-b border-gray-100">
+                        <h2 className="text-sm font-semibold text-gray-700">Sales by Payment Type</h2>
+                      </div>
+                      <table className="w-full">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-2 text-left text-xs text-gray-500">Method</th>
+                            {allCurrencies.map((cur) => (
+                              <th key={cur} className="px-4 py-2 text-right text-xs text-gray-500">{cur}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {rows.map(({ label, icon, method, bold }) => (
+                            <tr key={label} className={bold ? 'bg-gray-50 font-semibold' : 'hover:bg-gray-50'}>
+                              <td className="px-4 py-2.5 text-sm">
+                                <span className="flex items-center gap-2 text-gray-700">{icon}{label}</span>
+                              </td>
+                              {allCurrencies.map((cur) => {
+                                const val = sumBy(method, cur)
+                                const sym = CURRENCIES[cur]?.symbol ?? cur
+                                return (
+                                  <td key={cur} className={`px-4 py-2.5 text-right text-sm ${bold ? 'text-gray-900' : 'text-gray-700'}`}>
+                                    {val > 0 ? `${sym}${val.toFixed(2)}` : <span className="text-gray-300">—</span>}
+                                  </td>
+                                )
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )
+                })()}
+              </>
             )}
 
             <div className="grid grid-cols-2 gap-6">
@@ -275,57 +352,6 @@ export function ReportsScreen() {
               <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
                   <TrendingUp size={16} className="text-emerald-600" />
-                  <h2 className="text-sm font-semibold text-gray-700">Payment Methods</h2>
-                </div>
-                <table className="w-full">
-                  <thead className="bg-gray-50"><tr>
-                    <th className="px-4 py-2 text-left text-xs text-gray-500">Method</th>
-                    <th className="px-4 py-2 text-center text-xs text-gray-500">Txns</th>
-                    <th className="px-4 py-2 text-right text-xs text-gray-500">Received</th>
-                  </tr></thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {payments.map((p) => (
-                      <tr key={`${p.method}|${p.currency}`} className="hover:bg-gray-50">
-                        <td className="px-4 py-2.5">
-                          <span className="flex items-center gap-2">
-                            <span className="text-sm text-gray-800 capitalize font-medium">{p.method.replace(/_/g, ' ')}</span>
-                            <span className="text-[10px] font-bold text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">{p.currency}</span>
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5 text-sm text-gray-500 text-center">{p.count}</td>
-                        <td className="px-4 py-2.5 text-sm font-bold text-gray-900 text-right">
-                          {CURRENCIES[p.currency]?.symbol ?? p.currency}{p.originalTotal.toFixed(2)}
-                        </td>
-                      </tr>
-                    ))}
-                    {!payments.length && <tr><td colSpan={3} className="px-4 py-6 text-center text-gray-400 text-sm">No payments</td></tr>}
-                  </tbody>
-                  {payments.length > 0 && (
-                    <tfoot>
-                      <tr className="border-t-2 border-gray-200 bg-gray-50">
-                        <td className="px-4 py-2.5 text-xs font-bold text-gray-500 uppercase tracking-wide" colSpan={2}>Total</td>
-                        <td className="px-4 py-2.5 text-right">
-                          {(() => {
-                            const byCur = new Map<string, number>()
-                            for (const p of payments) byCur.set(p.currency, (byCur.get(p.currency) ?? 0) + p.originalTotal)
-                            return Array.from(byCur.entries()).map(([cur, total]) => (
-                              <div key={cur} className="text-sm font-bold text-gray-900">
-                                {CURRENCIES[cur]?.symbol ?? cur}{total.toFixed(2)}
-                                <span className="text-[10px] text-gray-400 ml-1">{cur}</span>
-                              </div>
-                            ))
-                          })()}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  )}
-                </table>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-6">
-              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-100">
                   <h2 className="text-sm font-semibold text-gray-700">Sales by Staff</h2>
                 </div>
                 <table className="w-full">
@@ -344,7 +370,9 @@ export function ReportsScreen() {
                   </tbody>
                 </table>
               </div>
+            </div>
 
+            <div className="grid grid-cols-2 gap-6">
               <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
                   <Monitor size={16} className="text-indigo-600" />

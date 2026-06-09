@@ -31,7 +31,11 @@ import { csvImportExportService } from '../services/csv-import-export.service'
 import { vendorService } from '../services/vendor.service'
 import { discountService } from '../services/discount.service'
 import { giftCardService } from '../services/gift-card.service'
-import { getSyncState, runSync, testConnection, startSyncLoop, stopSyncLoop, onSyncStateChange } from '../sync/sync.service'
+import { getSyncState, runSync, forceFullSync, testConnection, startSyncLoop, stopSyncLoop, onSyncStateChange } from '../sync/sync.service'
+import {
+  getSyncV2State, runSyncV2, forceFullSyncV2,
+  startSyncV2Loop, stopSyncV2Loop, onSyncV2StateChange
+} from '../sync/sync-v2.service'
 import { startEmbeddedServer, stopEmbeddedServer, getEmbeddedServerStatus } from '../sync/embedded-server'
 import {
   getFileSyncState, runFileSync, startFileSyncLoop, stopFileSyncLoop,
@@ -775,6 +779,12 @@ export function registerIpcHandlers(): void {
     return getSyncState()
   })
 
+  ipcMain.handle(IPC.SYNC_FORCE_FULL, async (e) => {
+    requireRole(e, 'admin')
+    await forceFullSync()
+    return getSyncState()
+  })
+
   ipcMain.handle(IPC.SYNC_TEST_CONNECTION, async (_e, url: string, _apiKey: string) => {
     // Always use the stored API key — never trust the renderer to supply it
     const storedKey = settingsService.get('syncApiKey')?.trim() ?? ''
@@ -795,6 +805,45 @@ export function registerIpcHandlers(): void {
     requireRole(e, 'admin')
     stopSyncLoop()
     return getSyncState()
+  })
+
+  // ── Multi-terminal sync v2 ──────────────────────────────────────────────────
+
+  // Push v2 state changes to all renderer windows
+  onSyncV2StateChange((v2State) => {
+    BrowserWindow.getAllWindows().forEach((win: BrowserWindow) => {
+      if (!win.isDestroyed()) {
+        win.webContents.send(IPC.SYNC_V2_STATE_PUSH, v2State)
+      }
+    })
+    return undefined
+  })
+
+  ipcMain.handle(IPC.SYNC_V2_GET_STATE, () => getSyncV2State())
+
+  ipcMain.handle(IPC.SYNC_V2_RUN_NOW, async (e) => {
+    requireRole(e, 'admin')
+    await runSyncV2()
+    return getSyncV2State()
+  })
+
+  ipcMain.handle(IPC.SYNC_V2_FORCE_FULL, async (e) => {
+    requireRole(e, 'admin')
+    await forceFullSyncV2()
+    return getSyncV2State()
+  })
+
+  ipcMain.handle(IPC.SYNC_V2_START, (e, intervalSeconds?: number) => {
+    requireRole(e, 'admin')
+    if (settingsService.get('nodeMode') === 'server') return getSyncV2State()
+    startSyncV2Loop(intervalSeconds)
+    return getSyncV2State()
+  })
+
+  ipcMain.handle(IPC.SYNC_V2_STOP, (e) => {
+    requireRole(e, 'admin')
+    stopSyncV2Loop()
+    return getSyncV2State()
   })
 
   // ── Setup wizard + embedded server ──────────────────────────────────────────

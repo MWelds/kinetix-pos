@@ -247,6 +247,7 @@ const api = {
   sync: {
     getState: () => ipcRenderer.invoke(IPC.SYNC_GET_STATE),
     runNow: () => ipcRenderer.invoke(IPC.SYNC_RUN_NOW),
+    forceFull: () => ipcRenderer.invoke(IPC.SYNC_FORCE_FULL),
     testConnection: (url: string, apiKey: string) => ipcRenderer.invoke(IPC.SYNC_TEST_CONNECTION, url, apiKey),
     start: (intervalSeconds?: number) => ipcRenderer.invoke(IPC.SYNC_START, intervalSeconds),
     stop: () => ipcRenderer.invoke(IPC.SYNC_STOP),
@@ -268,6 +269,20 @@ const api = {
       ipcRenderer.invoke(IPC.EMBEDDED_SERVER_START, port, apiKey),
     embeddedServerStop: () => ipcRenderer.invoke(IPC.EMBEDDED_SERVER_STOP),
     embeddedServerStatus: () => ipcRenderer.invoke(IPC.EMBEDDED_SERVER_STATUS)
+  },
+
+  // Multi-terminal sync v2 (seq-based append-only log)
+  syncV2: {
+    getState: () => ipcRenderer.invoke(IPC.SYNC_V2_GET_STATE),
+    runNow: () => ipcRenderer.invoke(IPC.SYNC_V2_RUN_NOW),
+    forceFull: () => ipcRenderer.invoke(IPC.SYNC_V2_FORCE_FULL),
+    start: (intervalSeconds?: number) => ipcRenderer.invoke(IPC.SYNC_V2_START, intervalSeconds),
+    stop: () => ipcRenderer.invoke(IPC.SYNC_V2_STOP),
+    onStateChange: (callback: (state: unknown) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state)
+      ipcRenderer.on(IPC.SYNC_V2_STATE_PUSH, handler)
+      return () => ipcRenderer.removeListener(IPC.SYNC_V2_STATE_PUSH, handler)
+    }
   },
 
   // File-based sync (no HTTP — uses Windows network share)

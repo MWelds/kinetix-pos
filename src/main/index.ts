@@ -9,6 +9,7 @@ import { getDatabase, closeDatabase } from './database/connection'
 import { seedDatabase } from './database/seed'
 import { setMainWindow } from './display/customer-display'
 import { initSync } from './sync/sync.service'
+import { initSyncV2 } from './sync/sync-v2.service'
 import { initFileSync } from './sync/file-sync.service'
 import { startFileSyncServer, getDefaultLocalSharePath } from './sync/file-sync-server'
 import { settingsService } from './services/settings.service'
@@ -134,7 +135,8 @@ app
       }
     }
 
-    initSync()     // HTTP sync client — no-op when nodeMode=server or syncMode=file
+    initSync()     // HTTP sync v1 — no-op when nodeMode=server, syncMode=file, or syncVersion=v2
+    initSyncV2()   // HTTP sync v2 — no-op unless syncVersion=v2 and syncEnabled=true
     initFileSync() // File sync client — no-op unless nodeMode=terminal and syncMode=file
 
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {

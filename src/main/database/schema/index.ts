@@ -122,7 +122,11 @@ export const shifts = sqliteTable('shifts', {
   openingCash: real('opening_cash').notNull().default(0),
   closingCash: real('closing_cash'),
   notes: text('notes'),
-  status: text('status').notNull().default('open') // 'open'|'closed'
+  status: text('status').notNull().default('open'), // 'open'|'closed'
+  // V24: added for bidirectional sync (updated_at) and soft-delete (deleted_at).
+  // The columns are added to existing DBs by the V24 migration in migrate.ts.
+  updatedAt: text('updated_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+  deletedAt: text('deleted_at'),
 })
 
 // ─── Discount Rules ───────────────────────────────────────────────────────────

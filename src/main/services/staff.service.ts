@@ -150,7 +150,8 @@ export const staffService = {
         closedAt: new Date().toISOString(),
         closingCash,
         notes,
-        status: 'closed'
+        status: 'closed',
+        updatedAt: new Date().toISOString(),
       })
       .where(eq(schema.shifts.id, shiftId))
       .run()
@@ -207,7 +208,7 @@ export const staffService = {
     if (!shiftId) throw new Error('shiftId is required')
     const db = getDatabase()
     db.update(schema.shifts)
-      .set({ status: 'open', closedAt: null, closingCash: null })
+      .set({ status: 'open', closedAt: null, closingCash: null, updatedAt: new Date().toISOString() })
       .where(eq(schema.shifts.id, shiftId))
       .run()
     return db.select().from(schema.shifts).where(eq(schema.shifts.id, shiftId)).get()

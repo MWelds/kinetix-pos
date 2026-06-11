@@ -877,18 +877,31 @@ function createHandler(apiKey: string) {
           const body = await parseBody(req) as { terminalId?: string; records?: SyncPayload }
           if (!body.terminalId) { send(res, 400, { error: '`terminalId` is required' }); return }
           if (!body.records)    { send(res, 400, { error: '`records` is required' }); return }
-          let total = 0; const adjPids: string[] = []
+          let total = 0
+          const adjPids: string[] = []
+          const skippedTables: { table: string; error: string }[] = []
           for (const table of SYNC_TABLES) {
             const rows = body.records[table]
-            if (Array.isArray(rows) && rows.length > 0) {
-              upsertRecords(table, rows); total += rows.length
+            if (!Array.isArray(rows) || rows.length === 0) continue
+            try {
+              upsertRecords(table, rows)
+              total += rows.length
               if (table === 'inventory_adjustments') {
                 for (const row of rows) { const pid = row['product_id'] as string; if (pid) adjPids.push(pid) }
               }
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err)
+              console.error(`[embedded-server] /sync/push upsert failed for table "${table}":`, msg)
+              skippedTables.push({ table, error: msg })
             }
           }
           if (adjPids.length > 0) recomputeServerInventory([...new Set(adjPids)])
-          send(res, 200, { ok: true, serverTime: new Date().toISOString(), rowsApplied: total }); return
+          send(res, 200, {
+            ok: skippedTables.length === 0,
+            serverTime: new Date().toISOString(),
+            rowsApplied: total,
+            ...(skippedTables.length > 0 && { skippedTables }),
+          }); return
         }
 
         // ── v2 routes — seq-based, no clock dependency ──────────────────────

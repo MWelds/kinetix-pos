@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import bcrypt from 'bcryptjs'
 
 /** Schema version — increment whenever tables change */
-const SCHEMA_VERSION = 25
+const SCHEMA_VERSION = 26
 
 /**
  * Runs idempotent DDL migrations on first launch.
@@ -106,6 +106,22 @@ export function runMigrations(sqlite: Database.Database): void {
   // clock-skew bugs and race conditions in the v1 watermark approach.
   if (currentVersion < 25) {
     applyV25(sqlite)
+  }
+
+  // V26: Idempotent heal for updated_at / deleted_at on shifts.
+  //
+  // V24 added these columns, but DBs that were already at schema_version=25
+  // (i.e. every machine that upgraded incrementally through v1.0.99) skipped
+  // V24 because `currentVersion < 24` evaluated to false.  As a result those
+  // installations have no `updated_at` column on shifts, causing ALL shift
+  // queries to fail with "no such column: updated_at" and preventing users
+  // from opening or closing shifts.
+  //
+  // SQLite cannot add a NOT NULL column with a non-constant DEFAULT expression
+  // to a table that already has rows, so V26 adds the column as nullable TEXT
+  // and then back-fills it from opened_at.
+  if (currentVersion < 26) {
+    applyV26(sqlite)
   }
 
   if (currentVersion < SCHEMA_VERSION) {
@@ -955,4 +971,35 @@ function applyV25(sqlite: Database.Database): void {
   try { backfillAll() } catch (err) {
     console.warn('[V25] backfill partial failure:', (err as Error).message)
   }
+}
+
+/**
+ * V26: Idempotent heal for updated_at / deleted_at on shifts.
+ *
+ * V24 added these columns but was skipped on DBs already at schema_version=25
+ * because `currentVersion < 24` evaluated to false. This migration re-applies
+ * the same DDL using nullable TEXT (no NOT NULL DEFAULT expression) to avoid
+ * the SQLite restriction that prevents adding a NOT NULL column with a
+ * non-constant default to a table that already has rows.
+ *
+ * The back-fill sets updated_at = opened_at for any row where it is still NULL
+ * so the Drizzle schema (which declares updated_at as notNull) can read without
+ * errors.
+ */
+function applyV26(sqlite: Database.Database): void {
+  const cols = [
+    `ALTER TABLE shifts ADD COLUMN updated_at TEXT`,
+    `ALTER TABLE shifts ADD COLUMN deleted_at TEXT`,
+  ]
+  for (const ddl of cols) {
+    try {
+      sqlite.exec(ddl)
+    } catch {
+      // Column already exists — idempotent
+    }
+  }
+  // Back-fill: set updated_at = opened_at for rows where it is NULL.
+  try {
+    sqlite.exec(`UPDATE shifts SET updated_at = opened_at WHERE updated_at IS NULL`)
+  } catch { /* non-fatal */ }
 }

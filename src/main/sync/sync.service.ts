@@ -6,7 +6,7 @@ import {
   type SyncTable,
 } from './sync.constants'
 
-// ─── State ────────────────────────────────────────────────────────────────────
+// âââ State ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 let state: SyncState = {
   status: 'disabled',
   lastSyncAt: null,
@@ -31,18 +31,18 @@ export function getSyncState(): SyncState {
   return state
 }
 
-// ─── Lifecycle ────────────────────────────────────────────────────────────────
+// âââ Lifecycle ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
-/** Called on app startup — reads settings and starts the interval if sync is enabled. */
+/** Called on app startup â reads settings and starts the interval if sync is enabled. */
 export function initSync(): void {
-  // Server machines ARE the sync target — they never run the sync client
+  // Server machines ARE the sync target â they never run the sync client
   const nodeMode = settingsService.get('nodeMode')
   if (nodeMode === 'server') {
     setState({ status: 'disabled' })
     return
   }
 
-  // v2 sync takes over when enabled — don't run both simultaneously
+  // v2 sync takes over when enabled â don't run both simultaneously
   const syncVersion = settingsService.get('syncVersion' as never)
   if (syncVersion === 'v2') {
     setState({ status: 'disabled' })
@@ -80,8 +80,8 @@ export function stopSyncLoop(): void {
 
 /**
  * Force a full resync by clearing lastSyncAt so the next pull fetches ALL
- * records from the server — products, inventory, staff, settings (logo,
- * address, currency, etc.) — regardless of when they were last modified.
+ * records from the server â products, inventory, staff, settings (logo,
+ * address, currency, etc.) â regardless of when they were last modified.
  * Use when a terminal is missing data or settings from the server.
  */
 export async function forceFullSync(): Promise<void> {
@@ -91,7 +91,7 @@ export async function forceFullSync(): Promise<void> {
   return runSync()
 }
 
-// ─── Core sync logic ──────────────────────────────────────────────────────────
+// âââ Core sync logic ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 export async function runSync(): Promise<void> {
   const serverUrl = settingsService.get('syncUrl')?.trim()
@@ -113,10 +113,11 @@ export async function runSync(): Promise<void> {
 
   try {
     await pushChanges(serverUrl, apiKey, terminalId)
-    await pullChanges(serverUrl, apiKey, terminalId)
+    const serverTime = await pullChanges(serverUrl, apiKey, terminalId)
 
     setState({ status: 'synced', lastSyncAt: syncStartedAt, error: null, pendingChanges: 0 })
     settingsService.set('lastSyncAt', syncStartedAt)
+    if (serverTime) settingsService.set('lastPullServerTime', serverTime)
   } catch (err) {
     let msg = err instanceof Error ? err.message : String(err)
     // Node.js fetch wraps the real network error in err.cause. Expose it so
@@ -131,7 +132,7 @@ export async function runSync(): Promise<void> {
   }
 }
 
-// ─── Self-healing column patch ────────────────────────────────────────────────
+// âââ Self-healing column patch ââââââââââââââââââââââââââââââââââââââââââââââââ
 function ensureSyncColumns(): void {
   let db: ReturnType<typeof getSqlite>
   try {
@@ -164,7 +165,7 @@ function ensureSyncColumns(): void {
   }
 }
 
-// ─── Push ─────────────────────────────────────────────────────────────────────
+// âââ Push âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 async function pushChanges(serverUrl: string, apiKey: string, terminalId: string): Promise<void> {
   ensureSyncColumns()
@@ -178,13 +179,13 @@ async function pushChanges(serverUrl: string, apiKey: string, terminalId: string
     const sql = `SELECT * FROM ${table} WHERE ${col} > ? ORDER BY ${col} ASC`
     try {
       const rows = db.prepare(sql).all(lastSync) as SyncRecord[]
-      // Never push machine-specific settings keys — they must stay local
+      // Never push machine-specific settings keys â they must stay local
       const filteredRows = table === 'settings'
         ? rows.filter((r) => !MACHINE_SPECIFIC_SETTINGS.has(r['key'] as string))
         : rows
       if (filteredRows.length > 0) records[table] = filteredRows
     } catch (err) {
-      console.warn(`[sync] skipping table "${table}" — query failed:`, (err as Error).message)
+      console.warn(`[sync] skipping table "${table}" â query failed:`, (err as Error).message)
     }
   }
 
@@ -208,10 +209,12 @@ async function pushChanges(serverUrl: string, apiKey: string, terminalId: string
   if (!json.ok) throw new Error('Server rejected push')
 }
 
-// ─── Pull ─────────────────────────────────────────────────────────────────────
+// âââ Pull âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
-async function pullChanges(serverUrl: string, apiKey: string, terminalId: string): Promise<void> {
-  const since = settingsService.get('lastSyncAt' as never) || '1970-01-01T00:00:00.000Z'
+async function pullChanges(serverUrl: string, apiKey: string, terminalId: string): Promise<string | null> {
+  const since = settingsService.get('lastPullServerTime' as never)
+    || settingsService.get('lastSyncAt' as never)
+    || '1970-01-01T00:00:00.000Z'
 
   const res = await fetchWithTimeout(`${serverUrl}/sync/pull`, {
     method: 'POST',
@@ -229,13 +232,14 @@ async function pullChanges(serverUrl: string, apiKey: string, terminalId: string
 
   // Apply the full settings snapshot returned by the server.  This covers
   // store-level settings (name, logo, address, currency, tax, etc.) that were
-  // configured on the server before this terminal was set up — they predate
+  // configured on the server before this terminal was set up â they predate
   // lastSyncAt so they would never appear in the delta records above.
   // applyBaselineSettings uses the same timestamp-based conflict resolution as
   // normal settings sync, so a locally-newer value is never overwritten.
   if (Array.isArray(json.baselineSettings) && json.baselineSettings.length > 0) {
     applyBaselineSettings(json.baselineSettings)
   }
+  return typeof json.serverTime === 'string' ? json.serverTime : null
 }
 
 function applyPulledRecords(records: SyncPayload): void {
@@ -266,7 +270,7 @@ function applyPulledRecords(records: SyncPayload): void {
     const tableColsRaw = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
     const tableColSet = new Set(tableColsRaw.map((r) => r.name))
     const updateCol = HAS_UPDATED_AT.has(table as SyncTable) ? 'updated_at' : 'created_at'
-    // Columns that must never be overwritten by LWW — e.g. inventory.quantity
+    // Columns that must never be overwritten by LWW â e.g. inventory.quantity
     // is always recomputed from adjustments and must not be set by a pulled row.
     const lwwExclude = LWW_EXCLUDE_COLS[table as SyncTable] ?? new Set<string>()
 
@@ -286,7 +290,7 @@ function applyPulledRecords(records: SyncPayload): void {
           ON CONFLICT(id) DO UPDATE SET ${setClauses}
         `).run(cols.map((c) => row[c]))
       } catch {
-        // Row may reference a foreign key not yet pulled — skip and retry next cycle
+        // Row may reference a foreign key not yet pulled â skip and retry next cycle
       }
     }
   })
@@ -303,7 +307,7 @@ function applyPulledRecords(records: SyncPayload): void {
     }
   }
 
-  // ── Delta inventory recompute ──────────────────────────────────────────────
+  // ââ Delta inventory recompute ââââââââââââââââââââââââââââââââââââââââââââââ
   // If adjustment records were pulled, recompute inventory.quantity from the
   // full adjustment history so both terminals converge to the correct value
   // rather than fighting over the absolute quantity via last-write-wins.
@@ -318,12 +322,12 @@ function applyPulledRecords(records: SyncPayload): void {
  * Apply the full settings snapshot sent by the server on every pull response.
  * This ensures store-level settings (name, logo, address, currency, tax, etc.)
  * reach terminals that were set up after those settings were last written on
- * the server — their updated_at predates the terminal's lastSyncAt, so they
+ * the server â their updated_at predates the terminal's lastSyncAt, so they
  * would never appear in the normal delta pull.
  *
  * Conflict resolution: if the local value has a NEWER updated_at than the
  * server value, the local value wins (e.g. a manager changed the tax rate at
- * the terminal today — that should not be silently reverted by the server).
+ * the terminal today â that should not be silently reverted by the server).
  */
 function applyBaselineSettings(rows: SyncRecord[]): void {
   const db = getSqlite()
@@ -367,7 +371,7 @@ function recomputeInventoryFromAdjustments(
   }
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// âââ Helpers ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 function buildHeaders(apiKey: string): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -391,7 +395,7 @@ async function fetchWithTimeout(url: string, init: RequestInit): Promise<Respons
   }
 }
 
-/** Quick connectivity check — resolves true if the server responds to /sync/status. */
+/** Quick connectivity check â resolves true if the server responds to /sync/status. */
 export async function testConnection(serverUrl: string, apiKey: string): Promise<{ ok: boolean; message: string }> {
   try {
     const res = await fetchWithTimeout(`${serverUrl}/sync/status`, {
@@ -399,7 +403,7 @@ export async function testConnection(serverUrl: string, apiKey: string): Promise
     })
     if (res.ok) {
       const json = await res.json() as { ok: boolean; serverTime: string }
-      return { ok: true, message: `Connected — server time ${json.serverTime}` }
+      return { ok: true, message: `Connected â server time ${json.serverTime}` }
     }
     return { ok: false, message: `Server responded with ${res.status}` }
   } catch (err) {

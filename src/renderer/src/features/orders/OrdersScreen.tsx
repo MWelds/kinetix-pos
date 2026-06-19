@@ -84,10 +84,14 @@ export function OrdersScreen() {
 
   async function refundOrder(order: Order) {
     if (!confirm(`Refund order ${order.orderNumber}?`)) return
-    await api.orders.refund(order.id, [])
-    showToast('Refund processed', 'success')
-    load()
-    setSelected(null)
+    try {
+      await api.orders.refund(order.id, [])
+      showToast('Refund processed', 'success')
+      load()
+      setSelected(null)
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Refund failed', 'error')
+    }
   }
 
   async function updateStatus(order: Order, status: string) {

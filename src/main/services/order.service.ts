@@ -611,8 +611,10 @@ export const orderService = {
       .where(eq(schema.orders.id, input.orderId))
       .get()
     if (!existing) throw new Error(`Order ${input.orderId} not found`)
-    if (!['pending', 'held'].includes(existing.status)) {
-      throw new Error(`Order cannot be edited in its current state (status: ${existing.status})`)
+    // Allow editing any non-voided order — completed, delivered, and refunded
+    // orders can all be corrected in-place via the edit flow in OrdersScreen.
+    if (existing.status === 'voided') {
+      throw new Error('Voided orders cannot be edited')
     }
 
     // ── Recalculate totals from new item list ────────────────────────────────

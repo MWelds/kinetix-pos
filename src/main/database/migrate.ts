@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import bcrypt from 'bcryptjs'
 
 /** Schema version — increment whenever tables change */
-const SCHEMA_VERSION = 26
+const SCHEMA_VERSION = 27
 
 /**
  * Runs idempotent DDL migrations on first launch.
@@ -121,6 +121,14 @@ export function runMigrations(sqlite: Database.Database): void {
   // to a table that already has rows, so V26 adds the column as nullable TEXT
   // and then back-fills it from opened_at.
   if (currentVersion < 26) {
+    applyV26(sqlite)
+  }
+
+  // V27: Re-run the shifts column heal unconditionally for machines that
+  // reached schema_version=26 via a build that called applyV26() but the
+  // function body was missing (truncated source file).  applyV26 is fully
+  // idempotent (try/catch around each ALTER TABLE), so running it again is safe.
+  if (currentVersion < 27) {
     applyV26(sqlite)
   }
 

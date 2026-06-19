@@ -26,6 +26,8 @@ export function ShiftModal({ isOpen, onClose }: Props) {
       setShift(s as Parameters<typeof setShift>[0])
       showToast('Shift opened', 'success')
       onClose()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to open shift', 'error')
     } finally { setLoading(false) }
   }
 
@@ -37,6 +39,8 @@ export function ShiftModal({ isOpen, onClose }: Props) {
       setShift(null)
       showToast('Shift closed', 'success')
       onClose()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to close shift', 'error')
     } finally { setLoading(false) }
   }
 

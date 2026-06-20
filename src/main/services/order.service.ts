@@ -1,4 +1,4 @@
-import { eq, desc, and, gte, lte } from 'drizzle-orm'
+import { eq, desc, and, gte, lte, like } from 'drizzle-orm'
 import { getDatabase } from '../database/connection'
 import * as schema from '../database/schema'
 import { generateId } from '../lib/id'
@@ -84,14 +84,18 @@ export interface OrderWithItems {
 
 /** Generates next order number like POS-000001 */
 function generateOrderNumber(db: ReturnType<typeof getDatabase>): string {
+  // Only look at POS- orders — REF- refund orders use a different prefix and
+  // would corrupt the sequence (parseInt('POS') → NaN → 'POS-NaN').
   const last = db
     .select({ orderNumber: schema.orders.orderNumber })
     .from(schema.orders)
+    .where(like(schema.orders.orderNumber, 'POS-%'))
     .orderBy(desc(schema.orders.createdAt))
     .limit(1)
     .get()
   if (!last) return 'POS-000001'
   const num = parseInt(last.orderNumber.split('-')[1] || '0', 10)
+  if (isNaN(num)) return 'POS-000001'
   return `POS-${String(num + 1).padStart(6, '0')}`
 }
 

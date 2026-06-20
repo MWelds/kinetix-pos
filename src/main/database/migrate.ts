@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import bcrypt from 'bcryptjs'
 
 /** Schema version — increment whenever tables change */
-const SCHEMA_VERSION = 27
+const SCHEMA_VERSION = 28
 
 /**
  * Runs idempotent DDL migrations on first launch.
@@ -122,6 +122,17 @@ export function runMigrations(sqlite: Database.Database): void {
   // and then back-fills it from opened_at.
   if (currentVersion < 26) {
     applyV26(sqlite)
+  }
+
+  // V28: Delete stuck 'POS-NaN' pending orders created by the generateOrderNumber
+  // bug where a REF- refund order was the most recent order, causing parseInt to
+  // return NaN. These orphaned rows block all future sales with a UNIQUE constraint.
+  if (currentVersion < 28) {
+    try {
+      sqlite.exec(`DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE order_number LIKE 'POS-NaN%')`)
+      sqlite.exec(`DELETE FROM payments WHERE order_id IN (SELECT id FROM orders WHERE order_number LIKE 'POS-NaN%')`)
+      sqlite.exec(`DELETE FROM orders WHERE order_number LIKE 'POS-NaN%'`)
+    } catch { /* non-fatal */ }
   }
 
   // V27: Re-run the shifts column heal unconditionally for machines that

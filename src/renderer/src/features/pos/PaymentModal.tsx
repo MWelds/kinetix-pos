@@ -793,15 +793,20 @@ ${footer || customFooter ? `<div class="footer">${esc(footer)}${customFooter}</d
   }
 
   // Payment entry view
+  function handleCancel() {
+    clearCart()
+    onClose()
+  }
+
   return (
     <Modal
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={handleCancel}
       title="Payment"
       size="lg"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose} disabled={processing}>Cancel</Button>
+          <Button variant="secondary" onClick={handleCancel} disabled={processing}>Cancel</Button>
           <Button
             onClick={handleProcess}
             loading={processing}

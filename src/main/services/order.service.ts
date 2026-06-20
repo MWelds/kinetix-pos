@@ -1,4 +1,4 @@
-import { eq, desc, and, gte, lte, like } from 'drizzle-orm'
+import { eq, desc, and, gte, lte, like, sql } from 'drizzle-orm'
 import { getDatabase } from '../database/connection'
 import * as schema from '../database/schema'
 import { generateId } from '../lib/id'
@@ -84,18 +84,26 @@ export interface OrderWithItems {
 
 /** Generates next order number like POS-000001 */
 function generateOrderNumber(db: ReturnType<typeof getDatabase>): string {
-  // Only look at POS- orders — REF- refund orders use a different prefix and
-  // would corrupt the sequence (parseInt('POS') → NaN → 'POS-NaN').
+  // Find the highest *valid* numeric POS order. Ordering by createdAt is unsafe
+  // because a corrupted entry like 'POS-000NaN' could be newest, causing parseInt
+  // to return 0 and generating 'POS-000001' (already taken → UNIQUE crash).
+  // Instead, sort by the numeric value of the suffix so corrupted rows (CAST = 0)
+  // naturally sort last and are never picked.
   const last = db
     .select({ orderNumber: schema.orders.orderNumber })
     .from(schema.orders)
-    .where(like(schema.orders.orderNumber, 'POS-%'))
-    .orderBy(desc(schema.orders.createdAt))
+    .where(
+      and(
+        like(schema.orders.orderNumber, 'POS-%'),
+        sql`CAST(SUBSTR(${schema.orders.orderNumber}, 5) AS INTEGER) > 0`
+      )
+    )
+    .orderBy(sql`CAST(SUBSTR(${schema.orders.orderNumber}, 5) AS INTEGER) DESC`)
     .limit(1)
     .get()
   if (!last) return 'POS-000001'
-  const num = parseInt(last.orderNumber.split('-')[1] || '0', 10)
-  if (isNaN(num)) return 'POS-000001'
+  const num = parseInt(last.orderNumber.replace('POS-', ''), 10)
+  if (isNaN(num) || num <= 0) return 'POS-000001'
   return `POS-${String(num + 1).padStart(6, '0')}`
 }
 

@@ -198,7 +198,8 @@ function buildEodReceiptHtml(
     ${salesByCurrency}
     ${terminalSection}
     <hr/>
-    <div class="section">Reconciliation &mdash; Expected &rarr; Counted</div>
+    <div class="section">Reconciliation &mdash; Expected (incl. float) &rarr; Counted</div>
+    ${openingFloat != null && openingFloat > 0 ? `<div class="row"><span class="label">Opening float included</span><span>${fmt(openingFloat)}</span></div>` : ''}
     ${recoRows}
     <hr/>
     ${currencyTotals}
@@ -206,9 +207,9 @@ function buildEodReceiptHtml(
     ${vendorSection}
     ${(closingFloatAmt != null && closingFloatAmt >= 0) ? `
     <hr/>
-    <div class="section">Cash Reconciliation</div>
-    ${openingFloat != null && openingFloat > 0 ? `<div class="row"><span class="label">Opening float</span><span>${fmt(openingFloat)}</span></div>` : ''}
-    <div class="row"><span class="label">Float left in drawer</span><span>${fmt(closingFloatAmt)}</span></div>
+    <div class="section">Cash to Deposit</div>
+    <div class="row"><span class="label">Total counted</span><span>${fmt(countedPrimary)}</span></div>
+    <div class="row"><span class="label">Float left in drawer</span><span>-${fmt(closingFloatAmt)}</span></div>
     <div class="row bold"><span>Cash to Deposit</span><span>${fmt(Math.max(0, countedPrimary - closingFloatAmt))}</span></div>
     ` : ''}
     ${closingNote ? `<hr/><div style="font-size:11px;color:#555;word-break:break-word"><strong>Note:</strong> ${esc(closingNote)}</div>` : ''}
@@ -224,11 +225,16 @@ function buildEodReceiptHtml(
  * never physically in the cash drawer, so comparing them to a counted amount
  * always produces a false "short" variance. Card totals are shown as
  * informational on the summary screen instead.
+ *
+ * @param openingFloat  The opening cash float for the current shift (primary currency).
+ *                      Added to the primary expected so the cashier can count the FULL
+ *                      drawer (float + sales) and get a zero variance when correct.
  */
 function buildEntries(
   paymentRows: { method: string; currency: string; total: number; originalTotal: number; changeTotal: number }[],
   enabledMethods: string[],
-  cfg: CurrencyConfig
+  cfg: CurrencyConfig,
+  openingFloat: number = 0
 ): CountEntry[] {
   const rows: CountEntry[] = []
 
@@ -248,10 +254,12 @@ function buildEntries(
 
   // Only reconcile cash — it's the only thing physically in the drawer
   if (enabledMethods.includes('cash')) {
-    // Net primary cash in drawer = tendered (primary) − all change given back (always primary currency)
+    // Expected primary cash = opening float + today's net sales (tendered − change returned).
+    // The cashier should count the FULL drawer (float + today's cash), so we include the
+    // opening float here so a correct count produces zero variance.
     const primTendered = totalFor('cash', cfg.primary)
     const totalChange  = changeTotalForMethod('cash')
-    const primExpected = primTendered - totalChange
+    const primExpected = primTendered - totalChange + openingFloat
     rows.push({
       method: 'cash',
       currency: cfg.primary,
@@ -369,7 +377,8 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
       setSummary(daySummary)
       // Preserve any already-typed counted values if entries already exist
       setEntries((prev) => {
-        const fresh = buildEntries(payArr, methods, currencyCfg)
+        const openingFloat = shift?.openingCash ?? 0
+        const fresh = buildEntries(payArr, methods, currencyCfg, openingFloat)
         if (prev.length === 0) return fresh
         // Merge: keep counted values from current state, update expectedPrimary from DB
         return fresh.map((f) => {
@@ -569,6 +578,11 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                     <div className="flex justify-between text-gray-600">
                       <span>Opening float</span>
                       <span className="font-medium text-gray-900">{primarySym}{(shift.openingCash as number).toFixed(2)}</span>
+                    </div>
+                  )}
+                  {(shift.openingCash ?? 0) > 0 && (
+                    <div className="text-xs text-blue-600 bg-blue-50 rounded-lg px-3 py-2 mt-1">
+                      Count the <strong>full drawer</strong> — include the {primarySym}{(shift.openingCash as number).toFixed(2)} opening float in your count.
                     </div>
                   )}
                 </div>
@@ -829,7 +843,12 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                   {/* Column headers */}
                   <div className="grid grid-cols-3 px-4 py-1.5 border-b border-gray-100 bg-gray-50">
                     <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Method</span>
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide text-right">Expected</span>
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide text-right">
+                      Expected
+                      {(shift?.openingCash ?? 0) > 0 && (
+                        <span className="text-[9px] font-normal text-blue-400 ml-1">(incl. float)</span>
+                      )}
+                    </span>
                     <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide text-right">Counted</span>
                   </div>
                   {entries.map((e, i) => {
@@ -837,10 +856,20 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                     const diff = counted - e.expectedPrimary
                     const sym = currencySymbol(e.currency)
                     const rowMatch = Math.abs(diff) < 0.01
+                    // For primary-currency cash, show float breakdown under expected
+                    const openingFloat = shift?.openingCash ?? 0
+                    const isPrimaryCash = e.method === 'cash' && e.currency === primaryCurrency && openingFloat > 0
                     return (
                       <div key={i} className={`grid grid-cols-3 px-4 py-2 text-sm border-b border-gray-50 last:border-0 ${!rowMatch ? 'bg-red-50/40' : ''}`}>
                         <span className="text-gray-700 font-medium">{e.label}</span>
-                        <span className="text-gray-500 text-right">{sym}{e.expectedPrimary.toFixed(2)}</span>
+                        <span className="text-gray-500 text-right">
+                          {sym}{e.expectedPrimary.toFixed(2)}
+                          {isPrimaryCash && (
+                            <span className="block text-[9px] text-blue-400">
+                              sales + {sym}{openingFloat.toFixed(2)} float
+                            </span>
+                          )}
+                        </span>
                         <span className={`text-right font-semibold ${rowMatch ? 'text-gray-800' : 'text-red-600'}`}>
                           {sym}{counted.toFixed(2)}
                           {!rowMatch && (
@@ -927,7 +956,12 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                     <span className="font-medium text-gray-900">{formatCurrency(summary.totalRevenue, primaryCurrency)}</span>
                   </div>
                   <div className="flex justify-between text-gray-600">
-                    <span>Total counted ({primaryCurrency} equiv.)</span>
+                    <span>
+                      Total counted ({primaryCurrency} equiv.)
+                      {(shift?.openingCash ?? 0) > 0 && (
+                        <span className="block text-xs text-blue-500">incl. {primarySym}{(shift!.openingCash as number).toFixed(2)} opening float</span>
+                      )}
+                    </span>
                     <span className="font-medium text-gray-900">{primarySym}{totalCountedPrimary.toFixed(2)}</span>
                   </div>
                   <div className={`flex justify-between font-semibold pt-2 border-t border-gray-200 ${variancePositive ? 'text-emerald-600' : 'text-red-600'}`}>

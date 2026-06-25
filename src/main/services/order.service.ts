@@ -484,10 +484,32 @@ export const orderService = {
   voidOrder(orderId: string, staffId: string): void {
     const db = getDatabase()
     const now = new Date().toISOString()
+
+    // Read the order before voiding so we can restore inventory if needed
+    const existing = db
+      .select()
+      .from(schema.orders)
+      .where(eq(schema.orders.id, orderId))
+      .get()
+
     db.update(schema.orders)
       .set({ status: 'voided', updatedAt: now })
       .where(eq(schema.orders.id, orderId))
       .run()
+
+    // Restore inventory for orders that had already deducted stock (completed / delivered).
+    // Pending and held orders never reached the deduction step, so nothing to restore.
+    if (existing && ['completed', 'delivered'].includes(existing.status)) {
+      const items = db
+        .select()
+        .from(schema.orderItems)
+        .where(eq(schema.orderItems.orderId, orderId))
+        .all()
+      for (const item of items) {
+        restoreInventory(db, item.productId, item.quantity, now)
+      }
+    }
+
     // Write audit log so voids are traceable to the responsible staff member
     db.insert(schema.auditLog)
       .values({
@@ -521,6 +543,9 @@ export const orderService = {
         customerId: original.order.customerId,
         staffId: original.order.staffId,
         shiftId: original.order.shiftId,
+        // Preserve terminal and order type so per-terminal EOD reports include refunds correctly
+        terminalId: original.order.terminalId,
+        orderType: original.order.orderType,
         subtotal: -original.order.subtotal,
         discountAmount: -original.order.discountAmount,
         taxAmount: -original.order.taxAmount,
@@ -647,6 +672,20 @@ export const orderService = {
     const loyaltyDeduction = (input.loyaltyPointsRedeemed ?? 0) * 0.01
     const total = Math.max(0, afterDiscount + taxAmount - loyaltyDeduction)
 
+    // ── Snapshot old items before deletion (needed for inventory restore) ───
+    // Orders in 'completed' or 'delivered' status already had inventory deducted
+    // at completion time. We must restore those before re-deducting the new items.
+    // 'pending' and 'held' orders never reached the deduction step — nothing to restore.
+    // 'refunded' orders were deducted then restored — inventory is already back.
+    const inventoryAlreadyDeducted = ['completed', 'delivered'].includes(existing.status)
+    const oldItems = inventoryAlreadyDeducted
+      ? db
+          .select()
+          .from(schema.orderItems)
+          .where(eq(schema.orderItems.orderId, input.orderId))
+          .all()
+      : []
+
     // ── Replace order items ──────────────────────────────────────────────────
     db.delete(schema.orderItems)
       .where(eq(schema.orderItems.orderId, input.orderId))
@@ -771,7 +810,12 @@ export const orderService = {
       }
     }
 
-    // ── Deduct inventory for new items (pending orders never deducted) ───────
+    // ── Restore old inventory then deduct new ────────────────────────────────
+    // For completed/delivered orders the old items were already deducted —
+    // restore them first so we don't double-count when deducting the new list.
+    for (const item of oldItems) {
+      restoreInventory(db, item.productId, item.quantity, now)
+    }
     for (const item of input.items) {
       deductInventory(db, item.productId, item.quantity, now)
     }

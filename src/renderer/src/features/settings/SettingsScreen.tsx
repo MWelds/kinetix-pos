@@ -1452,6 +1452,8 @@ export function SettingsScreen() {
         invoiceCustomField3: '',
         displayBgColor: '#0f172a',
         displayBgImage: '',
+        networkDisplayAutoStart: 'false',
+        networkDisplayPort: '3031',
         terminalName: 'Terminal 1',
         emailPort: '587',
         emailSecure: 'false',
@@ -1467,6 +1469,11 @@ export function SettingsScreen() {
       setNetworkRunning(s.networkRunning)
       setLocalIp(s.localIp)
     }).catch(() => { /* display API unavailable */ })
+
+    // Sync network port local state from persisted setting
+    api.settings.get('networkDisplayPort').then((p) => {
+      if (p) setNetworkPort(p)
+    }).catch(() => {})
 
     // Load categories
     api.categories.list().then(setCategories).catch(() => {})
@@ -1506,6 +1513,9 @@ export function SettingsScreen() {
         const result = await api.display.networkStart(port)
         setNetworkRunning(true)
         setLocalIp(result.ip)
+        // Persist the port so it survives restarts and auto-start uses it
+        api.settings.set('networkDisplayPort', String(port)).catch(() => {})
+        setSettings((p) => ({ ...p, networkDisplayPort: String(port) }))
         showToast(`Network display started on port ${result.port}`, 'success')
       }
     } catch {
@@ -2660,16 +2670,49 @@ export function SettingsScreen() {
             </div>
 
             {!networkRunning && (
-              <div className="ml-7 max-w-[160px]">
-                <Input
-                  label="Port"
-                  type="number"
-                  min="1024"
-                  max="65535"
-                  value={networkPort}
-                  onChange={(e) => setNetworkPort(e.target.value)}
-                  placeholder="3031"
-                />
+              <div className="ml-7 space-y-4">
+                <div className="max-w-[160px]">
+                  <Input
+                    label="Port"
+                    type="number"
+                    min="1024"
+                    max="65535"
+                    value={networkPort}
+                    onChange={(e) => setNetworkPort(e.target.value)}
+                    placeholder="3031"
+                  />
+                </div>
+
+                {/* Auto-start on launch toggle */}
+                <div className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg border border-gray-200 max-w-sm">
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">Auto-start on launch</p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Start the network display automatically when the app opens
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={settings.networkDisplayAutoStart === 'true'}
+                    onClick={() => {
+                      const next = settings.networkDisplayAutoStart === 'true' ? 'false' : 'true'
+                      setSettings((p) => ({ ...p, networkDisplayAutoStart: next }))
+                      api.settings.set('networkDisplayAutoStart', next).catch(() => {})
+                      // Also persist the current port so auto-start uses it
+                      api.settings.set('networkDisplayPort', networkPort).catch(() => {})
+                    }}
+                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                      settings.networkDisplayAutoStart === 'true' ? 'bg-blue-600' : 'bg-gray-300'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                        settings.networkDisplayAutoStart === 'true' ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
               </div>
             )}
 

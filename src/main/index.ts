@@ -7,7 +7,7 @@ import { autoUpdater } from 'electron-updater'
 import { registerIpcHandlers } from './ipc/handlers'
 import { getDatabase, closeDatabase } from './database/connection'
 import { seedDatabase } from './database/seed'
-import { setMainWindow } from './display/customer-display'
+import { setMainWindow, startHttpServer } from './display/customer-display'
 import { initSync } from './sync/sync.service'
 import { initSyncV2 } from './sync/sync-v2.service'
 import { initFileSync } from './sync/file-sync.service'
@@ -160,6 +160,17 @@ app
     const mainWin = createWindow()
     setMainWindow(mainWin)
     initAutoUpdater(mainWin)
+
+    // Auto-start network display if the user enabled it in Settings > Peripherals
+    if (settingsService.get('networkDisplayAutoStart') === 'true') {
+      const port = parseInt(settingsService.get('networkDisplayPort') || '3031', 10)
+      startHttpServer(port)
+        .then(() => {
+          ensureFirewallRule(port)
+          console.log(`[display] Network display auto-started on port ${port}`)
+        })
+        .catch((err) => logError('networkDisplay autoStart', err))
+    }
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()

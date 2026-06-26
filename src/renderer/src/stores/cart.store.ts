@@ -147,4 +147,10 @@ export const useCartStore = create<CartState>((set, get) => ({
       customer: null,
       notes: '',
       discountType: null,
-      disc
+      discountValue: 0,
+      loyaltyPointsToRedeem: 0,
+      orderType: 'instore',
+      editingOrderId: null,
+      editingOrderNumber: null,
+    })
+}))

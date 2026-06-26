@@ -123,27 +123,35 @@ function buildEodReceiptHtml(
     return { currency: cur, sym, counted, expected, variance: counted - expected }
   })
 
-  // Reconciliation rows: one per entry, expected vs counted side by side
-  const recoRows = entries.map((e) => {
-    const counted = parseFloat(e.counted) || 0
-    const sym = esc(currencySymbol(e.currency))
-    const diff = counted - e.expectedPrimary
-    const diffStr = Math.abs(diff) >= 0.01
-      ? ` <span style="color:${diff >= 0 ? 'green' : 'red'}">(${diff > 0 ? '+' : ''}${sym}${diff.toFixed(2)})</span>`
-      : ''
-    return `<div class="row">
-      <span class="label">${esc(e.label)}</span>
-      <span>${sym}${e.expectedPrimary.toFixed(2)} &rarr; ${sym}${counted.toFixed(2)}${diffStr}</span>
-    </div>`
-  }).join('')
+  // Per-currency cash breakdown — used in the reconciliation section of the receipt
+  const primaryCashTendered = summary.paymentRows
+    .filter((r) => r.method === 'cash' && r.currency === cfg.primary)
+    .reduce((s, r) => s + r.total, 0)
+  const totalChangeGiven = summary.paymentRows
+    .filter((r) => r.method === 'cash')
+    .reduce((s, r) => s + r.changeTotal, 0)
 
-  // Currency totals (cash drawer)
-  const currencies = [...new Set(entries.map((e) => e.currency))]
-  const currencyTotals = currencies.map((cur) => {
-    const sym = esc(currencySymbol(cur))
-    const counted = entries.filter((e) => e.currency === cur).reduce((s, e) => s + (parseFloat(e.counted) || 0), 0)
-    return `<div class="row bold"><span>${esc(cur)} Cash Counted</span><span>${sym}${counted.toFixed(2)}</span></div>`
-  }).join('')
+  // Per-currency drawer cards for the receipt reconciliation section
+  const drawerCards = perCurrencyReceipt.map((v) => {
+    const isPrimary = v.currency === cfg.primary
+    const cashRec = isPrimary ? primaryCashTendered
+      : summary.paymentRows.filter((r) => r.method === 'cash' && r.currency === v.currency)
+          .reduce((s, r) => s + r.originalTotal, 0)
+    const chgLine = isPrimary && totalChangeGiven > 0
+      ? `<div class="row"><span class="label">Change returned</span><span>-${esc(v.sym)}${totalChangeGiven.toFixed(2)}</span></div>`
+      : ''
+    const floatLine = isPrimary && openingFloat != null && openingFloat > 0
+      ? `<div class="row"><span class="label">Opening float</span><span>+${esc(v.sym)}${openingFloat.toFixed(2)}</span></div>`
+      : ''
+    const varColor = v.variance >= 0 ? 'green' : 'red'
+    const varStr = `${v.variance >= 0 ? '+' : ''}${esc(v.sym)}${v.variance.toFixed(2)}`
+    return `<div class="section" style="margin-top:5px">${esc(v.currency)} DRAWER</div>
+    <div class="row"><span class="label">Cash received (${esc(v.currency)})</span><span>${esc(v.sym)}${cashRec.toFixed(2)}</span></div>
+    ${chgLine}${floatLine}
+    <div class="row bold"><span>Should be in drawer</span><span>${esc(v.sym)}${v.expected.toFixed(2)}</span></div>
+    <div class="row"><span class="label">You counted</span><span>${esc(v.sym)}${v.counted.toFixed(2)}</span></div>
+    <div class="row"><span>Variance</span><span style="font-weight:bold;color:${varColor}">${varStr}</span></div>`
+  }).join('<hr/>')
 
   // Sales breakdown by currency and method
   const allCurrencies = [...new Set(summary.paymentRows.map((r) => r.currency))]
@@ -207,22 +215,33 @@ function buildEodReceiptHtml(
     ${salesByCurrency}
     ${terminalSection}
     <hr/>
-    <div class="section">Reconciliation &mdash; Expected (incl. float) &rarr; Counted</div>
-    ${openingFloat != null && openingFloat > 0 ? `<div class="row"><span class="label">Opening float included</span><span>${fmt(openingFloat)}</span></div>` : ''}
-    ${recoRows}
-    <hr/>
-    ${currencyTotals}
-    ${perCurrencyReceipt.map((v) =>
-      `<div class="row"><span>${esc(v.currency)} Variance</span><span style="font-weight:bold;color:${v.variance >= 0 ? 'green' : 'red'}">${v.variance >= 0 ? '+' : ''}${esc(v.sym)}${Math.abs(v.variance).toFixed(2)}</span></div>`
-    ).join('')}
+    <div class="section">Cash Drawer Reconciliation</div>
+    ${drawerCards}
     ${vendorSection}
-    ${(closingFloatAmt != null && closingFloatAmt >= 0) ? `
-    <hr/>
+    ${(closingFloatAmt != null && closingFloatAmt >= 0) ? (() => {
+      // Per-currency deposit — primary gets float deducted, secondary is full amount
+      const primEntry = perCurrencyReceipt.find((v) => v.currency === cfg.primary)
+      const secEntries = perCurrencyReceipt.filter((v) => v.currency !== cfg.primary && v.counted > 0)
+      const primCounted = primEntry?.counted ?? 0
+      const primGross = Math.max(0, primCounted - closingFloatAmt)
+      const primNet = Math.max(0, primGross - totalVendorCogs)
+      const vendorLines = vendorPayables.length > 0
+        ? vendorPayables.map((v) =>
+            `<div class="row"><span class="label">- ${esc(v.vendorName)} (vendor)</span><span>-${primarySym}${v.cogsToday.toFixed(2)}</span></div>`
+          ).join('') +
+          `<div class="row bold"><span>Net ${esc(cfg.primary)} to Bank</span><span>${primarySym}${primNet.toFixed(2)}</span></div>`
+        : ''
+      const secLines = secEntries.map((v) =>
+        `<div class="row bold"><span>${esc(v.currency)} to Deposit</span><span>${esc(v.sym)}${v.counted.toFixed(2)}</span></div>`
+      ).join('')
+      return `<hr/>
     <div class="section">Cash to Deposit</div>
-    <div class="row"><span class="label">Total counted</span><span>${fmt(countedPrimary)}</span></div>
-    <div class="row"><span class="label">Float left in drawer</span><span>-${fmt(closingFloatAmt)}</span></div>
-    <div class="row bold"><span>Cash to Deposit</span><span>${fmt(Math.max(0, countedPrimary - closingFloatAmt))}</span></div>
-    ` : ''}
+    <div class="row"><span class="label">${esc(cfg.primary)} counted</span><span>${primarySym}${primCounted.toFixed(2)}</span></div>
+    <div class="row"><span class="label">Float left in drawer</span><span>-${primarySym}${closingFloatAmt.toFixed(2)}</span></div>
+    <div class="row bold"><span>${vendorPayables.length > 0 ? 'Gross ' + esc(cfg.primary) : esc(cfg.primary)} to Deposit</span><span>${primarySym}${primGross.toFixed(2)}</span></div>
+    ${vendorLines}
+    ${secLines}`
+    })() : ''}
     ${closingNote ? `<hr/><div style="font-size:11px;color:#555;word-break:break-word"><strong>Note:</strong> ${esc(closingNote)}</div>` : ''}
     <hr/>
     <div class="center meta">Have a great evening!</div>
@@ -472,6 +491,12 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
         .reduce((s, e) => s + (parseFloat(e.counted) || 0), 0)
     : 0
 
+  /** Total vendor COGS to pay out today (primary currency) */
+  const totalVendorCogs = vendorPayables.reduce((s, v) => s + v.cogsToday, 0)
+
+  /** Net primary cash to bank after float and vendor payables */
+  const netPrimaryToBank = Math.max(0, primaryCashToDeposit - totalVendorCogs)
+
   /** Combined KYD-equivalent — used only for the shift-close API call, not displayed */
   const cashOnlyCounted = entries
     .filter((e) => e.method === 'cash')
@@ -515,7 +540,7 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
   }
 
   /** Close shift AND sign the cashier out */
-  async function handleCloseDay() {
+  async function handleCloseShiftAndStore() {
     setClosing(true)
     try {
       if (shift) {
@@ -861,88 +886,81 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                 </div>
               )}
 
-              {/* Cash count reconciliation — single compact table */}
-              <div className={`rounded-xl border overflow-hidden ${variancePositive ? 'border-emerald-200' : 'border-red-200'}`}>
-                {/* Header */}
-                <div className={`flex items-center justify-between px-4 py-2.5 ${variancePositive ? 'bg-emerald-50' : 'bg-red-50'}`}>
-                  <div className="flex items-center gap-2">
-                    {variancePositive
-                      ? <CheckCircle size={13} className="text-emerald-600" />
-                      : <AlertTriangle size={13} className="text-red-600" />}
-                    <p className="text-xs font-bold text-gray-700 uppercase tracking-wide">Reconciliation</p>
-                  </div>
-                  <span className="flex items-center gap-3">
-                    {perCurrencyStats.map((s) => (
-                      <span key={s.currency} className={`text-sm font-bold ${s.variance >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                        {s.currency}: {s.variance >= 0 ? '+' : ''}{s.symbol}{Math.abs(s.variance).toFixed(2)}
-                      </span>
-                    ))}
-                  </span>
+              {/* Cash Drawer Reconciliation — one card per currency */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  {variancePositive
+                    ? <CheckCircle size={14} className="text-emerald-500" />
+                    : <AlertTriangle size={14} className="text-red-500" />}
+                  <p className="text-sm font-semibold text-gray-700">Cash Drawer Reconciliation</p>
                 </div>
 
-                {/* Table: one row per entry, Expected | Counted side-by-side */}
-                <div className="bg-white">
-                  {/* Column headers */}
-                  <div className="grid grid-cols-3 px-4 py-1.5 border-b border-gray-100 bg-gray-50">
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Method</span>
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide text-right">
-                      Expected
-                      {(shift?.openingCash ?? 0) > 0 && (
-                        <span className="text-[9px] font-normal text-blue-400 ml-1">(incl. float)</span>
-                      )}
-                    </span>
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide text-right">Counted</span>
-                  </div>
-                  {entries.map((e, i) => {
-                    const counted = parseFloat(e.counted) || 0
-                    const diff = counted - e.expectedPrimary
-                    const sym = currencySymbol(e.currency)
-                    const rowMatch = Math.abs(diff) < 0.01
-                    // For primary-currency cash, show float breakdown under expected
-                    const openingFloat = shift?.openingCash ?? 0
-                    const isPrimaryCash = e.method === 'cash' && e.currency === primaryCurrency && openingFloat > 0
-                    return (
-                      <div key={i} className={`grid grid-cols-3 px-4 py-2 text-sm border-b border-gray-50 last:border-0 ${!rowMatch ? 'bg-red-50/40' : ''}`}>
-                        <span className="text-gray-700 font-medium">{e.label}</span>
-                        <span className="text-gray-500 text-right">
-                          {sym}{e.expectedPrimary.toFixed(2)}
-                          {isPrimaryCash && (
-                            <span className="block text-[9px] text-blue-400">
-                              sales + {sym}{openingFloat.toFixed(2)} float
-                            </span>
-                          )}
-                        </span>
-                        <span className={`text-right font-semibold ${rowMatch ? 'text-gray-800' : 'text-red-600'}`}>
-                          {sym}{counted.toFixed(2)}
-                          {!rowMatch && (
-                            <span className="text-xs ml-1">({diff > 0 ? '+' : ''}{sym}{diff.toFixed(2)})</span>
-                          )}
+                {perCurrencyStats.map((s) => {
+                  const isPrimary = s.currency === primaryCurrency
+                  const openFloat = shift?.openingCash ?? 0
+                  // How much cash was received in this currency
+                  const cashReceived = summary?.paymentRows
+                    .filter((r) => r.method === 'cash' && r.currency === s.currency)
+                    .reduce((sum, r) => sum + (isPrimary ? r.total : r.originalTotal), 0) ?? 0
+                  // Change is always given in primary currency
+                  const changeGiven = isPrimary
+                    ? (summary?.paymentRows
+                        .filter((r) => r.method === 'cash')
+                        .reduce((sum, r) => sum + r.changeTotal, 0) ?? 0)
+                    : 0
+                  const ok = s.variance >= 0
+
+                  return (
+                    <div key={s.currency} className={`rounded-xl border overflow-hidden ${ok ? 'border-emerald-200' : 'border-red-300'}`}>
+                      {/* Card header — currency + overall variance badge */}
+                      <div className={`px-4 py-2.5 flex items-center justify-between ${ok ? 'bg-emerald-600' : 'bg-red-600'}`}>
+                        <span className="text-white font-bold text-sm">{s.currency} Cash Drawer</span>
+                        <span className={`flex items-center gap-1.5 text-sm font-bold ${ok ? 'text-emerald-100' : 'text-red-100'}`}>
+                          {ok ? <CheckCircle size={13} /> : <AlertTriangle size={13} />}
+                          {s.variance >= 0 ? '+' : ''}{s.symbol}{s.variance.toFixed(2)}
                         </span>
                       </div>
-                    )
-                  })}
-                </div>
 
-                {/* Per-currency totals footer: Expected | Counted | Variance */}
-                <div className={`border-t px-4 py-3 space-y-2 ${variancePositive ? 'border-emerald-100 bg-emerald-50/60' : 'border-red-100 bg-red-50/40'}`}>
-                  {/* Column headers */}
-                  <div className="grid grid-cols-4 text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1">
-                    <span>Currency</span>
-                    <span className="text-right">Expected</span>
-                    <span className="text-right">Counted</span>
-                    <span className="text-right">Variance</span>
-                  </div>
-                  {perCurrencyStats.map((s) => (
-                    <div key={s.currency} className="grid grid-cols-4 text-xs items-center">
-                      <span className="font-bold text-gray-600 uppercase">{s.currency}</span>
-                      <span className="text-right text-gray-500">{s.symbol}{s.expected.toFixed(2)}</span>
-                      <span className="text-right font-semibold text-gray-800">{s.symbol}{s.counted.toFixed(2)}</span>
-                      <span className={`text-right font-bold ${s.variance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                        {s.variance >= 0 ? '+' : ''}{s.symbol}{s.variance.toFixed(2)}
-                      </span>
+                      {/* Step-by-step breakdown of expected amount */}
+                      <div className="bg-white px-4 py-3 space-y-1.5 text-sm border-b border-gray-100">
+                        <div className="flex justify-between text-gray-600">
+                          <span>Cash received ({s.currency})</span>
+                          <span className="font-medium">{s.symbol}{cashReceived.toFixed(2)}</span>
+                        </div>
+                        {isPrimary && changeGiven > 0 && (
+                          <div className="flex justify-between text-orange-600">
+                            <span>Change returned to customers</span>
+                            <span>−{s.symbol}{changeGiven.toFixed(2)}</span>
+                          </div>
+                        )}
+                        {isPrimary && openFloat > 0 && (
+                          <div className="flex justify-between text-blue-600">
+                            <span>Opening float (counted with drawer)</span>
+                            <span>+{s.symbol}{openFloat.toFixed(2)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between font-semibold text-gray-800 pt-1.5 border-t border-gray-100">
+                          <span>Should be in drawer</span>
+                          <span>{s.symbol}{s.expected.toFixed(2)}</span>
+                        </div>
+                      </div>
+
+                      {/* Counted vs Variance — two columns */}
+                      <div className={`px-4 py-3 grid grid-cols-2 divide-x ${ok ? 'bg-emerald-50 divide-emerald-100' : 'bg-red-50 divide-red-100'}`}>
+                        <div className="pr-4">
+                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-0.5">You Counted</p>
+                          <p className="text-lg font-bold text-gray-900">{s.symbol}{s.counted.toFixed(2)}</p>
+                        </div>
+                        <div className="pl-4">
+                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-0.5">Variance</p>
+                          <p className={`text-lg font-bold ${ok ? 'text-emerald-600' : 'text-red-600'}`}>
+                            {s.variance >= 0 ? '+' : ''}{s.symbol}{s.variance.toFixed(2)}
+                          </p>
+                        </div>
+                      </div>
                     </div>
-                  ))}
-                </div>
+                  )
+                })}
               </div>
 
               <div className="flex items-center justify-between">
@@ -991,10 +1009,16 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                     <span>Total orders today</span>
                     <span className="font-medium text-gray-900">{summary.orderCount}</span>
                   </div>
-                  <div className="flex justify-between text-gray-600">
-                    <span>Net revenue {isMultiTerminal ? '(all registers)' : ''}</span>
-                    <span className="font-medium text-gray-900">{formatCurrency(summary.totalRevenue, primaryCurrency)}</span>
-                  </div>
+                  {[...new Set(summary.paymentRows.map((r) => r.currency))].map((cur) => {
+                    const sym = currencySymbol(cur)
+                    const total = summary.paymentRows.filter((r) => r.currency === cur).reduce((s, r) => s + r.originalTotal, 0)
+                    return (
+                      <div key={cur} className="flex justify-between text-gray-600">
+                        <span>{cur} revenue {isMultiTerminal ? '(all registers)' : ''}</span>
+                        <span className="font-medium text-gray-900">{sym}{total.toFixed(2)}</span>
+                      </div>
+                    )
+                  })}
                   {perCurrencyStats.map((s) => (
                     <div key={s.currency} className="flex justify-between text-gray-600">
                       <span>
@@ -1037,9 +1061,120 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                   </div>
                 </div>
                 <div className="pt-1 border-t border-blue-200 space-y-2">
-                  {/* Primary currency to deposit */}
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <p className="text-sm font-bold text-blue-900">{primaryCurrency} to Deposit</p>
-                      <p className="text-xs text-blue-600">{primaryCurrency} counted − float</p>
-         
+                  {/* Primary currency: gross collected */}
+                  <div className="flex justify-between text-sm text-blue-800">
+                    <span>{primaryCurrency} counted − float</span>
+                    <span className="font-semibold">{primarySym}{primaryCashToDeposit.toFixed(2)}</span>
+                  </div>
+
+                  {/* Vendor payables deducted from primary cash */}
+                  {vendorPayables.length > 0 && (
+                    <>
+                      {vendorPayables.map((v) => (
+                        <div key={v.vendorId} className="flex justify-between text-sm text-orange-700">
+                          <span className="flex items-center gap-1">
+                            <Truck size={11} />
+                            {v.vendorName}
+                            <span className="text-xs text-orange-500">({v.unitsSold} units)</span>
+                          </span>
+                          <span>−{primarySym}{v.cogsToday.toFixed(2)}</span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between items-center pt-1 border-t border-blue-200">
+                        <div>
+                          <p className="text-sm font-bold text-blue-900">Net {primaryCurrency} to Bank</p>
+                          <p className="text-xs text-blue-600">after paying vendors</p>
+                        </div>
+                        <p className="text-xl font-bold text-blue-900">
+                          {primarySym}{netPrimaryToBank.toFixed(2)}
+                        </p>
+                      </div>
+                    </>
+                  )}
+
+                  {/* No vendors — show the simple deposit amount */}
+                  {vendorPayables.length === 0 && (
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <p className="text-sm font-bold text-blue-900">{primaryCurrency} to Deposit</p>
+                      </div>
+                      <p className="text-xl font-bold text-blue-900">
+                        {primarySym}{primaryCashToDeposit.toFixed(2)}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Secondary currency to deposit (shown only when there are secondary-currency cash sales) */}
+                  {secondaryCurrency && secondaryCashCounted > 0 && (
+                    <div className="flex justify-between items-center pt-1 border-t border-blue-100">
+                      <div>
+                        <p className="text-sm font-bold text-blue-900">{secondaryCurrency} to Deposit</p>
+                        <p className="text-xs text-blue-600">{secondaryCurrency} cash collected</p>
+                      </div>
+                      <p className="text-xl font-bold text-blue-900">
+                        {currencySymbol(secondaryCurrency)}{secondaryCashCounted.toFixed(2)}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {perCurrencyStats.filter((s) => s.variance < -1).map((s) => (
+                <div key={s.currency} className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
+                  <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                  <span>{s.currency} drawer is short by {s.symbol}{Math.abs(s.variance).toFixed(2)}. This will be recorded in the shift report.</span>
+                </div>
+              ))}
+
+              {/* Closing note */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">
+                  Shift Note <span className="text-gray-400 font-normal">(optional)</span>
+                </label>
+                <textarea
+                  value={closingNote}
+                  onChange={(e) => setClosingNote(e.target.value)}
+                  placeholder="e.g. Busy evening, printer jam at 7pm, left $200 float in drawer…"
+                  rows={3}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                />
+              </div>
+
+              {/* Navigation */}
+              <div className="flex items-center justify-between">
+                <button onClick={() => setStep('summary')} className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
+                  <ChevronLeft size={14} /> Back
+                </button>
+              </div>
+
+              {/* Two close options */}
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={handleCloseShiftOnly}
+                  disabled={closing}
+                  className="flex flex-col items-center gap-2 px-4 py-4 rounded-2xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 transition-colors disabled:opacity-50"
+                >
+                  <span className="text-2xl">🔒</span>
+                  <span className="text-sm font-semibold">Close Shift Only</span>
+                  <span className="text-xs text-gray-500">Keep store open</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCloseShiftAndStore}
+                  disabled={closing}
+                  className="flex flex-col items-center gap-2 px-4 py-4 rounded-2xl border border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-700 transition-colors disabled:opacity-50"
+                >
+                  <span className="text-2xl">🏪</span>
+                  <span className="text-sm font-semibold">Close Shift & Store</span>
+                  <span className="text-xs text-blue-500">End of day</span>
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}

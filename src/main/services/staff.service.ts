@@ -257,4 +257,20 @@ export const staffService = {
         staffId: input.staffId,
         action: input.action,
         entityType: input.entityType,
-        entityId: input.entity
+        entityId: input.entityId,
+        details: input.details ? JSON.stringify(input.details) : undefined,
+        createdAt: new Date().toISOString()
+      })
+      .run()
+  },
+
+  listAuditLog(limit = 100) {
+    const db = getDatabase()
+    return db
+      .select()
+      .from(schema.auditLog)
+      .orderBy(desc(schema.auditLog.createdAt))
+      .limit(limit)
+      .all()
+  }
+}

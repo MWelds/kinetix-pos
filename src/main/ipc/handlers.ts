@@ -1083,4 +1083,20 @@ export function registerIpcHandlers(): void {
     return { ok: true }
   })
 
-  ipcMain.handle(IPC.FILE_SYNC_STOP, () 
+  ipcMain.handle(IPC.FILE_SYNC_STOP, () => {
+    stopFileSyncLoop()
+    return { ok: true }
+  })
+
+  ipcMain.handle(IPC.FILE_SYNC_TEST_PATH, (_e, sharePath: string) =>
+    testSharePath(sharePath)
+  )
+
+  ipcMain.handle(IPC.FILE_SYNC_GET_LOCAL_SHARE_PATH, () =>
+    getDefaultLocalSharePath(app.getPath('userData'))
+  )
+
+  // Staff — get single member by ID
+  ipcMain.handle(IPC.STAFF_GET, (_e, id: string) => staffService.get(id))
+
+}

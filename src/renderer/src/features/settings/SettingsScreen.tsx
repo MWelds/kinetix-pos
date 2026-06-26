@@ -2698,4 +2698,212 @@ export function SettingsScreen() {
                     <input
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                       value={catEditName}
-                      onChange={(e) => setCatEditName(e.target.
+                      onChange={(e) => setCatEditName(e.target.value)}
+                      autoFocus
+                      onKeyDown={(e) => e.key === 'Enter' && handleCatUpdate()}
+                    />
+                    <div className="flex flex-wrap gap-1.5">
+                      {PRESET_COLORS.map((c) => (
+                        <ColorDot key={c} color={c} selected={catEditColor === c} onClick={() => setCatEditColor(c)} />
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={handleCatUpdate} loading={catSaving} icon={<Check size={12} />}>Save</Button>
+                      <Button size="sm" variant="ghost" onClick={() => setCatEditId(null)}>Cancel</Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: cat.color }} />
+                      <span className="text-sm font-medium text-gray-800">{cat.name}</span>
+                    </div>
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => { setCatEditId(cat.id); setCatEditName(cat.name); setCatEditColor(cat.color); setCatAdding(false) }}
+                        className="p-1 text-gray-400 hover:text-blue-600 rounded"
+                        aria-label="Edit"
+                      >
+                        <Edit2 size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleCatDelete(cat)}
+                        className="p-1 text-gray-400 hover:text-red-500 rounded"
+                        aria-label="Delete"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {catAdding && (
+              <div className="border border-blue-200 rounded-xl p-3 bg-blue-50 space-y-2">
+                <input
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Category name"
+                  value={catNewName}
+                  onChange={(e) => setCatNewName(e.target.value)}
+                  autoFocus
+                  onKeyDown={(e) => e.key === 'Enter' && handleCatAdd()}
+                />
+                <div className="flex flex-wrap gap-1.5">
+                  {PRESET_COLORS.map((c) => (
+                    <ColorDot key={c} color={c} selected={catNewColor === c} onClick={() => setCatNewColor(c)} />
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={handleCatAdd} loading={catSaving} icon={<Check size={12} />}>Add</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setCatAdding(false)} icon={<X size={12} />}>Cancel</Button>
+                </div>
+              </div>
+            )}
+
+            {categories.length === 0 && !catAdding && (
+              <p className="text-sm text-gray-400 text-center py-4">No categories yet — add one above.</p>
+            )}
+          </div>
+        </SectionAccordion>
+
+        {/* Cloud Sync — visible on server nodes only */}
+        {nodeMode === 'server' && (
+          <SectionAccordion id="cloud_sync" title="Cloud Sync" icon={<ArrowLeftRight size={16} className="text-blue-500" />}>
+            <p className="text-xs text-gray-500 mb-5">
+              Back up your data to Kinetix Cloud and enable multi-location sync. Requires a valid license key.
+            </p>
+
+            {/* Status indicator */}
+            {cloudSyncState && cloudSyncState.status !== 'disabled' && (
+              <div className={`flex items-center gap-2 mb-4 px-3 py-2 rounded-lg text-sm font-medium ${
+                cloudSyncState.status === 'synced' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                cloudSyncState.status === 'error'  ? 'bg-red-50 text-red-700 border border-red-200' :
+                cloudSyncState.status === 'syncing' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
+                'bg-gray-50 text-gray-600 border border-gray-200'
+              }`}>
+                <span className={`w-2 h-2 rounded-full shrink-0 ${
+                  cloudSyncState.status === 'synced'  ? 'bg-emerald-500' :
+                  cloudSyncState.status === 'error'   ? 'bg-red-500' :
+                  cloudSyncState.status === 'syncing' ? 'bg-blue-500 animate-pulse' :
+                  'bg-gray-400'
+                }`} />
+                <span>
+                  {cloudSyncState.status === 'synced'  ? `Synced to cloud${cloudSyncState.lastSyncAt ? ` · ${new Date(cloudSyncState.lastSyncAt).toLocaleTimeString()}` : ''}` :
+                   cloudSyncState.status === 'error'   ? `Sync error: ${cloudSyncState.error}` :
+                   cloudSyncState.status === 'syncing' ? 'Syncing to cloud…' : 'Cloud sync idle'}
+                </span>
+                {cloudSyncState.status !== 'syncing' && (
+                  <button
+                    type="button"
+                    onClick={async () => { setCloudSyncing(true); await api.cloudSync.runNow(); setCloudSyncing(false) }}
+                    disabled={cloudSyncing}
+                    className="ml-auto text-xs underline opacity-70 hover:opacity-100"
+                  >
+                    {cloudSyncing ? 'Syncing…' : 'Sync now'}
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Not yet registered */}
+            {(!settings.storeId) && (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Cloud Server URL</label>
+                  <Input
+                    placeholder="https://your-cloud.railway.app"
+                    value={cloudSyncUrl}
+                    onChange={(e) => setCloudSyncUrl(e.target.value)}
+                  />
+                  <p className="text-xs text-gray-400 mt-1">The URL of your deployed Kinetix Cloud instance.</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">License Key</label>
+                  <Input
+                    placeholder="KNX-XXXX-XXXX-XXXX"
+                    value={cloudLicenseKey}
+                    onChange={(e) => setCloudLicenseKey(e.target.value.toUpperCase())}
+                    className="font-mono"
+                  />
+                </div>
+                {cloudRegisterError && (
+                  <p className="text-sm text-red-600">{cloudRegisterError}</p>
+                )}
+                <Button
+                  variant="primary"
+                  onClick={async () => {
+                    if (!cloudLicenseKey.trim() || !cloudSyncUrl.trim()) {
+                      setCloudRegisterError('Enter both the cloud URL and your license key.')
+                      return
+                    }
+                    setCloudRegistering(true)
+                    setCloudRegisterError(null)
+                    const result = await api.cloudSync.register({ licenseKey: cloudLicenseKey.trim(), cloudSyncUrl: cloudSyncUrl.trim() })
+                    setCloudRegistering(false)
+                    if (result.ok) {
+                      setSettings((p) => ({ ...p, storeId: result.storeId ?? '' }))
+                      showToast('Cloud sync activated!', 'success')
+                    } else {
+                      setCloudRegisterError(result.error ?? 'Registration failed — check your license key.')
+                    }
+                  }}
+                  loading={cloudRegistering}
+                >
+                  Activate License
+                </Button>
+              </div>
+            )}
+
+            {/* Already registered */}
+            {settings.storeId && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between py-2 px-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                  <div>
+                    <p className="text-sm font-medium text-emerald-800">Cloud Connected</p>
+                    <p className="text-xs text-emerald-600 font-mono mt-0.5">{settings.storeId}</p>
+                  </div>
+                  <Check size={18} className="text-emerald-600 shrink-0" />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Sync Interval</label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      min="60"
+                      max="3600"
+                      value={settings.cloudSyncIntervalSeconds ?? '300'}
+                      onChange={(e) => setSettings((p) => ({ ...p, cloudSyncIntervalSeconds: e.target.value }))}
+                      className="w-28"
+                    />
+                    <span className="text-sm text-gray-500">seconds</span>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">How often to push data to cloud (default 300 s = 5 min). Saved with Save Changes.</p>
+                </div>
+
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={async () => {
+                    if (!confirm('Reset cloud sync? This will re-push all data on the next sync cycle.')) return
+                    setCloudSyncing(true)
+                    await api.cloudSync.forceFull()
+                    setCloudSyncing(false)
+                    showToast('Full cloud resync started', 'success')
+                  }}
+                >
+                  Force Full Resync
+                </Button>
+              </div>
+            )}
+          </SectionAccordion>
+        )}
+
+
+      </div>
+    </div>
+  )
+}

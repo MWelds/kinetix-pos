@@ -1020,4 +1020,37 @@ function applyV29(sqlite: Database.Database): void {
        WHERE customer_id IS NOT NULL`,
   ]
   for (const ddl of indexes) {
-    try { s
+    try { sqlite.exec(ddl) } catch { /* already exists — idempotent */ }
+  }
+}
+
+/**
+ * V26: Idempotent heal for updated_at / deleted_at on shifts.
+ *
+ * V24 added these columns but was skipped on DBs already at schema_version=25
+ * because `currentVersion < 24` evaluated to false. This migration re-applies
+ * the same DDL using nullable TEXT (no NOT NULL DEFAULT expression) to avoid
+ * the SQLite restriction that prevents adding a NOT NULL column with a
+ * non-constant default to a table that already has rows.
+ *
+ * The back-fill sets updated_at = opened_at for any row where it is still NULL
+ * so the Drizzle schema (which declares updated_at as notNull) can read without
+ * errors.
+ */
+function applyV26(sqlite: Database.Database): void {
+  const cols = [
+    `ALTER TABLE shifts ADD COLUMN updated_at TEXT`,
+    `ALTER TABLE shifts ADD COLUMN deleted_at TEXT`,
+  ]
+  for (const ddl of cols) {
+    try {
+      sqlite.exec(ddl)
+    } catch {
+      // Column already exists — idempotent
+    }
+  }
+  // Back-fill: set updated_at = opened_at for rows where it is NULL.
+  try {
+    sqlite.exec(`UPDATE shifts SET updated_at = opened_at WHERE updated_at IS NULL`)
+  } catch { /* non-fatal */ }
+}

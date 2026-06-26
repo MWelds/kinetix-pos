@@ -315,4 +315,6 @@ const api = {
   },
 }
 
-cont
+contextBridge.exposeInMainWorld('api', api)
+
+export type Api = typeof api

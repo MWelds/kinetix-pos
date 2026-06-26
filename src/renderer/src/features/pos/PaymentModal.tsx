@@ -1070,3 +1070,7 @@ ${footer || customFooter ? `<div class="footer">${esc(footer)}${customFooter}</d
           <label htmlFor="printReceiptToggle">Print receipt after payment</label>
         </div>
 
+      </div>
+    </Modal>
+  )
+}

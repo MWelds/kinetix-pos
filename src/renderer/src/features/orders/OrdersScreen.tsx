@@ -756,4 +756,33 @@ ${esc(cfg.footer)}</pre></body></html>`
                           {p.currency ?? storeCurrency}
                         </span>
                       </span>
-                  
+                      {/* Show amount the customer actually tendered in their currency */}
+                      <span>
+                        {CURRENCIES[p.currency]?.symbol ?? p.currency}
+                        {(p.originalAmount ?? p.amount).toFixed(2)}
+                      </span>
+                    </div>
+                    {p.changeGiven != null && p.changeGiven > 0.005 && (
+                      <div className="flex justify-between text-xs text-emerald-600 mt-0.5">
+                        {/* Change is always in primary/store currency */}
+                        <span>Change ({storeCurrency})</span>
+                        <span>{CURRENCIES[storeCurrency]?.symbol ?? storeCurrency}{p.changeGiven.toFixed(2)}</span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Notes */}
+            {selected.order.notes && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
+                <strong>Notes:</strong> {selected.order.notes}
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}

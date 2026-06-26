@@ -737,4 +737,168 @@ export const orderService = {
       // completed/delivered orders had inventory deducted — restore before re-deducting.
       // pending/held orders never reached deduction — nothing to restore.
       // refunded orders were deducted then restored — inventory already back.
-      const inventoryAlreadyDedu
+      const inventoryAlreadyDeducted = ['completed', 'delivered'].includes(existing.status)
+      const oldItems = inventoryAlreadyDeducted
+        ? tx.select().from(schema.orderItems).where(eq(schema.orderItems.orderId, input.orderId)).all()
+        : []
+
+      // ── Restore old inventory (C-2 fix) ───────────────────────────────────
+      for (const item of oldItems) {
+        restoreInventory(tx, item.productId, item.quantity, now)
+      }
+
+      // ── Reverse old loyalty points for completed/delivered edits ──────────
+      const custId = input.customerId ?? existing.customerId
+      if (inventoryAlreadyDeducted && custId &&
+          (existing.loyaltyPointsEarned > 0 || existing.loyaltyPointsRedeemed > 0)) {
+        const cust = tx.select().from(schema.customers).where(eq(schema.customers.id, custId)).get()
+        if (cust) {
+          tx.update(schema.customers)
+            .set({
+              loyaltyPoints: Math.max(
+                0,
+                cust.loyaltyPoints - existing.loyaltyPointsEarned + existing.loyaltyPointsRedeemed
+              ),
+              updatedAt: now
+            })
+            .where(eq(schema.customers.id, custId))
+            .run()
+        }
+      }
+
+      // ── Replace order items ────────────────────────────────────────────────
+      tx.delete(schema.orderItems)
+        .where(eq(schema.orderItems.orderId, input.orderId))
+        .run()
+
+      for (const item of input.items) {
+        const lineTotal = (item.unitPrice - (item.discountAmount ?? 0)) * item.quantity
+        tx.insert(schema.orderItems)
+          .values({
+            id: generateId(),
+            orderId: input.orderId,
+            productId: item.productId,
+            variantId: item.variantId,
+            productName: item.productName,
+            variantName: item.variantName,
+            sku: item.sku,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            discountAmount: item.discountAmount ?? 0,
+            taxAmount: 0,
+            lineTotal,
+            notes: item.notes,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .run()
+      }
+
+      // ── Update the order record (keep orderNumber, id, createdAt) ──────────
+      tx.update(schema.orders)
+        .set({
+          customerId: custId,
+          staffId: input.staffId ?? existing.staffId,
+          shiftId: input.shiftId ?? existing.shiftId,
+          orderType: input.orderType ?? existing.orderType,
+          notes: input.notes ?? existing.notes,
+          subtotal,
+          discountAmount,
+          taxAmount,
+          total,
+          manualDiscountType: input.manualDiscountType ?? null,
+          manualDiscountValue: input.manualDiscountValue ?? null,
+          loyaltyPointsEarned,
+          loyaltyPointsRedeemed,
+          status: 'completed',
+          syncStatus: 'pending',
+          updatedAt: now,
+        })
+        .where(eq(schema.orders.id, input.orderId))
+        .run()
+
+      // ── Replace payments ───────────────────────────────────────────────────
+      tx.delete(schema.payments)
+        .where(eq(schema.payments.orderId, input.orderId))
+        .run()
+
+      for (const payment of input.payments) {
+        if (payment.method === 'gift_card' && payment.giftCardCode) {
+          const gc = tx
+            .select()
+            .from(schema.giftCards)
+            .where(eq(schema.giftCards.code, payment.giftCardCode))
+            .get()
+          if (gc) {
+            tx.update(schema.giftCards)
+              .set({ balance: Math.max(0, gc.balance - payment.amount) })
+              .where(eq(schema.giftCards.id, gc.id))
+              .run()
+          }
+        }
+
+        if (payment.method === 'store_credit' && custId) {
+          const customer = tx
+            .select()
+            .from(schema.customers)
+            .where(eq(schema.customers.id, custId))
+            .get()
+          if (customer) {
+            // H-1 fix: guard against going negative
+            tx.update(schema.customers)
+              .set({
+                storeCredit: Math.max(0, (customer.storeCredit ?? 0) - payment.amount),
+                updatedAt: now
+              })
+              .where(eq(schema.customers.id, custId))
+              .run()
+          }
+        }
+
+        // Insert the payment record (was missing entirely before this fix)
+        tx.insert(schema.payments)
+          .values({
+            id: generateId(),
+            orderId: input.orderId,
+            method: payment.method,
+            amount: payment.amount,
+            currency: payment.currency ?? 'KYD',
+            originalAmount: payment.originalAmount ?? payment.amount,
+            reference: payment.reference,
+            changeGiven: payment.changeGiven,
+            status: 'completed',
+            createdAt: now,
+          })
+          .run()
+      }
+
+      // ── Deduct inventory for new items (C-2 fix) ──────────────────────────
+      for (const item of input.items) {
+        deductInventory(tx, item.productId, item.quantity, now)
+      }
+
+      // ── Award updated loyalty points ───────────────────────────────────────
+      if (custId && loyaltyPointsEarned > 0) {
+        const customer = tx.select().from(schema.customers).where(eq(schema.customers.id, custId)).get()
+        if (customer) {
+          tx.update(schema.customers)
+            .set({
+              loyaltyPoints: Math.max(
+                0,
+                customer.loyaltyPoints + loyaltyPointsEarned - loyaltyPointsRedeemed
+              ),
+              updatedAt: now
+            })
+            .where(eq(schema.customers.id, custId))
+            .run()
+        }
+      }
+
+      // ── Return the fully updated order (C-1 fix) ──────────────────────────
+      const updatedOrder = tx.select().from(schema.orders).where(eq(schema.orders.id, input.orderId)).get()!
+      const updatedItems = tx.select().from(schema.orderItems).where(eq(schema.orderItems.orderId, input.orderId)).all()
+      const updatedPays = tx.select().from(schema.payments).where(eq(schema.payments.orderId, input.orderId)).all()
+      return { order: updatedOrder, items: updatedItems, payments: updatedPays }
+    })
+  },
+}

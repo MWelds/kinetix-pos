@@ -354,5 +354,16 @@ export const api = {
     getLocalSharePath: (): Promise<string> => bridge.fileSync.getLocalSharePath(),
     onStateChange: (callback: (state: unknown) => void): (() => void) =>
       bridge.fileSync.onStateChange(callback)
-  }
+  },
+
+
+  cloudSync: {
+    getState: (): Promise<unknown> => bridge.cloudSync.getState(),
+    runNow: (): Promise<unknown> => bridge.cloudSync.runNow(),
+    forceFull: (): Promise<unknown> => bridge.cloudSync.forceFull(),
+    register: (args: { licenseKey: string; cloudSyncUrl: string }): Promise<{ ok: boolean; storeId?: string; error?: string }> =>
+      bridge.cloudSync.register(args),
+    onStateChange: (callback: (state: unknown) => void): (() => void) =>
+      bridge.cloudSync.onStateChange(callback),
+  },
 }

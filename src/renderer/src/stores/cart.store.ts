@@ -83,8 +83,10 @@ export const useCartStore = create<CartState>((set, get) => ({
 
   total: () => {
     const { subtotal, discountAmount, taxAmount, loyaltyPointsToRedeem } = get()
+    // 1 loyalty point = $0.01 — must match order.service.ts loyaltyDeduction calculation
+    const loyaltyDeduction = loyaltyPointsToRedeem * 0.01
     return round2(
-      Math.max(0, subtotal() - discountAmount() + taxAmount() - loyaltyPointsToRedeem)
+      Math.max(0, subtotal() - discountAmount() + taxAmount() - loyaltyDeduction)
     )
   },
 
@@ -145,10 +147,4 @@ export const useCartStore = create<CartState>((set, get) => ({
       customer: null,
       notes: '',
       discountType: null,
-      discountValue: 0,
-      loyaltyPointsToRedeem: 0,
-      orderType: 'instore',
-      editingOrderId: null,
-      editingOrderNumber: null,
-    })
-}))
+      disc

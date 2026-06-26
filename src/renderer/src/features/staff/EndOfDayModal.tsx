@@ -102,7 +102,7 @@ function buildEodReceiptHtml(
     return cfg.rate > 0 ? amount / cfg.rate : amount
   }
 
-  // Convert all counted amounts to primary for reconciliation
+  // Convert all counted amounts to primary for reconciliation (used for deposit section)
   const countedPrimary = entries.reduce((s, e) => {
     const val = parseFloat(e.counted) || 0
     return s + entryToPrimary(val, e.currency)
@@ -113,6 +113,15 @@ function buildEodReceiptHtml(
     return s + entryToPrimary(e.expectedPrimary, e.currency)
   }, 0)
   const variance = countedPrimary - expectedPrimary
+
+  // Per-currency variance for the receipt (kept separate — don't add KYD + USD together)
+  const receiptCurrencies = [...new Set(entries.map((e) => e.currency))]
+  const perCurrencyReceipt = receiptCurrencies.map((cur) => {
+    const sym = currencySymbol(cur)
+    const counted = entries.filter((e) => e.currency === cur).reduce((s, e) => s + (parseFloat(e.counted) || 0), 0)
+    const expected = entries.filter((e) => e.currency === cur).reduce((s, e) => s + e.expectedPrimary, 0)
+    return { currency: cur, sym, counted, expected, variance: counted - expected }
+  })
 
   // Reconciliation rows: one per entry, expected vs counted side by side
   const recoRows = entries.map((e) => {
@@ -203,7 +212,9 @@ function buildEodReceiptHtml(
     ${recoRows}
     <hr/>
     ${currencyTotals}
-    <div class="row variance"><span>Variance</span><span>${variance >= 0 ? '+' : ''}${fmt(variance)}</span></div>
+    ${perCurrencyReceipt.map((v) =>
+      `<div class="row"><span>${esc(v.currency)} Variance</span><span style="font-weight:bold;color:${v.variance >= 0 ? 'green' : 'red'}">${v.variance >= 0 ? '+' : ''}${esc(v.sym)}${Math.abs(v.variance).toFixed(2)}</span></div>`
+    ).join('')}
     ${vendorSection}
     ${(closingFloatAmt != null && closingFloatAmt >= 0) ? `
     <hr/>
@@ -431,10 +442,37 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
   }, 0)
 
   const variance = totalCountedPrimary - totalExpectedPrimary
-  const variancePositive = variance >= 0
+
+  /** Per-currency counted / expected / variance — kept separate to avoid misleading combined totals */
+  const perCurrencyStats = (() => {
+    const currencies = [...new Set(entries.map((e) => e.currency))]
+    return currencies.map((cur) => {
+      const sym = currencySymbol(cur)
+      const counted = entries.filter((e) => e.currency === cur).reduce((s, e) => s + (parseFloat(e.counted) || 0), 0)
+      const expected = entries.filter((e) => e.currency === cur).reduce((s, e) => s + e.expectedPrimary, 0)
+      return { currency: cur, symbol: sym, counted, expected, variance: counted - expected }
+    })
+  })()
+
+  /** All currencies are in-balance — used for colour-coding the reconciliation panel */
+  const variancePositive = perCurrencyStats.every((s) => s.variance >= 0)
 
   const closingFloatAmount = parseFloat(closingFloat) || 0
-  /** Cash collected = total counted cash − float left in drawer */
+
+  /** Primary-currency cash only (float is always in primary) */
+  const primaryCashCounted = entries
+    .filter((e) => e.method === 'cash' && e.currency === primaryCurrency)
+    .reduce((s, e) => s + (parseFloat(e.counted) || 0), 0)
+  const primaryCashToDeposit = Math.max(0, primaryCashCounted - closingFloatAmount)
+
+  /** Secondary-currency cash (no float deduction — float is in primary) */
+  const secondaryCashCounted = secondaryCurrency
+    ? entries
+        .filter((e) => e.method === 'cash' && e.currency === secondaryCurrency)
+        .reduce((s, e) => s + (parseFloat(e.counted) || 0), 0)
+    : 0
+
+  /** Combined KYD-equivalent — used only for the shift-close API call, not displayed */
   const cashOnlyCounted = entries
     .filter((e) => e.method === 'cash')
     .reduce((s, e) => s + (toPrimary(parseFloat(e.counted) || 0, e.currency)), 0)
@@ -833,8 +871,12 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                       : <AlertTriangle size={13} className="text-red-600" />}
                     <p className="text-xs font-bold text-gray-700 uppercase tracking-wide">Reconciliation</p>
                   </div>
-                  <span className={`text-sm font-bold ${variancePositive ? 'text-emerald-700' : 'text-red-700'}`}>
-                    Variance: {variancePositive ? '+' : ''}{primarySym}{variance.toFixed(2)}
+                  <span className="flex items-center gap-3">
+                    {perCurrencyStats.map((s) => (
+                      <span key={s.currency} className={`text-sm font-bold ${s.variance >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                        {s.currency}: {s.variance >= 0 ? '+' : ''}{s.symbol}{Math.abs(s.variance).toFixed(2)}
+                      </span>
+                    ))}
                   </span>
                 </div>
 
@@ -881,28 +923,26 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                   })}
                 </div>
 
-                {/* Currency totals footer */}
-                {(() => {
-                  const currencies = [...new Set(entries.map((e) => e.currency))]
-                  return (
-                    <div className={`border-t px-4 py-3 flex gap-6 flex-wrap ${variancePositive ? 'border-emerald-100 bg-emerald-50/60' : 'border-red-100 bg-red-50/40'}`}>
-                      {currencies.map((cur) => {
-                        const sym = currencySymbol(cur)
-                        const totalCounted = entries.filter((e) => e.currency === cur).reduce((s, e) => s + (parseFloat(e.counted) || 0), 0)
-                        const totalExpected = entries.filter((e) => e.currency === cur).reduce((s, e) => s + e.expectedPrimary, 0)
-                        return (
-                          <div key={cur} className="flex items-baseline gap-1.5">
-                            <span className="text-[10px] font-bold text-gray-400 uppercase">{cur}</span>
-                            <span className="text-sm font-bold text-gray-900">{sym}{totalCounted.toFixed(2)}</span>
-                            {Math.abs(totalCounted - totalExpected) > 0.01 && (
-                              <span className="text-xs text-red-500">(exp {sym}{totalExpected.toFixed(2)})</span>
-                            )}
-                          </div>
-                        )
-                      })}
+                {/* Per-currency totals footer: Expected | Counted | Variance */}
+                <div className={`border-t px-4 py-3 space-y-2 ${variancePositive ? 'border-emerald-100 bg-emerald-50/60' : 'border-red-100 bg-red-50/40'}`}>
+                  {/* Column headers */}
+                  <div className="grid grid-cols-4 text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1">
+                    <span>Currency</span>
+                    <span className="text-right">Expected</span>
+                    <span className="text-right">Counted</span>
+                    <span className="text-right">Variance</span>
+                  </div>
+                  {perCurrencyStats.map((s) => (
+                    <div key={s.currency} className="grid grid-cols-4 text-xs items-center">
+                      <span className="font-bold text-gray-600 uppercase">{s.currency}</span>
+                      <span className="text-right text-gray-500">{s.symbol}{s.expected.toFixed(2)}</span>
+                      <span className="text-right font-semibold text-gray-800">{s.symbol}{s.counted.toFixed(2)}</span>
+                      <span className={`text-right font-bold ${s.variance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                        {s.variance >= 0 ? '+' : ''}{s.symbol}{s.variance.toFixed(2)}
+                      </span>
                     </div>
-                  )
-                })()}
+                  ))}
+                </div>
               </div>
 
               <div className="flex items-center justify-between">
@@ -955,27 +995,33 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                     <span>Net revenue {isMultiTerminal ? '(all registers)' : ''}</span>
                     <span className="font-medium text-gray-900">{formatCurrency(summary.totalRevenue, primaryCurrency)}</span>
                   </div>
-                  <div className="flex justify-between text-gray-600">
-                    <span>
-                      Total counted ({primaryCurrency} equiv.)
-                      {(shift?.openingCash ?? 0) > 0 && (
-                        <span className="block text-xs text-blue-500">incl. {primarySym}{(shift!.openingCash as number).toFixed(2)} opening float</span>
-                      )}
-                    </span>
-                    <span className="font-medium text-gray-900">{primarySym}{totalCountedPrimary.toFixed(2)}</span>
-                  </div>
-                  <div className={`flex justify-between font-semibold pt-2 border-t border-gray-200 ${variancePositive ? 'text-emerald-600' : 'text-red-600'}`}>
-                    <span>Cash variance</span>
-                    <span>{variancePositive ? '+' : ''}{primarySym}{variance.toFixed(2)}</span>
+                  {perCurrencyStats.map((s) => (
+                    <div key={s.currency} className="flex justify-between text-gray-600">
+                      <span>
+                        {s.currency} counted
+                        {s.currency === primaryCurrency && (shift?.openingCash ?? 0) > 0 && (
+                          <span className="block text-xs text-blue-500">incl. {primarySym}{(shift!.openingCash as number).toFixed(2)} float</span>
+                        )}
+                      </span>
+                      <span className="font-medium text-gray-900">{s.symbol}{s.counted.toFixed(2)}</span>
+                    </div>
+                  ))}
+                  <div className="pt-2 border-t border-gray-200 space-y-1">
+                    {perCurrencyStats.map((s) => (
+                      <div key={s.currency} className={`flex justify-between font-semibold ${s.variance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                        <span>{s.currency} variance</span>
+                        <span>{s.variance >= 0 ? '+' : ''}{s.symbol}{s.variance.toFixed(2)}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
 
-              {/* Closing float + cash to deposit */}
+              {/* Closing float + cash to deposit (per currency) */}
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
                 <div>
                   <label className="block text-xs font-semibold text-blue-800 mb-1.5">
-                    Float to leave in drawer
+                    Float to leave in drawer ({primaryCurrency})
                     <span className="text-blue-500 font-normal ml-1">(pre-filled from opening amount)</span>
                   </label>
                   <div className="relative">
@@ -990,83 +1036,10 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
                     />
                   </div>
                 </div>
-                <div className="flex justify-between items-center pt-1 border-t border-blue-200">
-                  <div>
-                    <p className="text-sm font-bold text-blue-900">Cash to Deposit</p>
-                    <p className="text-xs text-blue-600">Cash counted − float</p>
-                  </div>
-                  <p className="text-xl font-bold text-blue-900">
-                    {primarySym}{cashToDeposit.toFixed(2)}
-                  </p>
-                </div>
-              </div>
-
-              {!variancePositive && Math.abs(variance) > 1 && (
-                <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
-                  <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                  <span>Drawer is short by {primarySym}{Math.abs(variance).toFixed(2)}. This will be recorded in the shift report.</span>
-                </div>
-              )}
-
-              {/* Closing note */}
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1.5">
-                  Shift Note <span className="text-gray-400 font-normal">(optional)</span>
-                </label>
-                <textarea
-                  value={closingNote}
-                  onChange={(e) => setClosingNote(e.target.value)}
-                  placeholder="e.g. Busy evening, printer jam at 7pm, left $200 float in drawer…"
-                  rows={3}
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                />
-              </div>
-
-              {/* Two close options */}
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={handleCloseShiftOnly}
-                  disabled={closing}
-                  className="flex flex-col items-center gap-2 px-4 py-4 rounded-xl border-2 border-gray-200 hover:border-amber-400 hover:bg-amber-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed group"
-                >
-                  <div className="w-10 h-10 rounded-full bg-amber-100 group-hover:bg-amber-200 flex items-center justify-center transition-colors">
-                    <Sun size={18} className="text-amber-600" />
-                  </div>
-                  <div className="text-center">
-                    <p className="text-sm font-bold text-gray-900">Close Shift Only</p>
-                    <p className="text-xs text-gray-500 mt-0.5">Stay logged in</p>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleCloseDay}
-                  disabled={closing}
-                  className="flex flex-col items-center gap-2 px-4 py-4 rounded-xl border-2 border-gray-200 hover:border-red-400 hover:bg-red-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed group"
-                >
-                  <div className="w-10 h-10 rounded-full bg-red-100 group-hover:bg-red-200 flex items-center justify-center transition-colors">
-                    <LogOut size={18} className="text-red-600" />
-                  </div>
-                  <div className="text-center">
-                    <p className="text-sm font-bold text-gray-900">Close & Sign Out</p>
-                    <p className="text-xs text-gray-500 mt-0.5">Return to login screen</p>
-                  </div>
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between pt-1">
-                <button onClick={() => setStep('summary')} className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
-                  <ChevronLeft size={14} /> Back
-                </button>
-                {closing && (
-                  <span className="text-sm text-gray-400 animate-pulse">Closing shift…</span>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
+                <div className="pt-1 border-t border-blue-200 space-y-2">
+                  {/* Primary currency to deposit */}
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <p className="text-sm font-bold text-blue-900">{primaryCurrency} to Deposit</p>
+                      <p className="text-xs text-blue-600">{primaryCurrency} counted − float</p>
+         

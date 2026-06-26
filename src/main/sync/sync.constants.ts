@@ -98,4 +98,13 @@ export const MACHINE_SPECIFIC_SETTINGS = new Set([
   'v2TerminalPushSeq',
   'v2ServerPullSeq',
   'fileSyncServerLastExport',
-])
+
+    // Cloud sync — hub-specific, must never propagate to terminals
+  'cloudSyncEnabled',
+  'cloudSyncUrl',
+  'cloudSyncIntervalSeconds',
+  'storeId',
+  'cloudApiKey',
+  'cloudPushWatermark',
+  'cloudPullWatermark',
+]) satisfies ReadonlySet<string>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import QRCode from 'qrcode'
-import { Save, RefreshCw, ArrowLeftRight, Monitor, Wifi, WifiOff, ExternalLink, FolderOpen, Plus, Edit2, Trash2, Check, X, ImageIcon, Upload, Link2, Link2Off, AlertCircle, RotateCcw, ChevronDown, Search } from 'lucide-react'
+import { Save, RefreshCw, ArrowLeftRight, Monitor, Wifi, WifiOff, ExternalLink, FolderOpen, Plus, Edit2, Trash2, Check, X, ImageIcon, Upload, Link2, Link2Off, AlertCircle, RotateCcw, ChevronDown, Search, Scan, CreditCard, Cast } from 'lucide-react'
 import { api } from '../../lib/api'
 import { Input, Textarea, Button } from '../../components/ui'
 import { useUiStore } from '../../stores/ui.store'
@@ -451,7 +451,10 @@ function SyncServerSection({
     // Load the server's default local share path so we can display it
     api.fileSync.getLocalSharePath().then(setLocalSharePath).catch(() => {})
 
-    return () => { unsubHttp(); unsubV2(); unsubFile() }
+    api.cloudSync.getState().then((s) => setCloudSyncState(s as typeof cloudSyncState)).catch(() => {})
+    const unsubCloud = api.cloudSync.onStateChange((s) => setCloudSyncState(s as typeof cloudSyncState))
+
+    return () => { unsubHttp(); unsubV2(); unsubFile(); unsubCloud() }
   }, [])
 
   // Server machines must never run the HTTP sync client
@@ -1380,6 +1383,14 @@ export function SettingsScreen() {
   const [convFrom, setConvFrom] = useState<CurrencyCode>('USD')
   const [convInput, setConvInput] = useState('')
 
+  // Cloud sync state
+  const [cloudSyncState, setCloudSyncState] = useState<{ status: string; lastSyncAt: string | null; error: string | null } | null>(null)
+  const [cloudLicenseKey, setCloudLicenseKey] = useState('')
+  const [cloudSyncUrl, setCloudSyncUrl] = useState('')
+  const [cloudRegistering, setCloudRegistering] = useState(false)
+  const [cloudRegisterError, setCloudRegisterError] = useState<string | null>(null)
+  const [cloudSyncing, setCloudSyncing] = useState(false)
+
   // Peripherals state
   const [displayWindowOpen, setDisplayWindowOpen] = useState(false)
   const [networkRunning, setNetworkRunning] = useState(false)
@@ -1455,6 +1466,8 @@ export function SettingsScreen() {
         networkDisplayAutoStart: 'false',
         networkDisplayPort: '3031',
         terminalName: 'Terminal 1',
+        storeId: '',
+        cloudSyncIntervalSeconds: '300',
         emailPort: '587',
         emailSecure: 'false',
         emailFromName: 'Kinetix POS',
@@ -1462,6 +1475,9 @@ export function SettingsScreen() {
       })
       setLoading(false)
     })
+
+    // Load cloud sync URL from settings if already configured
+    api.settings.get('cloudSyncUrl').then((v) => { if (v) setCloudSyncUrl(v) }).catch(() => {})
 
     // Load display status
     api.display.status().then((s) => {
@@ -1697,6 +1713,9 @@ export function SettingsScreen() {
   function setBool(key: string, val: boolean) {
     setSettings((s) => ({ ...s, [key]: String(val) }))
   }
+
+  // Derived values
+  const nodeMode = settings.nodeMode ?? ''
 
   // Derived converter values
   const rate = parseFloat(settings.kydToUsdRate) || DEFAULT_KYD_TO_USD
@@ -2262,6 +2281,195 @@ export function SettingsScreen() {
         />
         </SectionAccordion>
 
+        {/* Peripherals */}
+        <SectionAccordion id="peripherals" title="Peripherals" icon={<Cast size={16} className="text-purple-500" />}>
+          <div className="space-y-6">
+
+            {/* ── Customer Display ──────────────────────────────────── */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-800 mb-1">Customer Display</h3>
+              <p className="text-xs text-gray-500 mb-4">
+                Show a customer-facing screen on a second monitor, or serve a network display page
+                that any browser on the LAN can open.
+              </p>
+
+              {/* Local window */}
+              <div className="flex items-center justify-between py-3 border-b border-gray-100">
+                <div className="flex items-center gap-3">
+                  <Monitor size={16} className="text-gray-400 shrink-0" />
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">Local Display Window</p>
+                    <p className="text-xs text-gray-500">Opens a second window on an attached monitor.</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleToggleDisplayWindow}
+                  disabled={displayLoading}
+                  className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    displayWindowOpen
+                      ? 'bg-red-50 border border-red-200 text-red-700 hover:bg-red-100'
+                      : 'bg-blue-600 text-white hover:bg-blue-700'
+                  }`}
+                >
+                  {displayLoading ? <RefreshCw size={14} className="animate-spin" /> : <Monitor size={14} />}
+                  {displayWindowOpen ? 'Close Display' : 'Open Display'}
+                </button>
+              </div>
+
+              {/* Network display */}
+              <div className="flex items-start justify-between py-3 border-b border-gray-100">
+                <div className="flex items-center gap-3">
+                  {networkRunning ? <Wifi size={16} className="text-emerald-500 shrink-0" /> : <WifiOff size={16} className="text-gray-400 shrink-0" />}
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">Network Display</p>
+                    <p className="text-xs text-gray-500">
+                      {networkRunning
+                        ? <>Running — open <code className="text-blue-600">http://{localIp}:{networkPort}</code> on any device</>
+                        : 'Serves a browser-based display page over your LAN.'}
+                    </p>
+                    <div className="flex items-center gap-2 mt-2">
+                      <label className="text-xs text-gray-500 shrink-0">Port</label>
+                      <input
+                        type="number"
+                        value={networkPort}
+                        onChange={(e) => setNetworkPort(e.target.value)}
+                        className="w-24 px-2 py-1 text-xs border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        min={1024}
+                        max={65535}
+                        disabled={networkRunning}
+                      />
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleToggleNetwork}
+                  disabled={networkLoading}
+                  className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium shrink-0 transition-colors ${
+                    networkRunning
+                      ? 'bg-red-50 border border-red-200 text-red-700 hover:bg-red-100'
+                      : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                  }`}
+                >
+                  {networkLoading ? <RefreshCw size={14} className="animate-spin" /> : networkRunning ? <WifiOff size={14} /> : <Wifi size={14} />}
+                  {networkRunning ? 'Stop' : 'Start'}
+                </button>
+              </div>
+
+              {/* Auto-start */}
+              <div className="flex items-center justify-between py-3 border-b border-gray-100">
+                <div>
+                  <p className="text-sm font-medium text-gray-800">Auto-start network display on launch</p>
+                  <p className="text-xs text-gray-500">Starts the network display automatically when Kinetix POS opens.</p>
+                </div>
+                <Toggle
+                  checked={(settings.networkDisplayAutoStart ?? 'false') === 'true'}
+                  onChange={(v) => setBool('networkDisplayAutoStart', v)}
+                />
+              </div>
+
+              {/* Display background color */}
+              <div className="flex items-center justify-between py-3">
+                <div>
+                  <p className="text-sm font-medium text-gray-800">Display background color</p>
+                  <p className="text-xs text-gray-500">Background shown on the customer display when idle.</p>
+                </div>
+                <input
+                  type="color"
+                  value={settings.displayBgColor ?? '#0f172a'}
+                  onChange={(e) => setSettings((s) => ({ ...s, displayBgColor: e.target.value }))}
+                  className="w-10 h-10 rounded-lg border border-gray-200 cursor-pointer"
+                  title="Display background color"
+                />
+              </div>
+            </div>
+
+            {/* ── Cash Drawer ───────────────────────────────────────── */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-800 mb-1">Cash Drawer</h3>
+              <p className="text-xs text-gray-500 mb-4">
+                Most cash drawers connect via a receipt printer's DK port and open automatically
+                when a cash sale is completed. Use the button below to test the connection.
+              </p>
+
+              <div className="flex items-center justify-between py-3 border-b border-gray-100">
+                <div className="flex items-center gap-3">
+                  <CreditCard size={16} className="text-gray-400 shrink-0" />
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">Drawer trigger printer</p>
+                    <p className="text-xs text-gray-500">
+                      Set in <strong>Hardware / Printers → Receipt Printer</strong> above. The drawer
+                      pulse is sent to that printer automatically on cash sales.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-3">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await api.app.openCashDrawer()
+                      showToast('Cash drawer pulse sent', 'success')
+                    } catch {
+                      showToast('Failed to send drawer pulse — check printer connection', 'error')
+                    }
+                  }}
+                  className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                >
+                  <CreditCard size={14} /> Test Open Cash Drawer
+                </button>
+              </div>
+            </div>
+
+            {/* ── Barcode Scanner ───────────────────────────────────── */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-800 mb-1">Barcode Scanner</h3>
+              <p className="text-xs text-gray-500 mb-4">
+                Kinetix POS supports any USB or Bluetooth barcode scanner configured as a
+                keyboard wedge (HID mode). No drivers are needed — plug in and scan.
+              </p>
+              <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-100 rounded-xl">
+                <Scan size={16} className="text-blue-500 mt-0.5 shrink-0" />
+                <div className="text-sm text-blue-800">
+                  <p className="font-medium mb-1">Plug-and-play setup</p>
+                  <p className="text-xs text-blue-700">
+                    Ensure your scanner is in <strong>USB HID / Keyboard Emulation</strong> mode.
+                    It will then send scanned barcodes as keystrokes, which Kinetix POS captures
+                    automatically on the POS screen and inventory screens. No configuration required.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                <div className="flex items-center justify-between py-3 border-b border-gray-100">
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">Scan beep / sound feedback</p>
+                    <p className="text-xs text-gray-500">Play a short tone when a barcode is successfully scanned.</p>
+                  </div>
+                  <Toggle
+                    checked={(settings.scannerBeepEnabled ?? 'true') === 'true'}
+                    onChange={(v) => setBool('scannerBeepEnabled', v)}
+                  />
+                </div>
+                <div className="flex items-center justify-between py-3">
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">Auto-focus POS search on scan</p>
+                    <p className="text-xs text-gray-500">Automatically move focus to the product search box when a scan is detected.</p>
+                  </div>
+                  <Toggle
+                    checked={(settings.scannerAutoFocus ?? 'true') === 'true'}
+                    onChange={(v) => setBool('scannerAutoFocus', v)}
+                  />
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </SectionAccordion>
+
         {/* Loyalty */}
         <SectionAccordion id="loyalty" title="Loyalty Program">
           <Input
@@ -2490,264 +2698,4 @@ export function SettingsScreen() {
                     <input
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                       value={catEditName}
-                      onChange={(e) => setCatEditName(e.target.value)}
-                      autoFocus
-                      onKeyDown={(e) => e.key === 'Enter' && handleCatUpdate()}
-                    />
-                    <div className="flex flex-wrap gap-1.5">
-                      {PRESET_COLORS.map((c) => (
-                        <ColorDot key={c} color={c} selected={catEditColor === c} onClick={() => setCatEditColor(c)} />
-                      ))}
-                    </div>
-                    <div className="flex gap-2">
-                      <Button size="sm" onClick={handleCatUpdate} loading={catSaving} icon={<Check size={12} />}>Save</Button>
-                      <Button size="sm" variant="ghost" onClick={() => setCatEditId(null)}>Cancel</Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: cat.color }} />
-                      <span className="text-sm font-medium text-gray-800">{cat.name}</span>
-                    </div>
-                    <div className="flex gap-1">
-                      <button
-                        type="button"
-                        onClick={() => { setCatEditId(cat.id); setCatEditName(cat.name); setCatEditColor(cat.color); setCatAdding(false) }}
-                        className="p-1 text-gray-400 hover:text-blue-600 rounded"
-                        aria-label="Edit"
-                      >
-                        <Edit2 size={13} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleCatDelete(cat)}
-                        className="p-1 text-gray-400 hover:text-red-500 rounded"
-                        aria-label="Delete"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
-
-            {catAdding && (
-              <div className="border border-blue-200 rounded-xl p-3 bg-blue-50 space-y-2">
-                <input
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Category name"
-                  value={catNewName}
-                  onChange={(e) => setCatNewName(e.target.value)}
-                  autoFocus
-                  onKeyDown={(e) => e.key === 'Enter' && handleCatAdd()}
-                />
-                <div className="flex flex-wrap gap-1.5">
-                  {PRESET_COLORS.map((c) => (
-                    <ColorDot key={c} color={c} selected={catNewColor === c} onClick={() => setCatNewColor(c)} />
-                  ))}
-                </div>
-                <div className="flex gap-2">
-                  <Button size="sm" onClick={handleCatAdd} loading={catSaving} icon={<Check size={12} />}>Add</Button>
-                  <Button size="sm" variant="ghost" onClick={() => setCatAdding(false)} icon={<X size={12} />}>Cancel</Button>
-                </div>
-              </div>
-            )}
-
-            {categories.length === 0 && !catAdding && (
-              <p className="text-sm text-gray-400 text-center py-4">No categories yet — add one above.</p>
-            )}
-          </div>
-        </SectionAccordion>
-
-        {/* Peripherals */}
-        <SectionAccordion id="peripherals" title="Peripherals">
-          <p className="text-xs text-gray-500 mb-5">
-            Customer-facing displays show cart contents and totals in real time.
-          </p>
-
-          {/* Display Appearance */}
-          <div className="mb-6 pb-5 border-b border-gray-100">
-            <p className="text-sm font-semibold text-gray-700 mb-3">Display Appearance</p>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Background Color</label>
-                <div className="flex items-center gap-3">
-                  <input type="color" value={settings.displayBgColor ?? '#0f172a'} onChange={(e) => setSettings((p) => ({ ...p, displayBgColor: e.target.value }))} className="h-10 w-16 cursor-pointer rounded border border-gray-300" />
-                  <input type="text" value={settings.displayBgColor ?? '#0f172a'} onChange={(e) => setSettings((p) => ({ ...p, displayBgColor: e.target.value }))} className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-32 font-mono" placeholder="#0f172a" />
-                  <button type="button" onClick={() => setSettings((p) => ({ ...p, displayBgColor: '#0f172a' }))} className="text-xs text-gray-500 hover:text-gray-700 underline">Reset</button>
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Background Image</label>
-                <p className="text-xs text-gray-500 mb-2">Shown behind content on the customer display. Max 2 MB.</p>
-                {settings.displayBgImage ? (
-                  <div className="flex items-center gap-3">
-                    <img src={settings.displayBgImage} alt="Display BG" className="h-16 w-28 object-cover rounded-lg border border-gray-200" />
-                    <button type="button" onClick={() => { setSettings((p) => ({ ...p, displayBgImage: '' })); api.settings.set('displayBgImage', '').catch(() => {}) }} className="text-xs text-red-500 hover:text-red-700 underline">Remove</button>
-                  </div>
-                ) : (
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <span className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm text-gray-700 border border-gray-300 transition-colors">Upload Image</span>
-                    <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => {
-                      const file = e.target.files?.[0]
-                      if (!file) return
-                      if (file.size > 2 * 1024 * 1024) { showToast('Image too large (max 2 MB)', 'error'); return }
-                      const reader = new FileReader()
-                      reader.onload = (ev) => {
-                        const b64 = ev.target?.result as string
-                        setSettings((p) => ({ ...p, displayBgImage: b64 }))
-                        api.settings.set('displayBgImage', b64).catch(() => {})
-                      }
-                      reader.readAsDataURL(file)
-                    }} />
-                  </label>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Second-screen Electron window */}
-          <div className="flex items-start justify-between py-3 border-b border-gray-100 mb-3">
-            <div className="flex items-start gap-3">
-              <Monitor size={18} className="text-gray-400 mt-0.5 shrink-0" />
-              <div>
-                <p className="text-sm font-medium text-gray-800">Second Screen Display</p>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  Opens a fullscreen customer-facing window on a connected second monitor.
-                </p>
-                {displayWindowOpen && (
-                  <span className="inline-flex items-center gap-1 mt-1 text-xs text-emerald-600 font-medium">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
-                    Display window is open
-                  </span>
-                )}
-              </div>
-            </div>
-            <Button
-              variant={displayWindowOpen ? 'secondary' : 'primary'}
-              size="sm"
-              onClick={handleToggleDisplayWindow}
-              loading={displayLoading}
-              className="shrink-0"
-            >
-              {displayWindowOpen ? 'Close Display' : 'Open Display'}
-            </Button>
-          </div>
-
-          {/* Network display */}
-          <div className="space-y-3">
-            <div className="flex items-start justify-between">
-              <div className="flex items-start gap-3">
-                {networkRunning
-                  ? <Wifi size={18} className="text-blue-500 mt-0.5 shrink-0" />
-                  : <WifiOff size={18} className="text-gray-400 mt-0.5 shrink-0" />
-                }
-                <div>
-                  <p className="text-sm font-medium text-gray-800">Network Display</p>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    Serves a display page over Wi-Fi — open on any tablet, iPad, or price pole
-                    connected to the same network.
-                  </p>
-                  {networkRunning && (
-                    <span className="inline-flex items-center gap-1 mt-1 text-xs text-emerald-600 font-medium">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
-                      Running on port {networkPort}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <Button
-                variant={networkRunning ? 'secondary' : 'primary'}
-                size="sm"
-                onClick={handleToggleNetwork}
-                loading={networkLoading}
-                className="shrink-0"
-              >
-                {networkRunning ? 'Stop' : 'Start'}
-              </Button>
-            </div>
-
-            {!networkRunning && (
-              <div className="ml-7 space-y-4">
-                <div className="max-w-[160px]">
-                  <Input
-                    label="Port"
-                    type="number"
-                    min="1024"
-                    max="65535"
-                    value={networkPort}
-                    onChange={(e) => setNetworkPort(e.target.value)}
-                    placeholder="3031"
-                  />
-                </div>
-
-                {/* Auto-start on launch toggle */}
-                <div className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg border border-gray-200 max-w-sm">
-                  <div>
-                    <p className="text-sm font-medium text-gray-800">Auto-start on launch</p>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      Start the network display automatically when the app opens
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={settings.networkDisplayAutoStart === 'true'}
-                    onClick={() => {
-                      const next = settings.networkDisplayAutoStart === 'true' ? 'false' : 'true'
-                      setSettings((p) => ({ ...p, networkDisplayAutoStart: next }))
-                      api.settings.set('networkDisplayAutoStart', next).catch(() => {})
-                      // Also persist the current port so auto-start uses it
-                      api.settings.set('networkDisplayPort', networkPort).catch(() => {})
-                    }}
-                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-                      settings.networkDisplayAutoStart === 'true' ? 'bg-blue-600' : 'bg-gray-300'
-                    }`}
-                  >
-                    <span
-                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                        settings.networkDisplayAutoStart === 'true' ? 'translate-x-5' : 'translate-x-0'
-                      }`}
-                    />
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {networkRunning && (
-              <div className="ml-7 bg-gray-50 border border-gray-200 rounded-xl p-4 flex gap-5 items-start">
-                <QrCode url={`http://${localIp}:${networkPort}`} size={128} />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-gray-500 mb-1">Display URL</p>
-                  <div className="flex items-center gap-2">
-                    <code className="text-sm font-mono text-gray-900 bg-white border border-gray-200 rounded-lg px-3 py-1.5 flex-1 truncate">
-                      http://{localIp}:{networkPort}
-                    </code>
-                    <a
-                      href={`http://${localIp}:${networkPort}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="p-1.5 rounded-lg hover:bg-gray-200 text-gray-500"
-                      title="Open in browser"
-                    >
-                      <ExternalLink size={14} />
-                    </a>
-                  </div>
-                  <p className="text-xs text-gray-400 mt-2">
-                    Scan the QR code from any device on the same Wi-Fi network.
-                  </p>
-                  <p className="text-xs text-gray-400 mt-1">
-                    The page auto-updates with every cart change — no app install needed.
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-        </SectionAccordion>
-
-      </div>
-    </div>
-  )
-}
+                      onChange={(e) => setCatEditName(e.target.

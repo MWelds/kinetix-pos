@@ -285,6 +285,20 @@ const api = {
     }
   },
 
+  // Cloud sync (hub → Kinetix Cloud backend)
+  cloudSync: {
+    getState: () => ipcRenderer.invoke(IPC.CLOUD_SYNC_GET_STATE),
+    runNow: () => ipcRenderer.invoke(IPC.CLOUD_SYNC_RUN_NOW),
+    forceFull: () => ipcRenderer.invoke(IPC.CLOUD_SYNC_FORCE_FULL),
+    register: (args: { licenseKey: string; cloudSyncUrl: string }) =>
+      ipcRenderer.invoke(IPC.CLOUD_SYNC_REGISTER, args),
+    onStateChange: (callback: (state: unknown) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state)
+      ipcRenderer.on(IPC.CLOUD_SYNC_STATE_PUSH, handler)
+      return () => ipcRenderer.removeListener(IPC.CLOUD_SYNC_STATE_PUSH, handler)
+    },
+  },
+
   // File-based sync (no HTTP — uses Windows network share)
   fileSync: {
     getState: () => ipcRenderer.invoke(IPC.FILE_SYNC_GET_STATE),
@@ -297,11 +311,8 @@ const api = {
       const handler = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state)
       ipcRenderer.on(IPC.FILE_SYNC_STATE_PUSH, handler)
       return () => ipcRenderer.removeListener(IPC.FILE_SYNC_STATE_PUSH, handler)
-    }
+    },
   },
-
 }
 
-contextBridge.exposeInMainWorld('api', api)
-
-export type Api = typeof api
+cont

@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import bcrypt from 'bcryptjs'
 
 /** Schema version — increment whenever tables change */
-const SCHEMA_VERSION = 28
+const SCHEMA_VERSION = 29
 
 /**
  * Runs idempotent DDL migrations on first launch.
@@ -141,6 +141,12 @@ export function runMigrations(sqlite: Database.Database): void {
   // idempotent (try/catch around each ALTER TABLE), so running it again is safe.
   if (currentVersion < 27) {
     applyV26(sqlite)
+  }
+
+  // V29: Add missing performance indexes identified in code audit.
+  // All use IF NOT EXISTS — fully idempotent on any schema version.
+  if (currentVersion < 29) {
+    applyV29(sqlite)
   }
 
   if (currentVersion < SCHEMA_VERSION) {
@@ -993,32 +999,25 @@ function applyV25(sqlite: Database.Database): void {
 }
 
 /**
- * V26: Idempotent heal for updated_at / deleted_at on shifts.
+ * V29: Additional performance indexes identified in audit.
  *
- * V24 added these columns but was skipped on DBs already at schema_version=25
- * because `currentVersion < 24` evaluated to false. This migration re-applies
- * the same DDL using nullable TEXT (no NOT NULL DEFAULT expression) to avoid
- * the SQLite restriction that prevents adding a NOT NULL column with a
- * non-constant default to a table that already has rows.
- *
- * The back-fill sets updated_at = opened_at for any row where it is still NULL
- * so the Drizzle schema (which declares updated_at as notNull) can read without
- * errors.
+ * - staff.pin       — every PIN authentication does a full staff scan without this
+ * - inv_adj.product — inventory recompute sums adjustments by product_id on every sync
+ * - orders.sync_status — sync push queries filter by sync_status = 'pending'
+ * - orders.customer_id — customer purchase history queries
  */
-function applyV26(sqlite: Database.Database): void {
-  const cols = [
-    `ALTER TABLE shifts ADD COLUMN updated_at TEXT`,
-    `ALTER TABLE shifts ADD COLUMN deleted_at TEXT`,
+function applyV29(sqlite: Database.Database): void {
+  const indexes = [
+    `CREATE INDEX IF NOT EXISTS idx_staff_pin
+       ON staff (pin)`,
+    `CREATE INDEX IF NOT EXISTS idx_inv_adj_product
+       ON inventory_adjustments (product_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_orders_sync_status
+       ON orders (sync_status)
+       WHERE sync_status = 'pending'`,
+    `CREATE INDEX IF NOT EXISTS idx_orders_customer_id
+       ON orders (customer_id)
+       WHERE customer_id IS NOT NULL`,
   ]
-  for (const ddl of cols) {
-    try {
-      sqlite.exec(ddl)
-    } catch {
-      // Column already exists — idempotent
-    }
-  }
-  // Back-fill: set updated_at = opened_at for rows where it is NULL.
-  try {
-    sqlite.exec(`UPDATE shifts SET updated_at = opened_at WHERE updated_at IS NULL`)
-  } catch { /* non-fatal */ }
-}
+  for (const ddl of indexes) {
+    try { s

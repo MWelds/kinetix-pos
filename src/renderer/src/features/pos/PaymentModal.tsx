@@ -792,9 +792,8 @@ ${footer || customFooter ? `<div class="footer">${esc(footer)}${customFooter}</d
     )
   }
 
-  // Payment entry view
+  // Payment entry view — cancel just closes, does NOT clear the cart
   function handleCancel() {
-    clearCart()
     onClose()
   }
 
@@ -1071,7 +1070,3 @@ ${footer || customFooter ? `<div class="footer">${esc(footer)}${customFooter}</d
           <label htmlFor="printReceiptToggle">Print receipt after payment</label>
         </div>
 
-      </div>
-    </Modal>
-  )
-}

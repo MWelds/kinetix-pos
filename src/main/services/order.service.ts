@@ -301,174 +301,186 @@ export const orderService = {
   /** Create a new order (pending / held) */
   create(input: CreateOrderInput): OrderWithItems {
     const db = getDatabase()
-    const orderId = generateId()
-    const now = new Date().toISOString()
-    const orderNumber = generateOrderNumber(db)
+    return db.transaction((tx) => {
+      const orderId = generateId()
+      const now = new Date().toISOString()
+      const orderNumber = generateOrderNumber(tx)
 
-    let subtotal = 0
-    for (const item of input.items) {
-      subtotal += (item.unitPrice - (item.discountAmount ?? 0)) * item.quantity
-    }
+      let subtotal = 0
+      for (const item of input.items) {
+        subtotal += (item.unitPrice - (item.discountAmount ?? 0)) * item.quantity
+      }
 
-    let discountAmount = 0
-    if (input.manualDiscountType === 'percentage' && input.manualDiscountValue) {
-      discountAmount = subtotal * (input.manualDiscountValue / 100)
-    } else if (input.manualDiscountType === 'fixed' && input.manualDiscountValue) {
-      discountAmount = Math.min(input.manualDiscountValue, subtotal)
-    }
+      let discountAmount = 0
+      if (input.manualDiscountType === 'percentage' && input.manualDiscountValue) {
+        discountAmount = subtotal * (input.manualDiscountValue / 100)
+      } else if (input.manualDiscountType === 'fixed' && input.manualDiscountValue) {
+        discountAmount = Math.min(input.manualDiscountValue, subtotal)
+      }
 
-    const afterDiscount = subtotal - discountAmount
-    const taxAmount = afterDiscount * (input.taxRate ?? 0)
-    const loyaltyDeduction = (input.loyaltyPointsRedeemed ?? 0) * 0.01
-    const total = afterDiscount + taxAmount - loyaltyDeduction
+      const afterDiscount = subtotal - discountAmount
+      const taxAmount = afterDiscount * (input.taxRate ?? 0)
+      const loyaltyDeduction = (input.loyaltyPointsRedeemed ?? 0) * 0.01
+      const total = afterDiscount + taxAmount - loyaltyDeduction
 
-    db.insert(schema.orders)
-      .values({
-        id: orderId,
-        orderNumber,
-        status: 'pending',
-        orderType: input.orderType ?? 'instore',
-        customerId: input.customerId,
-        staffId: input.staffId,
-        shiftId: input.shiftId,
-        subtotal,
-        discountAmount,
-        taxAmount,
-        total: Math.max(0, total),
-        notes: input.notes,
-        manualDiscountType: input.manualDiscountType,
-        manualDiscountValue: input.manualDiscountValue,
-        discountId: input.discountId,
-        loyaltyPointsEarned: Math.floor(total),
-        loyaltyPointsRedeemed: input.loyaltyPointsRedeemed ?? 0,
-        syncStatus: 'pending',
-        terminalId: settingsService.get('terminalId') || 'unknown',
-        terminalName: settingsService.get('terminalName') || 'POS',
-        createdAt: now,
-        updatedAt: now
-      })
-      .run()
-
-    for (const item of input.items) {
-      const lineTotal = (item.unitPrice - (item.discountAmount ?? 0)) * item.quantity
-      db.insert(schema.orderItems)
+      tx.insert(schema.orders)
         .values({
-          id: generateId(),
-          orderId,
-          productId: item.productId,
-          variantId: item.variantId,
-          productName: item.productName,
-          variantName: item.variantName,
-          sku: item.sku,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          discountAmount: item.discountAmount ?? 0,
-          taxAmount: 0,
-          lineTotal,
-          notes: item.notes,
+          id: orderId,
+          orderNumber,
+          status: 'pending',
+          orderType: input.orderType ?? 'instore',
+          customerId: input.customerId,
+          staffId: input.staffId,
+          shiftId: input.shiftId,
+          subtotal,
+          discountAmount,
+          taxAmount,
+          total: Math.max(0, total),
+          notes: input.notes,
+          manualDiscountType: input.manualDiscountType,
+          manualDiscountValue: input.manualDiscountValue,
+          discountId: input.discountId,
+          loyaltyPointsEarned: Math.floor(Math.max(0, total)),
+          loyaltyPointsRedeemed: input.loyaltyPointsRedeemed ?? 0,
+          syncStatus: 'pending',
+          terminalId: settingsService.get('terminalId') || 'unknown',
+          terminalName: settingsService.get('terminalName') || 'POS',
           createdAt: now,
           updatedAt: now
         })
         .run()
-    }
 
-    return this.getWithItems(orderId)!
-  },
-
-  /** Complete an order with payment */
-  complete(input: CompleteOrderInput): OrderWithItems {
-    const db = getDatabase()
-    const now = new Date().toISOString()
-
-    const order = db
-      .select()
-      .from(schema.orders)
-      .where(eq(schema.orders.id, input.orderId))
-      .get()
-    if (!order) throw new Error(`Order ${input.orderId} not found`)
-
-    // Record payments
-    for (const payment of input.payments) {
-      if (payment.method === 'gift_card' && payment.giftCardCode) {
-        const gc = db
-          .select()
-          .from(schema.giftCards)
-          .where(eq(schema.giftCards.code, payment.giftCardCode))
-          .get()
-        if (gc) {
-          db.update(schema.giftCards)
-            .set({ balance: Math.max(0, gc.balance - payment.amount) })
-            .where(eq(schema.giftCards.id, gc.id))
-            .run()
-        }
+      for (const item of input.items) {
+        const lineTotal = (item.unitPrice - (item.discountAmount ?? 0)) * item.quantity
+        tx.insert(schema.orderItems)
+          .values({
+            id: generateId(),
+            orderId,
+            productId: item.productId,
+            variantId: item.variantId,
+            productName: item.productName,
+            variantName: item.variantName,
+            sku: item.sku,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            discountAmount: item.discountAmount ?? 0,
+            taxAmount: 0,
+            lineTotal,
+            notes: item.notes,
+            createdAt: now,
+            updatedAt: now
+          })
+          .run()
       }
 
-      if (payment.method === 'store_credit' && order.customerId) {
-        const customer = db
+      const order = tx.select().from(schema.orders).where(eq(schema.orders.id, orderId)).get()!
+      const items = tx.select().from(schema.orderItems).where(eq(schema.orderItems.orderId, orderId)).all()
+      return { order, items, payments: [] }
+    })
+  },
+
+  /** Complete an order with payment — all mutations run inside a single DB transaction. */
+  complete(input: CompleteOrderInput): OrderWithItems {
+    const db = getDatabase()
+    return db.transaction((tx) => {
+      const now = new Date().toISOString()
+
+      const order = tx
+        .select()
+        .from(schema.orders)
+        .where(eq(schema.orders.id, input.orderId))
+        .get()
+      if (!order) throw new Error(`Order ${input.orderId} not found`)
+
+      // Record payments and handle side-effects (gift card balance, store credit)
+      for (const payment of input.payments) {
+        if (payment.method === 'gift_card' && payment.giftCardCode) {
+          const gc = tx
+            .select()
+            .from(schema.giftCards)
+            .where(eq(schema.giftCards.code, payment.giftCardCode))
+            .get()
+          if (gc) {
+            tx.update(schema.giftCards)
+              .set({ balance: Math.max(0, gc.balance - payment.amount) })
+              .where(eq(schema.giftCards.id, gc.id))
+              .run()
+          }
+        }
+
+        if (payment.method === 'store_credit' && order.customerId) {
+          const customer = tx
+            .select()
+            .from(schema.customers)
+            .where(eq(schema.customers.id, order.customerId))
+            .get()
+          if (customer) {
+            tx.update(schema.customers)
+              .set({ storeCredit: Math.max(0, customer.storeCredit - payment.amount), updatedAt: now })
+              .where(eq(schema.customers.id, order.customerId))
+              .run()
+          }
+        }
+
+        tx.insert(schema.payments)
+          .values({
+            id: generateId(),
+            orderId: input.orderId,
+            method: payment.method,
+            amount: payment.amount,
+            currency: payment.currency ?? 'KYD',
+            originalAmount: payment.originalAmount ?? payment.amount,
+            reference: payment.reference,
+            changeGiven: payment.changeGiven,
+            status: 'completed',
+            createdAt: now
+          })
+          .run()
+      }
+
+      // Award loyalty points — also fires when earned = 0 but points were redeemed,
+      // so the redeemed balance is correctly deducted even on zero-total orders.
+      if (order.customerId && (order.loyaltyPointsEarned > 0 || order.loyaltyPointsRedeemed > 0)) {
+        const customer = tx
           .select()
           .from(schema.customers)
           .where(eq(schema.customers.id, order.customerId))
           .get()
         if (customer) {
-          db.update(schema.customers)
-            .set({ storeCredit: Math.max(0, customer.storeCredit - payment.amount) })
+          tx.update(schema.customers)
+            .set({
+              loyaltyPoints: Math.max(
+                0,
+                customer.loyaltyPoints + order.loyaltyPointsEarned - order.loyaltyPointsRedeemed
+              ),
+              updatedAt: now
+            })
             .where(eq(schema.customers.id, order.customerId))
             .run()
         }
       }
 
-      db.insert(schema.payments)
-        .values({
-          id: generateId(),
-          orderId: input.orderId,
-          method: payment.method,
-          amount: payment.amount,
-          currency: payment.currency ?? 'KYD',
-          originalAmount: payment.originalAmount ?? payment.amount,
-          reference: payment.reference,
-          changeGiven: payment.changeGiven,
-          status: 'completed',
-          createdAt: now
-        })
-        .run()
-    }
-
-    // Award loyalty points
-    if (order.customerId && order.loyaltyPointsEarned > 0) {
-      const customer = db
+      // Deduct inventory (handles pack and bundle components automatically)
+      const items = tx
         .select()
-        .from(schema.customers)
-        .where(eq(schema.customers.id, order.customerId))
-        .get()
-      if (customer) {
-        db.update(schema.customers)
-          .set({
-            loyaltyPoints:
-              customer.loyaltyPoints + order.loyaltyPointsEarned - order.loyaltyPointsRedeemed,
-            updatedAt: now
-          })
-          .where(eq(schema.customers.id, order.customerId))
-          .run()
+        .from(schema.orderItems)
+        .where(eq(schema.orderItems.orderId, input.orderId))
+        .all()
+
+      for (const item of items) {
+        deductInventory(tx, item.productId, item.quantity, now)
       }
-    }
 
-    // Deduct inventory (handles pack and bundle components automatically)
-    const items = db
-      .select()
-      .from(schema.orderItems)
-      .where(eq(schema.orderItems.orderId, input.orderId))
-      .all()
+      tx.update(schema.orders)
+        .set({ status: 'completed', updatedAt: now })
+        .where(eq(schema.orders.id, input.orderId))
+        .run()
 
-    for (const item of items) {
-      deductInventory(db, item.productId, item.quantity, now)
-    }
-
-    db.update(schema.orders)
-      .set({ status: 'completed', updatedAt: now })
-      .where(eq(schema.orders.id, input.orderId))
-      .run()
-
-    return this.getWithItems(input.orderId)!
+      const updatedOrder = tx.select().from(schema.orders).where(eq(schema.orders.id, input.orderId)).get()!
+      const updatedItems = tx.select().from(schema.orderItems).where(eq(schema.orderItems.orderId, input.orderId)).all()
+      const pays = tx.select().from(schema.payments).where(eq(schema.payments.orderId, input.orderId)).all()
+      return { order: updatedOrder, items: updatedItems, payments: pays }
+    })
   },
 
   /** Hold an order for later */
@@ -480,96 +492,146 @@ export const orderService = {
       .run()
   },
 
-  /** Void an order */
+  /** Void an order — all mutations run inside a single DB transaction. */
   voidOrder(orderId: string, staffId: string): void {
     const db = getDatabase()
-    const now = new Date().toISOString()
+    db.transaction((tx) => {
+      const now = new Date().toISOString()
 
-    // Read the order before voiding so we can restore inventory if needed
-    const existing = db
-      .select()
-      .from(schema.orders)
-      .where(eq(schema.orders.id, orderId))
-      .get()
-
-    db.update(schema.orders)
-      .set({ status: 'voided', updatedAt: now })
-      .where(eq(schema.orders.id, orderId))
-      .run()
-
-    // Restore inventory for orders that had already deducted stock (completed / delivered).
-    // Pending and held orders never reached the deduction step, so nothing to restore.
-    if (existing && ['completed', 'delivered'].includes(existing.status)) {
-      const items = db
+      // Read the order before voiding so we can restore inventory and loyalty if needed
+      const existing = tx
         .select()
-        .from(schema.orderItems)
-        .where(eq(schema.orderItems.orderId, orderId))
-        .all()
-      for (const item of items) {
-        restoreInventory(db, item.productId, item.quantity, now)
-      }
-    }
+        .from(schema.orders)
+        .where(eq(schema.orders.id, orderId))
+        .get()
 
-    // Write audit log so voids are traceable to the responsible staff member
-    db.insert(schema.auditLog)
-      .values({
-        id: generateId(),
-        staffId: staffId || undefined,
-        action: 'void_order',
-        entityType: 'order',
-        entityId: orderId,
-        details: JSON.stringify({ voidedAt: now }),
-        createdAt: now
-      })
-      .run()
+      tx.update(schema.orders)
+        .set({ status: 'voided', updatedAt: now })
+        .where(eq(schema.orders.id, orderId))
+        .run()
+
+      // Restore inventory for orders that had already deducted stock (completed / delivered).
+      // Pending and held orders never reached the deduction step, so nothing to restore.
+      if (existing && ['completed', 'delivered'].includes(existing.status)) {
+        const items = tx
+          .select()
+          .from(schema.orderItems)
+          .where(eq(schema.orderItems.orderId, orderId))
+          .all()
+        for (const item of items) {
+          restoreInventory(tx, item.productId, item.quantity, now)
+        }
+
+        // Reverse loyalty points awarded at completion time
+        if (existing.customerId && (existing.loyaltyPointsEarned > 0 || existing.loyaltyPointsRedeemed > 0)) {
+          const customer = tx
+            .select()
+            .from(schema.customers)
+            .where(eq(schema.customers.id, existing.customerId))
+            .get()
+          if (customer) {
+            tx.update(schema.customers)
+              .set({
+                loyaltyPoints: Math.max(
+                  0,
+                  customer.loyaltyPoints - existing.loyaltyPointsEarned + existing.loyaltyPointsRedeemed
+                ),
+                updatedAt: now
+              })
+              .where(eq(schema.customers.id, existing.customerId))
+              .run()
+          }
+        }
+      }
+
+      // Write audit log so voids are traceable to the responsible staff member
+      tx.insert(schema.auditLog)
+        .values({
+          id: generateId(),
+          staffId: staffId || undefined,
+          action: 'void_order',
+          entityType: 'order',
+          entityId: orderId,
+          details: JSON.stringify({ voidedAt: now }),
+          createdAt: now
+        })
+        .run()
+    })
   },
 
-  /** Process a refund - restores inventory including pack and bundle components */
+  /** Process a refund — restores inventory, reverses loyalty points, all in one transaction. */
   refund(orderId: string, _itemIds: string[]): OrderWithItems {
     const db = getDatabase()
-    const now = new Date().toISOString()
+    return db.transaction((tx) => {
+      const now = new Date().toISOString()
 
-    const original = this.getWithItems(orderId)
-    if (!original) throw new Error('Original order not found')
+      const order = tx.select().from(schema.orders).where(eq(schema.orders.id, orderId)).get()
+      if (!order) throw new Error('Original order not found')
+      const originalItems = tx.select().from(schema.orderItems).where(eq(schema.orderItems.orderId, orderId)).all()
+      const originalPays = tx.select().from(schema.payments).where(eq(schema.payments.orderId, orderId)).all()
+      const original: OrderWithItems = { order, items: originalItems, payments: originalPays }
 
-    const refundId = generateId()
-    const orderNumber = `REF-${original.order.orderNumber}`
+      const refundId = generateId()
+      const orderNumber = `REF-${original.order.orderNumber}`
 
-    db.insert(schema.orders)
-      .values({
-        id: refundId,
-        orderNumber,
-        status: 'refunded',
-        customerId: original.order.customerId,
-        staffId: original.order.staffId,
-        shiftId: original.order.shiftId,
-        // Preserve terminal and order type so per-terminal EOD reports include refunds correctly
-        terminalId: original.order.terminalId,
-        orderType: original.order.orderType,
-        subtotal: -original.order.subtotal,
-        discountAmount: -original.order.discountAmount,
-        taxAmount: -original.order.taxAmount,
-        total: -original.order.total,
-        notes: `Refund for ${original.order.orderNumber}`,
-        loyaltyPointsEarned: 0,
-        loyaltyPointsRedeemed: 0,
-        syncStatus: 'pending',
-        createdAt: now,
-        updatedAt: now
-      })
-      .run()
+      tx.insert(schema.orders)
+        .values({
+          id: refundId,
+          orderNumber,
+          status: 'refunded',
+          customerId: original.order.customerId,
+          staffId: original.order.staffId,
+          shiftId: original.order.shiftId,
+          // Preserve terminal and order type so per-terminal EOD reports include refunds correctly
+          terminalId: original.order.terminalId,
+          orderType: original.order.orderType,
+          subtotal: -original.order.subtotal,
+          discountAmount: -original.order.discountAmount,
+          taxAmount: -original.order.taxAmount,
+          total: -original.order.total,
+          notes: `Refund for ${original.order.orderNumber}`,
+          loyaltyPointsEarned: 0,
+          loyaltyPointsRedeemed: 0,
+          syncStatus: 'pending',
+          createdAt: now,
+          updatedAt: now
+        })
+        .run()
 
-    db.update(schema.orders)
-      .set({ status: 'refunded', updatedAt: now })
-      .where(eq(schema.orders.id, orderId))
-      .run()
+      tx.update(schema.orders)
+        .set({ status: 'refunded', updatedAt: now })
+        .where(eq(schema.orders.id, orderId))
+        .run()
 
-    // Restore inventory (handles pack and bundle components automatically)
-    for (const item of original.items) {
-      restoreInventory(db, item.productId, item.quantity, now)
-    }
+      // Restore inventory (handles pack and bundle components automatically)
+      for (const item of original.items) {
+        restoreInventory(tx, item.productId, item.quantity, now)
+      }
 
-    return this.getWithItems(refundId)!
+      // Reverse loyalty points earned on the original order
+      if (original.order.customerId && (original.order.loyaltyPointsEarned > 0 || original.order.loyaltyPointsRedeemed > 0)) {
+        const customer = tx
+          .select()
+          .from(schema.customers)
+          .where(eq(schema.customers.id, original.order.customerId))
+          .get()
+        if (customer) {
+          tx.update(schema.customers)
+            .set({
+              loyaltyPoints: Math.max(
+                0,
+                customer.loyaltyPoints - original.order.loyaltyPointsEarned + original.order.loyaltyPointsRedeemed
+              ),
+              updatedAt: now
+            })
+            .where(eq(schema.customers.id, original.order.customerId))
+            .run()
+        }
+      }
+
+      const refundOrder = tx.select().from(schema.orders).where(eq(schema.orders.id, refundId)).get()!
+      return { order: refundOrder, items: [], payments: [] }
+    })
   },
 
   /** Get a single order with its items and payments */
@@ -632,194 +694,47 @@ export const orderService = {
   },
 
   /**
-   * Edit an existing pending/held order in-place and immediately complete it.
+   * Edit an existing order in-place and immediately complete it.
    * Preserves the original order number and ID — no new order is created.
    *
-   * The old order items and payments are replaced wholesale. Inventory is
-   * deducted only for the new items (pending orders never had inventory deducted).
+   * For completed/delivered orders the old inventory is restored before
+   * re-deducting the new items. All mutations run inside a single DB transaction.
    */
   updateAndComplete(input: UpdateAndCompleteInput): OrderWithItems {
     const db = getDatabase()
-    const now = new Date().toISOString()
+    return db.transaction((tx) => {
+      const now = new Date().toISOString()
 
-    const existing = db
-      .select()
-      .from(schema.orders)
-      .where(eq(schema.orders.id, input.orderId))
-      .get()
-    if (!existing) throw new Error(`Order ${input.orderId} not found`)
-    // Allow editing any non-voided order — completed, delivered, and refunded
-    // orders can all be corrected in-place via the edit flow in OrdersScreen.
-    if (existing.status === 'voided') {
-      throw new Error('Voided orders cannot be edited')
-    }
-
-    // ── Recalculate totals from new item list ────────────────────────────────
-    let subtotal = 0
-    for (const item of input.items) {
-      subtotal += (item.unitPrice - (item.discountAmount ?? 0)) * item.quantity
-    }
-
-    let discountAmount = 0
-    if (input.manualDiscountType === 'percentage' && input.manualDiscountValue) {
-      discountAmount = subtotal * (input.manualDiscountValue / 100)
-    } else if (input.manualDiscountType === 'fixed' && input.manualDiscountValue) {
-      discountAmount = Math.min(input.manualDiscountValue, subtotal)
-    }
-
-    const afterDiscount = subtotal - discountAmount
-    const taxAmount = afterDiscount * (input.taxRate ?? 0)
-    const loyaltyDeduction = (input.loyaltyPointsRedeemed ?? 0) * 0.01
-    const total = Math.max(0, afterDiscount + taxAmount - loyaltyDeduction)
-
-    // ── Snapshot old items before deletion (needed for inventory restore) ───
-    // Orders in 'completed' or 'delivered' status already had inventory deducted
-    // at completion time. We must restore those before re-deducting the new items.
-    // 'pending' and 'held' orders never reached the deduction step — nothing to restore.
-    // 'refunded' orders were deducted then restored — inventory is already back.
-    const inventoryAlreadyDeducted = ['completed', 'delivered'].includes(existing.status)
-    const oldItems = inventoryAlreadyDeducted
-      ? db
-          .select()
-          .from(schema.orderItems)
-          .where(eq(schema.orderItems.orderId, input.orderId))
-          .all()
-      : []
-
-    // ── Replace order items ──────────────────────────────────────────────────
-    db.delete(schema.orderItems)
-      .where(eq(schema.orderItems.orderId, input.orderId))
-      .run()
-
-    for (const item of input.items) {
-      const lineTotal = (item.unitPrice - (item.discountAmount ?? 0)) * item.quantity
-      db.insert(schema.orderItems)
-        .values({
-          id: generateId(),
-          orderId: input.orderId,
-          productId: item.productId,
-          variantId: item.variantId,
-          productName: item.productName,
-          variantName: item.variantName,
-          sku: item.sku,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          discountAmount: item.discountAmount ?? 0,
-          taxAmount: 0,
-          lineTotal,
-          notes: item.notes,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .run()
-    }
-
-    // ── Update the order record (keep orderNumber, id, createdAt) ────────────
-    db.update(schema.orders)
-      .set({
-        customerId: input.customerId ?? existing.customerId,
-        staffId: input.staffId ?? existing.staffId,
-        shiftId: input.shiftId ?? existing.shiftId,
-        orderType: input.orderType ?? existing.orderType,
-        notes: input.notes ?? existing.notes,
-        subtotal,
-        discountAmount,
-        taxAmount,
-        total,
-        manualDiscountType: input.manualDiscountType ?? null,
-        manualDiscountValue: input.manualDiscountValue ?? null,
-        loyaltyPointsEarned: Math.floor(total),
-        loyaltyPointsRedeemed: input.loyaltyPointsRedeemed ?? 0,
-        status: 'completed',
-        syncStatus: 'pending',
-        updatedAt: now,
-      })
-      .where(eq(schema.orders.id, input.orderId))
-      .run()
-
-    // ── Replace payments ─────────────────────────────────────────────────────
-    db.delete(schema.payments)
-      .where(eq(schema.payments.orderId, input.orderId))
-      .run()
-
-    for (const payment of input.payments) {
-      if (payment.method === 'gift_card' && payment.giftCardCode) {
-        const gc = db
-          .select()
-          .from(schema.giftCards)
-          .where(eq(schema.giftCards.code, payment.giftCardCode))
-          .get()
-        if (gc) {
-          db.update(schema.giftCards)
-            .set({ balance: Math.max(0, gc.balance - payment.amount) })
-            .where(eq(schema.giftCards.id, gc.id))
-            .run()
-        }
-      }
-
-      if (payment.method === 'store_credit' && (input.customerId ?? existing.customerId)) {
-        const custId = input.customerId ?? existing.customerId
-        if (custId) {
-          const customer = db
-            .select()
-            .from(schema.customers)
-            .where(eq(schema.customers.id, custId))
-            .get()
-          if (customer) {
-            db.update(schema.customers)
-              .set({ storeCredit: Math.max(0, customer.storeCredit - payment.amount) })
-              .where(eq(schema.customers.id, custId))
-              .run()
-          }
-        }
-      }
-
-      db.insert(schema.payments)
-        .values({
-          id: generateId(),
-          orderId: input.orderId,
-          method: payment.method,
-          amount: payment.amount,
-          currency: payment.currency ?? 'KYD',
-          originalAmount: payment.originalAmount ?? payment.amount,
-          reference: payment.reference,
-          changeGiven: payment.changeGiven,
-          status: 'completed',
-          createdAt: now,
-        })
-        .run()
-    }
-
-    // ── Award loyalty points ─────────────────────────────────────────────────
-    const custId = input.customerId ?? existing.customerId
-    if (custId && Math.floor(total) > 0) {
-      const customer = db
+      const existing = tx
         .select()
-        .from(schema.customers)
-        .where(eq(schema.customers.id, custId))
+        .from(schema.orders)
+        .where(eq(schema.orders.id, input.orderId))
         .get()
-      if (customer) {
-        db.update(schema.customers)
-          .set({
-            loyaltyPoints:
-              customer.loyaltyPoints + Math.floor(total) - (input.loyaltyPointsRedeemed ?? 0),
-            updatedAt: now,
-          })
-          .where(eq(schema.customers.id, custId))
-          .run()
+      if (!existing) throw new Error(`Order ${input.orderId} not found`)
+      if (existing.status === 'voided') throw new Error('Voided orders cannot be edited')
+
+      // ── Recalculate totals from new item list ──────────────────────────────
+      let subtotal = 0
+      for (const item of input.items) {
+        subtotal += (item.unitPrice - (item.discountAmount ?? 0)) * item.quantity
       }
-    }
 
-    // ── Restore old inventory then deduct new ────────────────────────────────
-    // For completed/delivered orders the old items were already deducted —
-    // restore them first so we don't double-count when deducting the new list.
-    for (const item of oldItems) {
-      restoreInventory(db, item.productId, item.quantity, now)
-    }
-    for (const item of input.items) {
-      deductInventory(db, item.productId, item.quantity, now)
-    }
+      let discountAmount = 0
+      if (input.manualDiscountType === 'percentage' && input.manualDiscountValue) {
+        discountAmount = subtotal * (input.manualDiscountValue / 100)
+      } else if (input.manualDiscountType === 'fixed' && input.manualDiscountValue) {
+        discountAmount = Math.min(input.manualDiscountValue, subtotal)
+      }
 
-    return this.getWithItems(input.orderId)!
-  },
-}
+      const afterDiscount = subtotal - discountAmount
+      const taxAmount = afterDiscount * (input.taxRate ?? 0)
+      const loyaltyDeduction = (input.loyaltyPointsRedeemed ?? 0) * 0.01
+      const total = Math.max(0, afterDiscount + taxAmount - loyaltyDeduction)
+      const loyaltyPointsEarned = Math.floor(total)
+      const loyaltyPointsRedeemed = input.loyaltyPointsRedeemed ?? 0
+
+      // ── Snapshot old items before deletion (needed for inventory restore) ──
+      // completed/delivered orders had inventory deducted — restore before re-deducting.
+      // pending/held orders never reached deduction — nothing to restore.
+      // refunded orders were deducted then restored — inventory already back.
+      const inventoryAlreadyDedu

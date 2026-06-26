@@ -2,7 +2,7 @@ import { ipcMain, IpcMainInvokeEvent, BrowserWindow, dialog, app, WebContents } 
 import { readFileSync, writeFileSync, unlinkSync, mkdirSync, copyFileSync, existsSync } from 'fs'
 import { extname, join } from 'path'
 import { tmpdir } from 'os'
-import { randomBytes } from 'crypto'
+import { randomBytes, randomInt } from 'crypto'
 import {
   openDisplayWindow,
   closeDisplayWindow,
@@ -36,6 +36,10 @@ import {
   getSyncV2State, runSyncV2, forceFullSyncV2,
   startSyncV2Loop, stopSyncV2Loop, onSyncV2StateChange
 } from '../sync/sync-v2.service'
+import {
+  getCloudSyncState, runCloudSync, forceFullCloudSync, onCloudSyncStateChange,
+  startCloudSyncLoop, stopCloudSyncLoop,
+} from '../sync/cloud-sync.service'
 import { startEmbeddedServer, stopEmbeddedServer, getEmbeddedServerStatus } from '../sync/embedded-server'
 import {
   getFileSyncState, runFileSync, startFileSyncLoop, stopFileSyncLoop,
@@ -55,8 +59,8 @@ interface ResetCode {
 const resetCodeStore = new Map<string, ResetCode>() // keyed by staffId
 
 function generateResetCode(): string {
-  // 6-digit numeric code
-  return String(Math.floor(100000 + Math.random() * 900000))
+  // 6-digit numeric code — uses a CSPRNG so the code cannot be predicted
+  return String(randomInt(100000, 1000000))
 }
 
 // ── Role enforcement ────────────────────────────────────────────────────────
@@ -206,7 +210,7 @@ export function registerIpcHandlers(): void {
 
   // Payments
   ipcMain.handle(IPC.PAYMENTS_LIST_FOR_ORDER, (_e, orderId: string) =>
-    orderService.getWithItems(orderId)
+    orderService.getWithItems(orderId)?.payments ?? []
   )
 
   // Staff
@@ -846,6 +850,60 @@ export function registerIpcHandlers(): void {
     return getSyncV2State()
   })
 
+  // ── Cloud sync (hub → Kinetix Cloud) ───────────────────────────────────────
+
+  onCloudSyncStateChange((cloudState) => {
+    BrowserWindow.getAllWindows().forEach((win: BrowserWindow) => {
+      if (!win.isDestroyed()) win.webContents.send(IPC.CLOUD_SYNC_STATE_PUSH, cloudState)
+    })
+    return undefined
+  })
+
+  ipcMain.handle(IPC.CLOUD_SYNC_GET_STATE, () => getCloudSyncState())
+
+  ipcMain.handle(IPC.CLOUD_SYNC_RUN_NOW, async (e) => {
+    requireRole(e, 'admin')
+    await runCloudSync()
+    return getCloudSyncState()
+  })
+
+  ipcMain.handle(IPC.CLOUD_SYNC_FORCE_FULL, async (e) => {
+    requireRole(e, 'admin')
+    await forceFullCloudSync()
+    return getCloudSyncState()
+  })
+
+  /**
+   * Activate a license key against the cloud backend.
+   * Stores the returned storeId + cloudApiKey in settings and starts the sync loop.
+   */
+  ipcMain.handle(IPC.CLOUD_SYNC_REGISTER, async (e, { licenseKey, cloudSyncUrl }: { licenseKey: string; cloudSyncUrl: string }) => {
+    requireRole(e, 'admin')
+    try {
+      const res = await fetch(`${cloudSyncUrl.trim().replace(/\/$/, '')}/api/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ licenseKey }),
+      })
+      const json = await res.json() as { ok?: boolean; storeId?: string; syncApiKey?: string; error?: string }
+      if (!res.ok || !json.ok) throw new Error(json.error ?? `Registration failed (${res.status})`)
+
+      // Persist credentials
+      settingsService.set('storeId', json.storeId!)
+      settingsService.set('cloudApiKey', json.syncApiKey!)
+      settingsService.set('cloudSyncUrl', cloudSyncUrl.trim().replace(/\/$/, ''))
+      settingsService.set('cloudSyncEnabled', 'true')
+
+      // Start the cloud sync loop now that we have credentials
+      const intervalSec = parseInt(settingsService.get('cloudSyncIntervalSeconds') || '300', 10)
+      startCloudSyncLoop(intervalSec)
+
+      return { ok: true, storeId: json.storeId }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message }
+    }
+  })
+
   // ── Setup wizard + embedded server ──────────────────────────────────────────
 
   /** Returns the current setup state for the wizard to read on mount.
@@ -1025,58 +1083,4 @@ export function registerIpcHandlers(): void {
     return { ok: true }
   })
 
-  ipcMain.handle(IPC.FILE_SYNC_STOP, () => {
-    stopFileSyncLoop()
-    return { ok: true }
-  })
-
-  ipcMain.handle(IPC.FILE_SYNC_TEST_PATH, async (_e, sharePath: string) =>
-    testSharePath(sharePath)
-  )
-
-  ipcMain.handle(IPC.FILE_SYNC_GET_LOCAL_SHARE_PATH, () =>
-    getDefaultLocalSharePath(app.getPath('userData'))
-  )
-
-  // Push file-sync state changes to renderer
-  onFileSyncStateChange((state) => {
-    BrowserWindow.getAllWindows().forEach((w) => {
-      if (!w.isDestroyed()) w.webContents.send(IPC.FILE_SYNC_STATE_PUSH, state)
-    })
-  })
-
-  // ── Product Variants ────────────────────────────────────────────────────────
-  ipcMain.handle(IPC.VARIANTS_LIST, (_e, productId: string) =>
-    productService.listVariants(productId)
-  )
-  ipcMain.handle(IPC.VARIANTS_CREATE, (e, productId: string, input: unknown) => {
-    requireRole(e, 'manager')
-    return productService.createVariant(productId, input)
-  })
-  ipcMain.handle(IPC.VARIANTS_UPDATE, (e, variantId: string, input: unknown) => {
-    requireRole(e, 'manager')
-    return productService.updateVariant(variantId, input)
-  })
-
-  // ── Discounts ───────────────────────────────────────────────────────────────
-  ipcMain.handle(IPC.DISCOUNTS_LIST, () => discountService.list())
-  ipcMain.handle(IPC.DISCOUNTS_CREATE, (e, input: unknown) => {
-    requireRole(e, 'manager')
-    return discountService.create(input)
-  })
-  ipcMain.handle(IPC.DISCOUNTS_UPDATE, (e, id: string, input: unknown) => {
-    requireRole(e, 'manager')
-    return discountService.update(id, input)
-  })
-  ipcMain.handle(IPC.DISCOUNTS_VALIDATE_COUPON, (_e, code: string, orderTotal: number) =>
-    discountService.validateCoupon(code, orderTotal)
-  )
-
-  // ── Gift Cards ──────────────────────────────────────────────────────────────
-  ipcMain.handle(IPC.GIFT_CARDS_GET, (_e, code: string) => giftCardService.getByCode(code))
-  ipcMain.handle(IPC.GIFT_CARDS_CREATE, (e, input: unknown) => {
-    requireRole(e, 'manager')
-    return giftCardService.create(input)
-  })
-
-}
+  ipcMain.handle(IPC.FILE_SYNC_STOP, () 

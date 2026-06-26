@@ -192,6 +192,14 @@ export const IPC = {
   /** Push channel — main → renderer, fires on every v2 state change */
   SYNC_V2_STATE_PUSH: 'sync:v2:statePush',
 
+  // Cloud sync (hub → Kinetix Cloud)
+  CLOUD_SYNC_GET_STATE: 'cloudSync:getState',
+  CLOUD_SYNC_RUN_NOW: 'cloudSync:runNow',
+  CLOUD_SYNC_FORCE_FULL: 'cloudSync:forceFull',
+  CLOUD_SYNC_REGISTER: 'cloudSync:register',
+  /** Push channel — main → renderer, fires on every cloud sync state change */
+  CLOUD_SYNC_STATE_PUSH: 'cloudSync:statePush',
+
   // Setup wizard + embedded server
   SETUP_GET: 'setup:get',
   SETUP_COMPLETE: 'setup:complete',
@@ -206,11 +214,8 @@ export const IPC = {
   FILE_SYNC_START: 'fileSync:start',
   FILE_SYNC_STOP: 'fileSync:stop',
   FILE_SYNC_TEST_PATH: 'fileSync:testPath',
-  /** Push channel — main → renderer, fires on every file-sync state change */
-  FILE_SYNC_STATE_PUSH: 'fileSync:statePush',
-  /** Returns the server's local sync share path so the UI can display it */
   FILE_SYNC_GET_LOCAL_SHARE_PATH: 'fileSync:getLocalSharePath',
-
+  FILE_SYNC_STATE_PUSH: 'fileSync:statePush',
 } as const
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC]

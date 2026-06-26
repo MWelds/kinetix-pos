@@ -50,8 +50,11 @@ const STATUS_TABS = [
 export function OrdersScreen() {
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [hasMore, setHasMore] = useState(false)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const PAGE_SIZE = 100
   const [selected, setSelected] = useState<{ order: Order; items: OrderItem[]; payments: Payment[] } | null>(null)
   const showToast = useUiStore((s) => s.showToast)
   const { staff } = useAuthStore()
@@ -62,9 +65,19 @@ export function OrdersScreen() {
   async function load() {
     setLoading(true)
     try {
-      const data = await api.orders.list({ status: statusFilter || undefined, limit: 200 })
+      const data = await api.orders.list({ status: statusFilter || undefined, limit: PAGE_SIZE, offset: 0 })
       setOrders(data)
+      setHasMore(data.length === PAGE_SIZE)
     } finally { setLoading(false) }
+  }
+
+  async function loadMore() {
+    setLoadingMore(true)
+    try {
+      const data = await api.orders.list({ status: statusFilter || undefined, limit: PAGE_SIZE, offset: orders.length })
+      setOrders((prev) => [...prev, ...data])
+      setHasMore(data.length === PAGE_SIZE)
+    } finally { setLoadingMore(false) }
   }
 
   useEffect(() => { load() }, [statusFilter])
@@ -504,6 +517,7 @@ ${esc(cfg.footer)}</pre></body></html>`
         {loading ? (
           <PageSpinner />
         ) : (
+          <>
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
@@ -587,6 +601,20 @@ ${esc(cfg.footer)}</pre></body></html>`
               <div className="py-16 text-center text-gray-400 text-sm">No orders found</div>
             )}
           </div>
+          {hasMore && !search && (
+            <div className="flex justify-center py-4 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={loadMore}
+                disabled={loadingMore}
+                className="inline-flex items-center gap-2 px-5 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+              >
+                {loadingMore ? <RefreshCw size={14} className="animate-spin" /> : null}
+                {loadingMore ? 'Loading…' : 'Load more orders'}
+              </button>
+            </div>
+          )}
+          </>
         )}
       </div>
 
@@ -728,33 +756,4 @@ ${esc(cfg.footer)}</pre></body></html>`
                           {p.currency ?? storeCurrency}
                         </span>
                       </span>
-                      {/* Show amount the customer actually tendered in their currency */}
-                      <span>
-                        {CURRENCIES[p.currency]?.symbol ?? p.currency}
-                        {(p.originalAmount ?? p.amount).toFixed(2)}
-                      </span>
-                    </div>
-                    {p.changeGiven != null && p.changeGiven > 0.005 && (
-                      <div className="flex justify-between text-xs text-emerald-600 mt-0.5">
-                        {/* Change is always in primary/store currency */}
-                        <span>Change ({storeCurrency})</span>
-                        <span>{CURRENCIES[storeCurrency]?.symbol ?? storeCurrency}{p.changeGiven.toFixed(2)}</span>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Notes */}
-            {selected.order.notes && (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
-                <strong>Notes:</strong> {selected.order.notes}
-              </div>
-            )}
-          </div>
-        </Modal>
-      )}
-    </div>
-  )
-}
+                  

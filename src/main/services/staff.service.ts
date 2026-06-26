@@ -25,6 +25,16 @@ export const staffService = {
       .all()
   },
 
+  /** Get a single staff member by ID (without PIN field). */
+  get(id: string) {
+    const db = getDatabase()
+    const member = db.select().from(schema.staff).where(eq(schema.staff.id, id)).get()
+    if (!member) return null
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { pin: _pin, ...safe } = member
+    return safe
+  },
+
   /**
    * Authenticate staff by PIN.
    * The supplied PIN is hashed before comparison — plaintext PINs are never
@@ -247,20 +257,4 @@ export const staffService = {
         staffId: input.staffId,
         action: input.action,
         entityType: input.entityType,
-        entityId: input.entityId,
-        details: input.details ? JSON.stringify(input.details) : undefined,
-        createdAt: new Date().toISOString()
-      })
-      .run()
-  },
-
-  listAuditLog(limit = 100) {
-    const db = getDatabase()
-    return db
-      .select()
-      .from(schema.auditLog)
-      .orderBy(desc(schema.auditLog.createdAt))
-      .limit(limit)
-      .all()
-  }
-}
+        entityId: input.entity

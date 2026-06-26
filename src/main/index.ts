@@ -10,6 +10,7 @@ import { seedDatabase } from './database/seed'
 import { setMainWindow, startHttpServer } from './display/customer-display'
 import { initSync } from './sync/sync.service'
 import { initSyncV2 } from './sync/sync-v2.service'
+import { initCloudSync } from './sync/cloud-sync.service'
 import { initFileSync } from './sync/file-sync.service'
 import { startFileSyncServer, getDefaultLocalSharePath } from './sync/file-sync-server'
 import { settingsService } from './services/settings.service'
@@ -36,12 +37,10 @@ function logError(context: string, err: unknown): void {
 function ensureFirewallRule(port: number): void {
   if (process.platform !== 'win32') return
   const ruleName = `Kinetix POS Sync Server (port ${port})`
-  // First check whether the rule already exists to avoid duplicate adds
   execFile('netsh', [
     'advfirewall', 'firewall', 'show', 'rule', `name=${ruleName}`
   ], (_checkErr, stdout) => {
-    if (stdout && stdout.includes(ruleName)) return // already exists
-    // Add the inbound allow rule
+    if (stdout && stdout.includes(ruleName)) return
     execFile('netsh', [
       'advfirewall', 'firewall', 'add', 'rule',
       `name=${ruleName}`,
@@ -122,11 +121,8 @@ app
     if (settingsService.get('nodeMode') === 'server' && settingsService.get('setupComplete') === 'true') {
       const port = parseInt(settingsService.get('embeddedServerPort') || '3030', 10)
       const apiKey = settingsService.get('embeddedServerApiKey') || ''
-      // Start embedded HTTP server (used by HTTP sync mode and the web dashboard)
       startEmbeddedServer(port, apiKey).catch((err) => logError('startEmbeddedServer', err))
-      // Open Windows Firewall for the sync port so terminals can reach this machine
       ensureFirewallRule(port)
-      // Start file-based sync server processor if syncMode === 'file'
       if (settingsService.get('syncMode') === 'file') {
         const localSharePath = settingsService.get('syncSharePath')?.trim()
           || getDefaultLocalSharePath(app.getPath('userData'))
@@ -135,9 +131,10 @@ app
       }
     }
 
-    initSync()     // HTTP sync v1 — no-op when nodeMode=server, syncMode=file, or syncVersion=v2
-    initSyncV2()   // HTTP sync v2 — no-op unless syncVersion=v2 and syncEnabled=true
-    initFileSync() // File sync client — no-op unless nodeMode=terminal and syncMode=file
+    initSync()
+    initSyncV2()
+    initFileSync()
+    initCloudSync()
 
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       callback({
@@ -161,7 +158,6 @@ app
     setMainWindow(mainWin)
     initAutoUpdater(mainWin)
 
-    // Auto-start network display if the user enabled it in Settings > Peripherals
     if (settingsService.get('networkDisplayAutoStart') === 'true') {
       const port = parseInt(settingsService.get('networkDisplayPort') || '3031', 10)
       startHttpServer(port)

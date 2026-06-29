@@ -205,8 +205,13 @@ async function pushChanges(serverUrl: string, apiKey: string, terminalId: string
     throw new Error(`Push failed (${res.status}): ${text}`)
   }
 
-  const json = await res.json() as PushResponse
-  if (!json.ok) throw new Error('Server rejected push')
+  const json = await res.json() as PushResponse & { skippedTables?: { table: string; error: string }[] }
+  if (!json.ok) {
+    const detail = Array.isArray(json.skippedTables) && json.skippedTables.length > 0
+      ? json.skippedTables.map((t) => `${t.table}: ${t.error}`).join('; ')
+      : 'no detail returned'
+    throw new Error(`Server rejected push (${detail})`)
+  }
 }
 
 // âââ Pull âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ

@@ -95,10 +95,10 @@ function upsertRecords(table: SyncTable, records: SyncRecord[]): void {
     for (const row of rows) {
       try { stmt.run(cols.map((c) => row[c])) }
       catch (err) {
+        // Never let a single bad row abort the whole sync cycle.
+        // Log it so the server owner can diagnose the underlying issue.
         const msg = (err as Error).message ?? ''
-        if (msg.includes('UNIQUE constraint failed') && !msg.includes(`${table}.id`)) {
-          console.warn(`[embedded-server] skipping ${table} record (secondary unique conflict): ${msg}`)
-        } else { throw err }
+        console.warn(`[embedded-server] skipping ${table} row — ${msg}`)
       }
     }
   })

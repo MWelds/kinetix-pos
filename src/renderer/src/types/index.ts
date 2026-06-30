@@ -54,6 +54,8 @@ export interface CartItem {
   sku: string
   quantity: number
   unitPrice: number
+  /** Cashier-set price override for this line item. Overrides unitPrice for all calculations. */
+  customPrice?: number
   discountAmount: number
   notes?: string
   taxRate: number

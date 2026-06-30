@@ -414,7 +414,9 @@ export function PaymentModal({ isOpen, onClose, onComplete }: PaymentModalProps)
         productId: item.productId, variantId: item.variantId,
         productName: item.productName, variantName: item.variantName,
         sku: item.sku, quantity: item.quantity,
-        unitPrice: item.unitPrice, discountAmount: item.discountAmount,
+        // Use customPrice (cashier override) when set, otherwise fall back to catalogue price
+        unitPrice: item.customPrice ?? item.unitPrice,
+        discountAmount: item.discountAmount,
         notes: item.notes
       }))
 

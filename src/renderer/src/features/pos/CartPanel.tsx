@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useRef } from 'react'
 import {
   ShoppingCart, Trash2, Plus, Minus, User, Tag, Pause, Package, Truck, History, Clock, Edit3
 } from 'lucide-react'
@@ -22,7 +22,7 @@ export function CartPanel({ onCheckout, onHold, onShowHeld, onPayLater }: CartPa
     items, customer, notes, discountType, discountValue,
     subtotal, discountAmount, taxAmount, total, itemCount, orderType, taxEnabled,
     editingOrderId, editingOrderNumber,
-    removeItem, updateQuantity, setItemNotes, setItemDiscount,
+    removeItem, updateQuantity, setItemNotes, setItemDiscount, setItemPrice,
     setCustomer, setNotes, setDiscount, setOrderType, clearCart
   } = useCartStore()
 
@@ -160,6 +160,7 @@ export function CartPanel({ onCheckout, onHold, onShowHeld, onPayLater }: CartPa
                 onRemove={() => removeItem(item.id)}
                 onNotes={(n) => setItemNotes(item.id, n)}
                 onDiscount={(a) => setItemDiscount(item.id, a)}
+                onPriceChange={(p) => setItemPrice(item.id, p)}
               />
             ))}
           </div>
@@ -348,10 +349,38 @@ interface CartItemRowProps {
   onRemove: () => void
   onNotes: (n: string) => void
   onDiscount: (a: number) => void
+  onPriceChange: (price: number | null) => void
 }
 
-function CartItemRow({ item, fmt, onQuantity, onRemove }: CartItemRowProps) {
-  const lineTotal = (item.unitPrice - item.discountAmount) * item.quantity
+function CartItemRow({ item, fmt, onQuantity, onRemove, onPriceChange }: CartItemRowProps) {
+  const effectivePrice = item.customPrice ?? item.unitPrice
+  const lineTotal = (effectivePrice - item.discountAmount) * item.quantity
+  const priceOverridden = item.customPrice !== undefined && item.customPrice !== item.unitPrice
+
+  const [editingPrice, setEditingPrice] = useState(false)
+  const [priceInput, setPriceInput] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  function startPriceEdit() {
+    setPriceInput(effectivePrice.toFixed(2))
+    setEditingPrice(true)
+    // Focus after render
+    setTimeout(() => inputRef.current?.select(), 0)
+  }
+
+  function commitPriceEdit() {
+    const val = parseFloat(priceInput)
+    if (!isNaN(val) && val >= 0) {
+      // If it matches the original price, clear the override
+      onPriceChange(Math.abs(val - item.unitPrice) < 0.001 ? null : val)
+    }
+    setEditingPrice(false)
+  }
+
+  function handlePriceKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') commitPriceEdit()
+    if (e.key === 'Escape') setEditingPrice(false)
+  }
 
   return (
     <div className="px-4 py-3 hover:bg-gray-50">
@@ -361,10 +390,41 @@ function CartItemRow({ item, fmt, onQuantity, onRemove }: CartItemRowProps) {
           {item.variantName && (
             <p className="text-xs text-gray-500">{item.variantName}</p>
           )}
-          <p className="text-xs text-gray-400 mt-0.5">{fmt(item.unitPrice)} each</p>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {fmt(effectivePrice)} each
+            {priceOverridden && (
+              <span className="ml-1 line-through text-gray-300">{fmt(item.unitPrice)}</span>
+            )}
+          </p>
         </div>
+        {/* Line total — tap to edit unit price */}
         <div className="flex flex-col items-end gap-1">
-          <p className="text-sm font-bold text-gray-900">{fmt(lineTotal)}</p>
+          {editingPrice ? (
+            <input
+              ref={inputRef}
+              type="number"
+              min="0"
+              step="0.01"
+              value={priceInput}
+              onChange={(e) => setPriceInput(e.target.value)}
+              onBlur={commitPriceEdit}
+              onKeyDown={handlePriceKeyDown}
+              autoFocus
+              className="w-24 text-sm font-bold text-right border border-blue-400 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500 text-gray-900"
+            />
+          ) : (
+            <button
+              onClick={startPriceEdit}
+              title="Tap to edit price"
+              className={`text-sm font-bold rounded px-1 transition-colors ${
+                priceOverridden
+                  ? 'text-amber-600 bg-amber-50 border border-amber-200'
+                  : 'text-gray-900 hover:text-blue-600 hover:bg-blue-50'
+              }`}
+            >
+              {fmt(lineTotal)}
+            </button>
+          )}
           <button
             onClick={onRemove}
             className="text-red-400 hover:text-red-600"
@@ -398,7 +458,6 @@ function CartItemRow({ item, fmt, onQuantity, onRemove }: CartItemRowProps) {
         {item.discountAmount > 0 && (
           <Badge color="green">-{fmt(item.discountAmount)}</Badge>
         )}
-      
       </div>
     </div>
   )

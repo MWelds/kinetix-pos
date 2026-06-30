@@ -35,6 +35,7 @@ interface CartState {
   updateQuantity: (id: string, quantity: number) => void
   removeItem: (id: string) => void
   setItemDiscount: (id: string, amount: number) => void
+  setItemPrice: (id: string, price: number | null) => void
   setItemNotes: (id: string, notes: string) => void
   setCustomer: (customer: Customer | null) => void
   setNotes: (notes: string) => void
@@ -63,7 +64,10 @@ export const useCartStore = create<CartState>((set, get) => ({
   subtotal: () => {
     const { items } = get()
     return round2(
-      items.reduce((sum, item) => sum + (item.unitPrice - item.discountAmount) * item.quantity, 0)
+      items.reduce((sum, item) => {
+        const effectivePrice = item.customPrice ?? item.unitPrice
+        return sum + (effectivePrice - item.discountAmount) * item.quantity
+      }, 0)
     )
   },
 
@@ -120,6 +124,13 @@ export const useCartStore = create<CartState>((set, get) => ({
 
   setItemDiscount: (id, amount) =>
     set({ items: get().items.map((i) => (i.id === id ? { ...i, discountAmount: amount } : i)) }),
+
+  setItemPrice: (id, price) =>
+    set({
+      items: get().items.map((i) =>
+        i.id === id ? { ...i, customPrice: price === null ? undefined : price } : i
+      )
+    }),
 
   setItemNotes: (id, notes) =>
     set({ items: get().items.map((i) => (i.id === id ? { ...i, notes } : i)) }),

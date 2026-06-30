@@ -91,12 +91,15 @@ function buildDisplayData(): DisplayData {
   if (items.length === 0) return { state: 'idle' }
   return {
     state: 'shopping',
-    items: items.map((item) => ({
-      name: item.variantName ? `${item.productName} (${item.variantName})` : item.productName,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      lineTotal: (item.unitPrice - item.discountAmount) * item.quantity,
-    })),
+    items: items.map((item) => {
+      const effectivePrice = item.customPrice ?? item.unitPrice
+      return {
+        name: item.variantName ? `${item.productName} (${item.variantName})` : item.productName,
+        quantity: item.quantity,
+        unitPrice: effectivePrice,
+        lineTotal: (effectivePrice - item.discountAmount) * item.quantity,
+      }
+    }),
     subtotal: cart.subtotal(),
     discountAmount: cart.discountAmount(),
     tax: cart.taxAmount(),

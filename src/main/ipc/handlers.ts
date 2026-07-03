@@ -71,8 +71,16 @@ function generateResetCode(): string {
  *
  * Entry is added on successful STAFF_AUTH and removed on STAFF_LOGOUT or when
  * the WebContents is destroyed.
+ *
+ * `pendingPinChange` is set when the authenticated account is still on its
+ * seeded/known-default PIN (see `staff.isDefaultPin`). While true, requireRole()
+ * rejects every gated action — the renderer's "Set a New PIN" modal has no
+ * cancel, but it's a client-side gate; without this, anything reachable outside
+ * that UI (e.g. devtools) could otherwise use the session immediately. The one
+ * exception is STAFF_UPDATE setting the account's own PIN, handled specially
+ * below, which clears the flag.
  */
-const sessionStore = new Map<number, { staffId: string; role: string }>()
+const sessionStore = new Map<number, { staffId: string; role: string; pendingPinChange?: boolean }>()
 
 /**
  * PIN login rate limiting, keyed by renderer WebContents.id (i.e. per terminal
@@ -96,6 +104,7 @@ const ROLE_LEVEL: Record<string, number> = { cashier: 0, manager: 1, admin: 2 }
 function requireRole(e: IpcMainInvokeEvent, minRole: 'cashier' | 'manager' | 'admin'): void {
   const session = sessionStore.get(e.sender.id)
   if (!session) throw new Error('Not authenticated')
+  if (session.pendingPinChange) throw new Error('PIN change required before continuing')
   const sessionLevel = ROLE_LEVEL[session.role] ?? -1
   const requiredLevel = ROLE_LEVEL[minRole] ?? 99
   if (sessionLevel < requiredLevel) {
@@ -237,8 +246,11 @@ export function registerIpcHandlers(): void {
     const result = staffService.authenticate(pin)
     if (result) {
       staffAuthAttempts.delete(key)
-      // Register session in main process — used by requireRole() to enforce permissions
-      sessionStore.set(e.sender.id, { staffId: result.id, role: result.role })
+      // Register session in main process — used by requireRole() to enforce permissions.
+      // An admin still on their seeded default PIN is registered as pending: requireRole()
+      // rejects every gated action until the one-time self-PIN-update below clears it.
+      const pendingPinChange = result.role === 'admin' && !!result.isDefaultPin
+      sessionStore.set(e.sender.id, { staffId: result.id, role: result.role, pendingPinChange })
       // Auto-clear session when this WebContents is destroyed (window closed / reloaded)
       e.sender.once('destroyed', () => sessionStore.delete(e.sender.id))
     } else {
@@ -407,6 +419,19 @@ export function registerIpcHandlers(): void {
     return staffService.create(input)
   })
   ipcMain.handle(IPC.STAFF_UPDATE, (e, id: string, input) => {
+    const session = sessionStore.get(e.sender.id)
+    if (session?.pendingPinChange) {
+      // Narrow exception: a session still pending its forced PIN change may only
+      // set its OWN new PIN — nothing else — to unblock itself. Anything wider
+      // (another field, another staff id) still requires a fully-cleared admin.
+      const onlyPinField = Object.keys(input ?? {}).every((k) => k === 'pin')
+      if (session.staffId !== id || !onlyPinField) {
+        throw new Error('PIN change required before continuing')
+      }
+      const updated = staffService.update(id, input)
+      session.pendingPinChange = false
+      return updated
+    }
     requireRole(e, 'admin')
     return staffService.update(id, input)
   })

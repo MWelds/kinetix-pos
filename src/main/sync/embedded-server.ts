@@ -145,34 +145,40 @@ function validateSessionToken(token: string): boolean {
   } catch { return false }
 }
 
-function validateAdminPin(pin: string): boolean {
-  if (!pin) return false
+type AdminPinResult = 'ok' | 'default_pin' | 'invalid'
+
+function validateAdminPin(pin: string): AdminPinResult {
+  if (!pin) return 'invalid'
   // Hash the supplied PIN once — all stored PINs (staff + dashboardAdminPin) are
   // SHA-256 hashed so we never compare plaintext against the database.
   let hashed: string
-  try { hashed = hashPin(pin) } catch { return false }
+  try { hashed = hashPin(pin) } catch { return 'invalid' }
 
   // 1. Check the main app's dashboardAdminPin setting (always available, even before any sync).
-  //    This is the primary bootstrap path for a fresh server install.
+  //    This is the primary bootstrap path for a fresh server install. It's a distinct,
+  //    deliberately-set credential — not a staff row — so is_default_pin doesn't apply.
   try {
     const appPin = settingsService.get('dashboardAdminPin')
-    if (appPin && appPin === hashed) return true
+    if (appPin && appPin === hashed) return 'ok'
   } catch { /* main db may not be initialised yet — fall through */ }
   // 2. Check central.db for any staff member with dashboard access enabled and matching PIN.
+  //    Reject (rather than silently fall through) a match still on its seeded default PIN —
+  //    same protection LoginScreen.tsx enforces on the desktop terminal, applied here too
+  //    since this route is reachable by any device on the LAN.
   try {
     const db = getServerDb()
     // Note: staff table does NOT have deleted_at — only is_active tracks soft deletes for staff
     const staffRow = db.prepare(
-      `SELECT id FROM staff WHERE pin=? AND is_active=1 AND can_access_dashboard=1`
-    ).get(hashed)
-    if (staffRow) return true
+      `SELECT is_default_pin FROM staff WHERE pin=? AND is_active=1 AND can_access_dashboard=1`
+    ).get(hashed) as { is_default_pin: number } | undefined
+    if (staffRow) return staffRow.is_default_pin ? 'default_pin' : 'ok'
     // 3. Legacy fallback: admin-role staff (before can_access_dashboard column existed).
     const adminRow = db.prepare(
-      `SELECT id FROM staff WHERE pin=? AND role='admin' AND is_active=1`
-    ).get(hashed)
-    if (adminRow) return true
+      `SELECT is_default_pin FROM staff WHERE pin=? AND role='admin' AND is_active=1`
+    ).get(hashed) as { is_default_pin: number } | undefined
+    if (adminRow) return adminRow.is_default_pin ? 'default_pin' : 'ok'
   } catch { /* central.db not ready */ }
-  return false
+  return 'invalid'
 }
 
 /**
@@ -891,9 +897,16 @@ function createHandler(apiKey: string) {
         }
         const body = await parseBody(req) as { pin?: string }
         if (!body.pin) { send(res, 400, { error: 'PIN required' }); return }
-        if (!validateAdminPin(body.pin)) {
+        const pinResult = validateAdminPin(body.pin)
+        if (pinResult === 'invalid') {
           recordLoginFailure(clientKey)
           send(res, 401, { error: 'Invalid PIN' }); return
+        }
+        if (pinResult === 'default_pin') {
+          // Don't count this toward the rate limit — the PIN itself was correct,
+          // just not yet usable here. Direct the operator to the terminal instead
+          // of handing out a session for an account still on its seeded default.
+          send(res, 403, { error: 'This account still uses its default PIN. Change it on the POS terminal, then sign in here.' }); return
         }
         recordLoginSuccess(clientKey)
         send(res, 200, { ok: true, token: createSessionToken() }); return

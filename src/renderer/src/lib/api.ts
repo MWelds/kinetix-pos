@@ -311,7 +311,7 @@ export const api = {
       syncUrl?: string
       syncApiKey?: string
       syncIntervalSeconds?: number
-    }): Promise<{ ok: boolean }> => bridge.setup.complete(input),
+    }): Promise<{ ok: boolean; generatedApiKey?: string }> => bridge.setup.complete(input),
     reset: (): Promise<{ ok: boolean }> => bridge.setup.reset(),
     embeddedServerStart: (port: number, apiKey: string): Promise<{ running: boolean; port: number; ip: string }> =>
       bridge.setup.embeddedServerStart(port, apiKey),

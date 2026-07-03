@@ -1,2 +1,0 @@
-// Admin dashboard removed
-export {}

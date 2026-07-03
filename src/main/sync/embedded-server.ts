@@ -6,11 +6,11 @@
  * POS app — no secondary database, no separate sync step needed on the server.
  */
 import http from 'http'
-import { createHmac, randomBytes, randomUUID } from 'crypto'
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'crypto'
 import { settingsService } from '../services/settings.service'
 import { getSqlite } from '../database/connection'
 import { hashPin } from '../lib/pin'
-import { getLanIp } from '../lib/network'
+import { getLanIp, getLanIps } from '../lib/network'
 import {
   SYNC_TABLES, HAS_UPDATED_AT, MACHINE_SPECIFIC_SETTINGS, LWW_EXCLUDE_COLS,
   type SyncTable,
@@ -120,6 +120,14 @@ function recomputeServerInventory(productIds: string[]): void {
 const SESSION_SECRET = randomBytes(32).toString('hex')
 const TOKEN_TTL_MS = 8 * 60 * 60 * 1000
 
+/** Constant-time string comparison — avoids leaking secret length/prefix via response timing. */
+function safeEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a)
+  const bufB = Buffer.from(b)
+  if (bufA.length !== bufB.length) return false
+  return timingSafeEqual(bufA, bufB)
+}
+
 function createSessionToken(): string {
   const exp = (Date.now() + TOKEN_TTL_MS).toString()
   const sig = createHmac('sha256', SESSION_SECRET).update(exp).digest('hex')
@@ -133,7 +141,7 @@ function validateSessionToken(token: string): boolean {
     if (dot < 0) return false
     const exp = decoded.slice(0, dot); const sig = decoded.slice(dot + 1)
     if (Date.now() > parseInt(exp, 10)) return false
-    return sig === createHmac('sha256', SESSION_SECRET).update(exp).digest('hex')
+    return safeEqual(sig, createHmac('sha256', SESSION_SECRET).update(exp).digest('hex'))
   } catch { return false }
 }
 
@@ -165,6 +173,36 @@ function validateAdminPin(pin: string): boolean {
     if (adminRow) return true
   } catch { /* central.db not ready */ }
   return false
+}
+
+/**
+ * Login attempt rate limiting, keyed by client IP. Dashboard login is reachable
+ * over the LAN, so without this a 4-digit PIN (10,000 combinations) can be swept
+ * quickly. Lockout duration doubles with each failure past the threshold.
+ */
+const LOGIN_MAX_ATTEMPTS = 5
+const LOGIN_BASE_LOCKOUT_MS = 30_000
+const LOGIN_MAX_LOCKOUT_MS = 30 * 60_000
+const loginAttempts = new Map<string, { count: number; lockUntil: number }>()
+
+function checkLoginRateLimit(key: string): { allowed: boolean; retryAfterMs: number } {
+  const entry = loginAttempts.get(key)
+  if (!entry || entry.lockUntil <= Date.now()) return { allowed: true, retryAfterMs: 0 }
+  return { allowed: false, retryAfterMs: entry.lockUntil - Date.now() }
+}
+
+function recordLoginFailure(key: string): void {
+  const entry = loginAttempts.get(key) ?? { count: 0, lockUntil: 0 }
+  entry.count += 1
+  if (entry.count >= LOGIN_MAX_ATTEMPTS) {
+    const extra = entry.count - LOGIN_MAX_ATTEMPTS
+    entry.lockUntil = Date.now() + Math.min(LOGIN_BASE_LOCKOUT_MS * 2 ** extra, LOGIN_MAX_LOCKOUT_MS)
+  }
+  loginAttempts.set(key, entry)
+}
+
+function recordLoginSuccess(key: string): void {
+  loginAttempts.delete(key)
 }
 
 function getBearerToken(req: http.IncomingMessage): string | null {
@@ -808,12 +846,25 @@ function send(res: http.ServerResponse, status: number, body: unknown): void {
 }
 
 // ─── Request handler ──────────────────────────────────────────────────────────
+/**
+ * Returns true if `origin`'s hostname is this machine (localhost or one of its
+ * detected LAN IPs). Used to gate CORS — browsers on other hosts/websites must
+ * not be able to read responses from the dashboard or sync routes.
+ */
+function isAllowedOrigin(origin: string): boolean {
+  try {
+    const hostname = new URL(origin).hostname
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return true
+    return getLanIps().includes(hostname)
+  } catch { return false }
+}
+
 function createHandler(apiKey: string) {
   return async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
     // Restrict CORS to same-origin / LAN clients — not the open web.
     const origin = req.headers['origin']
-    if (origin) {
-      // Allow only origins that share the same host (LAN IPs and localhost).
+    if (origin && isAllowedOrigin(origin)) {
+      // Only reflect origins that resolve to this machine (LAN IPs / localhost).
       // Browsers on external sites can't access the dashboard or sync routes.
       res.setHeader('Access-Control-Allow-Origin', origin)
       res.setHeader('Vary', 'Origin')
@@ -831,9 +882,20 @@ function createHandler(apiKey: string) {
       }
       // Auth — no token required
       if (method === 'POST' && url === '/api/auth/login') {
+        const clientKey = req.socket.remoteAddress ?? 'unknown'
+        const rateLimit = checkLoginRateLimit(clientKey)
+        if (!rateLimit.allowed) {
+          const retryAfterSec = Math.ceil(rateLimit.retryAfterMs / 1000)
+          res.setHeader('Retry-After', String(retryAfterSec))
+          send(res, 429, { error: `Too many failed attempts. Try again in ${retryAfterSec}s.` }); return
+        }
         const body = await parseBody(req) as { pin?: string }
         if (!body.pin) { send(res, 400, { error: 'PIN required' }); return }
-        if (!validateAdminPin(body.pin)) { send(res, 401, { error: 'Invalid PIN' }); return }
+        if (!validateAdminPin(body.pin)) {
+          recordLoginFailure(clientKey)
+          send(res, 401, { error: 'Invalid PIN' }); return
+        }
+        recordLoginSuccess(clientKey)
         send(res, 200, { ok: true, token: createSessionToken() }); return
       }
       // Protected dashboard API routes (session token)
@@ -855,7 +917,7 @@ function createHandler(apiKey: string) {
         // All /sync/* routes beyond the status probes require the shared API key.
         if (apiKey) {
           const tok = getBearerToken(req)
-          if (tok !== apiKey) { send(res, 401, { error: 'Invalid sync API key' }); return }
+          if (!tok || !safeEqual(tok, apiKey)) { send(res, 401, { error: 'Invalid sync API key' }); return }
         }
 
         // ── v1 routes (legacy — kept live until all terminals migrate to v2) ──
@@ -984,7 +1046,27 @@ function createHandler(apiKey: string) {
 export function startEmbeddedServer(port: number, apiKey: string): Promise<EmbeddedServerStatus> {
   return new Promise((resolve, reject) => {
     if (server) { resolve(getEmbeddedServerStatus()); return }
-    server = http.createServer(createHandler(apiKey))
+
+    // Never start the server with an open sync API key. If one wasn't
+    // configured (e.g. the setup wizard field was left blank, or this is an
+    // existing install that predates this check), generate and persist a
+    // strong one now rather than accepting unauthenticated LAN reads/writes.
+    let effectiveApiKey = apiKey
+    if (!effectiveApiKey) {
+      effectiveApiKey = randomBytes(24).toString('hex')
+      try {
+        settingsService.set('embeddedServerApiKey', effectiveApiKey)
+      } catch (err) {
+        console.error('[embedded-server] failed to persist auto-generated API key:', err)
+      }
+      console.warn(
+        '[embedded-server] started with no configured API key — generated one automatically. ' +
+        'If other terminals were already syncing to this server, update their Sync API Key in ' +
+        'Settings to match, or re-run Setup on this server to view/share the new key.'
+      )
+    }
+
+    server = http.createServer(createHandler(effectiveApiKey))
     server.on('error', (err) => { server = null; reject(err) })
     server.listen(port, '0.0.0.0', () => {
       console.log(`[embedded-server] listening on port ${port}`)

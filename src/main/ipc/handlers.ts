@@ -74,6 +74,16 @@ function generateResetCode(): string {
  */
 const sessionStore = new Map<number, { staffId: string; role: string }>()
 
+/**
+ * PIN login rate limiting, keyed by renderer WebContents.id (i.e. per terminal
+ * keypad, not per staff account — the keypad is shared by all staff on the
+ * device). Lockout duration doubles with each failure past the threshold.
+ */
+const STAFF_AUTH_MAX_ATTEMPTS = 5
+const STAFF_AUTH_BASE_LOCKOUT_MS = 15_000
+const STAFF_AUTH_MAX_LOCKOUT_MS = 5 * 60_000
+const staffAuthAttempts = new Map<number, { count: number; lockUntil: number }>()
+
 const ROLE_LEVEL: Record<string, number> = { cashier: 0, manager: 1, admin: 2 }
 
 /**
@@ -217,12 +227,28 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.STAFF_LIST, () => staffService.list())
 
   ipcMain.handle(IPC.STAFF_AUTH, (e, pin: string) => {
+    const key = e.sender.id
+    const attempt = staffAuthAttempts.get(key)
+    if (attempt && attempt.lockUntil > Date.now()) {
+      const retryAfterSec = Math.ceil((attempt.lockUntil - Date.now()) / 1000)
+      throw new Error(`Too many failed attempts. Try again in ${retryAfterSec}s.`)
+    }
+
     const result = staffService.authenticate(pin)
     if (result) {
+      staffAuthAttempts.delete(key)
       // Register session in main process — used by requireRole() to enforce permissions
       sessionStore.set(e.sender.id, { staffId: result.id, role: result.role })
       // Auto-clear session when this WebContents is destroyed (window closed / reloaded)
       e.sender.once('destroyed', () => sessionStore.delete(e.sender.id))
+    } else {
+      const next = attempt ?? { count: 0, lockUntil: 0 }
+      next.count += 1
+      if (next.count >= STAFF_AUTH_MAX_ATTEMPTS) {
+        const extra = next.count - STAFF_AUTH_MAX_ATTEMPTS
+        next.lockUntil = Date.now() + Math.min(STAFF_AUTH_BASE_LOCKOUT_MS * 2 ** extra, STAFF_AUTH_MAX_LOCKOUT_MS)
+      }
+      staffAuthAttempts.set(key, next)
     }
     return result
   })
@@ -789,10 +815,12 @@ export function registerIpcHandlers(): void {
     return getSyncState()
   })
 
-  ipcMain.handle(IPC.SYNC_TEST_CONNECTION, async (_e, url: string, _apiKey: string) => {
-    // Always use the stored API key — never trust the renderer to supply it
-    const storedKey = settingsService.get('syncApiKey')?.trim() ?? ''
-    return testConnection(url, storedKey)
+  ipcMain.handle(IPC.SYNC_TEST_CONNECTION, async (_e, url: string, apiKey: string) => {
+    // Prefer a key the caller just typed in (e.g. the setup wizard, before it's
+    // saved) — fall back to whatever is already stored (e.g. Settings → Sync,
+    // re-testing an existing connection without re-entering the key).
+    const key = apiKey?.trim() || settingsService.get('syncApiKey')?.trim() || ''
+    return testConnection(url, key)
   })
 
   ipcMain.handle(IPC.SYNC_START, (e, intervalSeconds?: number) => {
@@ -946,6 +974,8 @@ export function registerIpcHandlers(): void {
     save('nodeMode', input.nodeMode)
     save('setupComplete', 'true')
 
+    let generatedApiKey: string | undefined
+
     if (input.nodeMode === 'standalone') {
       save('syncEnabled', 'false')
 
@@ -962,6 +992,13 @@ export function registerIpcHandlers(): void {
       await startEmbeddedServer(port, apiKey)
       // No sync loop — terminals push/pull TO this server
 
+      // startEmbeddedServer auto-generates a key when apiKey is blank. Surface
+      // it once here so the wizard can show it to the admin to copy to other
+      // terminals — SETUP_GET intentionally never exposes stored keys later.
+      if (!apiKey) {
+        generatedApiKey = settingsService.get('embeddedServerApiKey') || undefined
+      }
+
     } else if (input.nodeMode === 'terminal') {
       save('syncEnabled', 'true')
       save('syncUrl', input.syncUrl ?? '')
@@ -970,7 +1007,7 @@ export function registerIpcHandlers(): void {
       startSyncLoop(input.syncIntervalSeconds ?? 30)
     }
 
-    return { ok: true, serverTime: now }
+    return { ok: true, serverTime: now, ...(generatedApiKey && { generatedApiKey }) }
   })
 
   /** Resets setupComplete so the wizard shows again on next launch. */

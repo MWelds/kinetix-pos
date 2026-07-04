@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import bcrypt from 'bcryptjs'
 
 /** Schema version — increment whenever tables change */
-const SCHEMA_VERSION = 29
+const SCHEMA_VERSION = 30
 
 /**
  * Runs idempotent DDL migrations on first launch.
@@ -147,6 +147,13 @@ export function runMigrations(sqlite: Database.Database): void {
   // All use IF NOT EXISTS — fully idempotent on any schema version.
   if (currentVersion < 29) {
     applyV29(sqlite)
+  }
+
+  // V30: Add is_default_pin flag to staff, used to force an admin to change a
+  // seeded/known-default PIN before using the app. Constant default (0), so
+  // unlike updated_at/deleted_at above this is safe to add as NOT NULL directly.
+  if (currentVersion < 30) {
+    applyV30(sqlite)
   }
 
   if (currentVersion < SCHEMA_VERSION) {
@@ -1022,6 +1029,28 @@ function applyV29(sqlite: Database.Database): void {
   for (const ddl of indexes) {
     try { sqlite.exec(ddl) } catch { /* already exists — idempotent */ }
   }
+}
+
+/**
+ * V30: Add is_default_pin to staff. Existing installs have no way to know
+ * whether an admin's PIN was ever changed from the seeded default, so this
+ * back-fills true only for admins whose PIN still hashes to the seed value
+ * ('1234') — anyone who already changed it is left untouched.
+ */
+function applyV30(sqlite: Database.Database): void {
+  try {
+    sqlite.exec(`ALTER TABLE staff ADD COLUMN is_default_pin INTEGER NOT NULL DEFAULT 0`)
+  } catch { /* column already exists — idempotent */ }
+  try {
+    const { createHash } = require('crypto') as typeof import('crypto')
+    const saltRow = sqlite.prepare(`SELECT value FROM settings WHERE key = 'pinSalt'`).get() as { value: string } | undefined
+    if (!saltRow?.value) return // no salt yet means no staff have been authenticated against — nothing to back-fill
+
+    const seedHash = createHash('sha256').update(saltRow.value + '1234').digest('hex')
+    sqlite
+      .prepare(`UPDATE staff SET is_default_pin = 1 WHERE role = 'admin' AND pin = ?`)
+      .run(seedHash)
+  } catch { /* non-fatal — worst case an existing default-PIN admin isn't flagged */ }
 }
 
 /**

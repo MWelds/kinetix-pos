@@ -84,6 +84,8 @@ export interface StaffMember {
   isActive: boolean
   canAccessDashboard: boolean
   createdAt: string
+  /** Only present on the result of staff.auth() — true if this account still uses its seeded default PIN. */
+  isDefaultPin?: boolean
 }
 
 export interface Shift {

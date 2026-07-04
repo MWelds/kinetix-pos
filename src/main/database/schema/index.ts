@@ -110,6 +110,9 @@ export const staff = sqliteTable('staff', {
   role: text('role').notNull().default('cashier'), // 'cashier'|'manager'|'admin'
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
   canAccessDashboard: integer('can_access_dashboard', { mode: 'boolean' }).notNull().default(false),
+  // Set on seeded/known-default PINs; cleared the moment the PIN is changed.
+  // The login screen forces a PIN change for admin accounts while this is true.
+  isDefaultPin: integer('is_default_pin', { mode: 'boolean' }).notNull().default(false),
   ...timestamps
 })
 

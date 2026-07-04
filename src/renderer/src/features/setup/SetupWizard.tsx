@@ -56,6 +56,7 @@ export function SetupWizard({ onComplete }: Props) {
 
   // Terminal mode fields
   const [terminalUrl, setTerminalUrl] = useState('')
+  const [terminalApiKey, setTerminalApiKey] = useState('')
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle')
   const [testMessage, setTestMessage] = useState('')
   const [discovering, setDiscovering] = useState(false)
@@ -64,6 +65,10 @@ export function SetupWizard({ onComplete }: Props) {
 
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
+  // Shown once, right after finishing server-mode setup — the server auto-
+  // generates a sync API key when none is provided, and it's never retrievable
+  // again after this (SETUP_GET only ever returns whether a key is set).
+  const [generatedApiKey, setGeneratedApiKey] = useState('')
 
   useEffect(() => {
     api.setup.get().then((data) => {
@@ -100,7 +105,7 @@ export function SetupWizard({ onComplete }: Props) {
     setTestStatus('testing')
     setTestMessage('')
     try {
-      const result = await api.sync.testConnection(terminalUrl, '')
+      const result = await api.sync.testConnection(terminalUrl, terminalApiKey.trim())
       setTestStatus(result.ok ? 'ok' : 'error')
       setTestMessage(result.message)
     } catch {
@@ -114,14 +119,20 @@ export function SetupWizard({ onComplete }: Props) {
     setSaving(true)
     setSaveError('')
     try {
-      await api.setup.complete({
+      const result = await api.setup.complete({
         nodeMode: mode,
         embeddedServerPort: serverPort,
         embeddedServerApiKey: '',
         syncUrl: terminalUrl,
-        syncApiKey: '',
+        syncApiKey: terminalApiKey.trim(),
         syncIntervalSeconds: 30
       })
+      if (mode === 'server' && result.generatedApiKey) {
+        // Pause here so the admin can copy the key before it's gone for good.
+        setGeneratedApiKey(result.generatedApiKey)
+        setSaving(false)
+        return
+      }
       onComplete()
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Setup failed. Please try again.')
@@ -210,6 +221,36 @@ export function SetupWizard({ onComplete }: Props) {
   }
 
   // Step 2 — Configuration
+  if (generatedApiKey) {
+    return (
+      <WizardShell>
+        <div className="flex justify-center mb-6">
+          <div className="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center">
+            <Check size={28} className="text-green-600" />
+          </div>
+        </div>
+        <h2 className="text-xl font-bold text-gray-900 text-center mb-2">Save Your Sync API Key</h2>
+        <p className="text-gray-500 text-center text-sm mb-6">
+          No key was entered, so one was generated automatically. Copy it now and paste it into
+          the <span className="font-semibold">Sync API Key</span> field when setting up each terminal
+          that connects to this server — it will not be shown again.
+        </p>
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-8">
+          <div className="flex items-center">
+            <code className="text-sm text-blue-800 font-mono break-all">{generatedApiKey}</code>
+            <CopyButton value={generatedApiKey} />
+          </div>
+        </div>
+        <button
+          onClick={onComplete}
+          className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
+        >
+          <Check size={16} /> I've saved it — Continue
+        </button>
+      </WizardShell>
+    )
+  }
+
   if (step === 2) {
     return (
       <WizardShell>
@@ -359,6 +400,19 @@ export function SetupWizard({ onComplete }: Props) {
                   placeholder="http://192.168.1.100:3030"
                   value={terminalUrl}
                   onChange={(e) => { setTerminalUrl(e.target.value); setTestStatus('idle') }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Sync API Key <span className="text-gray-400 font-normal">(shown once when the server was set up)</span>
+                </label>
+                <input
+                  type="password"
+                  placeholder="Paste the key from the server's setup screen"
+                  value={terminalApiKey}
+                  onChange={(e) => { setTerminalApiKey(e.target.value); setTestStatus('idle') }}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>

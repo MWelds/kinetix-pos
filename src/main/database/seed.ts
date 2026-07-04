@@ -34,6 +34,7 @@ export function seedDatabase(): void {
       pin: hashPin('1234'),
       role: 'admin',
       isActive: true,
+      isDefaultPin: true,
       createdAt: now,
       updatedAt: now
     },

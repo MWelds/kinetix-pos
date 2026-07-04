@@ -98,13 +98,15 @@ export const staffService = {
   ) {
     if (!id) throw new Error('id is required')
     const db = getDatabase()
-    const payload: typeof input & { pin?: string; updatedAt: string } = {
+    const payload: typeof input & { pin?: string; isDefaultPin?: boolean; updatedAt: string } = {
       ...input,
       updatedAt: new Date().toISOString()
     }
     if (input.pin !== undefined) {
       if (input.pin.length < 4) throw new Error('PIN must be at least 4 characters')
       payload.pin = hashPin(input.pin)
+      // Whatever PIN is set here is no longer the seeded default.
+      payload.isDefaultPin = false
     }
     db.update(schema.staff).set(payload).where(eq(schema.staff.id, id)).run()
     return this.list().find((s) => s.id === id) ?? null

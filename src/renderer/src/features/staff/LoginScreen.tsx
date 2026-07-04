@@ -6,6 +6,37 @@ import { useLogoStore } from '../../stores/logo.store'
 import { api } from '../../lib/api'
 import { Button } from '../../components/ui'
 import { ROUTES } from '../../constants'
+import type { StaffMember } from '../../types'
+
+// ─── Shared 4-digit PIN pad ────────────────────────────────────────────────────
+
+const PinDots = ({ value }: { value: string }) => (
+  <div className="flex justify-center gap-3 my-3">
+    {[0,1,2,3].map((i) => (
+      <div key={i} className={`w-9 h-9 rounded-full border-2 flex items-center justify-center transition-all ${
+        i < value.length ? 'border-blue-600 bg-blue-600' : 'border-gray-300 bg-white'
+      }`}>
+        {i < value.length && <div className="w-2.5 h-2.5 rounded-full bg-white" />}
+      </div>
+    ))}
+  </div>
+)
+
+const MiniPad = ({ onDigit, onBack }: { onDigit: (d: string) => void; onBack: () => void }) => (
+  <div className="grid grid-cols-3 gap-2">
+    {['1','2','3','4','5','6','7','8','9','','0','⌫'].map((k, i) => {
+      if (!k) return <div key={i} />
+      return (
+        <button key={k} type="button"
+          onClick={() => k === '⌫' ? onBack() : onDigit(k)}
+          className={`h-11 rounded-xl text-base font-semibold transition-all active:scale-95 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+            k === '⌫' ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
+          }`}
+        >{k}</button>
+      )
+    })}
+  </div>
+)
 
 // ─── Forgot PIN modal ─────────────────────────────────────────────────────────
 
@@ -123,34 +154,6 @@ function ForgotPinModal({ onClose }: { onClose: () => void }) {
     } catch { setError('Reset failed') }
     finally { setLoading(false) }
   }
-
-  const PinDots = ({ value }: { value: string }) => (
-    <div className="flex justify-center gap-3 my-3">
-      {[0,1,2,3].map((i) => (
-        <div key={i} className={`w-9 h-9 rounded-full border-2 flex items-center justify-center transition-all ${
-          i < value.length ? 'border-blue-600 bg-blue-600' : 'border-gray-300 bg-white'
-        }`}>
-          {i < value.length && <div className="w-2.5 h-2.5 rounded-full bg-white" />}
-        </div>
-      ))}
-    </div>
-  )
-
-  const MiniPad = ({ onDigit, onBack }: { onDigit: (d: string) => void; onBack: () => void }) => (
-    <div className="grid grid-cols-3 gap-2">
-      {['1','2','3','4','5','6','7','8','9','','0','⌫'].map((k, i) => {
-        if (!k) return <div key={i} />
-        return (
-          <button key={k} type="button"
-            onClick={() => k === '⌫' ? onBack() : onDigit(k)}
-            className={`h-11 rounded-xl text-base font-semibold transition-all active:scale-95 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-              k === '⌫' ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
-            }`}
-          >{k}</button>
-        )
-      })}
-    </div>
-  )
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -356,6 +359,103 @@ function ForgotPinModal({ onClose }: { onClose: () => void }) {
   )
 }
 
+// ─── Forced PIN change modal ──────────────────────────────────────────────────
+
+/**
+ * Blocks access until a staff member still on a seeded/known-default PIN
+ * (see StaffMember.isDefaultPin) picks a new one. No cancel/back option —
+ * the main-process session is already registered by the time this shows, so
+ * dismissing it wouldn't actually prevent access, it would just hide the prompt.
+ */
+function ForcePinChangeModal({
+  staff,
+  onDone
+}: {
+  staff: StaffMember
+  onDone: (updated: StaffMember) => void
+}) {
+  const [newPin, setNewPin] = useState('')
+  const [confirmPin, setConfirmPin] = useState('')
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  function appendNew(digit: string, field: 'new' | 'confirm') {
+    if (field === 'new') {
+      if (newPin.length >= 4) return
+      setNewPin((p) => p + digit)
+    } else {
+      if (confirmPin.length >= 4) return
+      setConfirmPin((p) => p + digit)
+    }
+    setError('')
+  }
+
+  async function handleSubmit() {
+    if (newPin.length !== 4 || confirmPin.length !== 4) return
+    if (newPin !== confirmPin) { setError('PINs do not match'); setConfirmPin(''); return }
+    if (newPin === '1234') { setError('Choose a PIN other than the default'); setNewPin(''); setConfirmPin(''); return }
+    setLoading(true)
+    setError('')
+    try {
+      const updated = await api.staff.update(staff.id, { pin: newPin })
+      onDone(updated)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to set new PIN')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <div className="bg-white rounded-2xl shadow-2xl p-7 w-full max-w-sm mx-4">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+            <KeyRound size={18} className="text-amber-600" />
+          </div>
+          <div>
+            <h2 className="font-bold text-gray-900">Set a New PIN</h2>
+            <p className="text-xs text-gray-500">
+              This admin account is still using its default PIN. Choose a new one to continue.
+            </p>
+          </div>
+        </div>
+
+        {error && (
+          <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-4">{error}</p>
+        )}
+
+        <div className="space-y-3">
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide text-center">New PIN</p>
+            <PinDots value={newPin} />
+            <MiniPad
+              onDigit={(d) => appendNew(d, 'new')}
+              onBack={() => { setNewPin((p) => p.slice(0, -1)); setError('') }}
+            />
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide text-center">Confirm PIN</p>
+            <PinDots value={confirmPin} />
+            <MiniPad
+              onDigit={(d) => appendNew(d, 'confirm')}
+              onBack={() => { setConfirmPin((p) => p.slice(0, -1)); setError('') }}
+            />
+          </div>
+          <Button
+            className="w-full"
+            disabled={newPin.length !== 4 || confirmPin.length !== 4 || loading}
+            loading={loading}
+            onClick={handleSubmit}
+          >
+            Set New PIN
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Login screen ─────────────────────────────────────────────────────────────
 
 export function LoginScreen() {
@@ -363,6 +463,7 @@ export function LoginScreen() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [showForgotPin, setShowForgotPin] = useState(false)
+  const [forcePinStaff, setForcePinStaff] = useState<StaffMember | null>(null)
   const login = useAuthStore((s) => s.login)
   const setShift = useAuthStore((s) => s.setShift)
   const logoBase64 = useLogoStore((s) => s.logoBase64)
@@ -383,21 +484,29 @@ export function LoginScreen() {
     setError('')
   }
 
+  async function completeLogin(staff: StaffMember) {
+    login(staff)
+    try {
+      const shift = await api.shifts.current(staff.id)
+      if (shift) setShift(shift as Parameters<typeof setShift>[0])
+    } catch {
+      // No shift yet
+    }
+    navigate(ROUTES.POS)
+  }
+
   async function submitPin(value: string) {
     if (value.length < 4) { setError('PIN must be 4 digits'); return }
     setLoading(true)
     try {
       const staff = await api.staff.auth(value)
       if (!staff) { setError('Invalid PIN. Try again.'); setPin(''); return }
-      login(staff as Parameters<typeof login>[0])
-      try {
-        const shift = await api.shifts.current(staff.id)
-        if (shift) setShift(shift as Parameters<typeof setShift>[0])
-      } catch {
-        // No shift yet
+      if (staff.role === 'admin' && staff.isDefaultPin) {
+        setForcePinStaff(staff)
+        return
       }
-      navigate(ROUTES.POS)
-    } catch { setError('Login failed') }
+      await completeLogin(staff)
+    } catch (err) { setError(err instanceof Error ? err.message : 'Login failed') }
     finally { setLoading(false) }
   }
 
@@ -512,6 +621,15 @@ export function LoginScreen() {
       </div>
 
       {showForgotPin && <ForgotPinModal onClose={() => setShowForgotPin(false)} />}
+      {forcePinStaff && (
+        <ForcePinChangeModal
+          staff={forcePinStaff}
+          onDone={(updated) => {
+            setForcePinStaff(null)
+            completeLogin(updated)
+          }}
+        />
+      )}
     </div>
   )
 }

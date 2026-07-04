@@ -31,6 +31,9 @@ jobs:
       - name: Rebuild native modules for Electron
         run: npm run rebuild
 
+      - name: TypeScript type-check
+        run: npm run typecheck
+
       - name: Build Windows installers
         run: npm run build && npx electron-builder --win --publish never
 

@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, session, ipcMain, dialog } from 'electron'
+import { app, shell, BrowserWindow, session, ipcMain, dialog, Menu } from 'electron'
 import { join } from 'path'
 import { appendFileSync, mkdirSync, existsSync } from 'fs'
 import { execFile } from 'child_process'
@@ -82,7 +82,12 @@ function createWindow(): BrowserWindow {
     show: false, autoHideMenuBar: true, title: 'Kinetix POS',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false, contextIsolation: true, nodeIntegration: false
+      sandbox: false, contextIsolation: true, nodeIntegration: false,
+      // Disabled outright in production — this is the one setting that closes
+      // every path to DevTools (menu item, keyboard shortcut, or a renderer
+      // script calling webContents.openDevTools()), not just the shortcut
+      // blocking optimizer.watchWindowShortcuts() does below.
+      devTools: is.dev
     }
   })
   win.on('ready-to-show', () => { win.show() })
@@ -103,6 +108,11 @@ app
   .then(() => {
     electronApp.setAppUserModelId('com.kinetix.pos')
     app.on('browser-window-created', (_, window) => { optimizer.watchWindowShortcuts(window) })
+    // Production ships without a menu bar already (autoHideMenuBar) — removing
+    // the underlying Menu strips its "Toggle Developer Tools" item too, so
+    // Alt (which reveals a hidden Windows menu bar) can't get to it either.
+    // devTools: false on the window is the primary gate; this is defense in depth.
+    if (!is.dev) Menu.setApplicationMenu(null)
 
     try {
       getDatabase()

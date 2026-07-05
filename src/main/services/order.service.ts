@@ -724,6 +724,37 @@ export const orderService = {
         .where(eq(schema.orders.id, refundId))
         .run()
 
+      // Insert a negative payment row for the REF- order, attributed
+      // proportionally to the original order's payment method(s) (split
+      // payments get split refunds). Without this, orders.total nets out
+      // correctly for revenue reports, but the Cash/Card breakdown and the
+      // EOD cash-drawer reconciliation (which read the payments table, not
+      // orders.total) never reflected refunds at all.
+      const totalPaid = original.payments.reduce((s, p) => s + p.amount, 0)
+      if (totalPaid > 0 && refundTotal > 0) {
+        let allocated = 0
+        original.payments.forEach((p, idx) => {
+          const isLast = idx === original.payments.length - 1
+          const amount = isLast ? round2(refundTotal - allocated) : round2(refundTotal * (p.amount / totalPaid))
+          allocated += amount
+          const origAmount = p.originalAmount != null ? round2(amount * (p.originalAmount / p.amount)) : null
+          tx.insert(schema.payments)
+            .values({
+              id: generateId(),
+              orderId: refundId,
+              method: p.method,
+              amount: -amount,
+              currency: p.currency,
+              originalAmount: origAmount != null ? -origAmount : null,
+              reference: p.reference,
+              changeGiven: null,
+              status: 'completed',
+              createdAt: now
+            })
+            .run()
+        })
+      }
+
       // Only mark the original fully 'refunded' once every line has nothing left —
       // otherwise leave its status alone so its remaining revenue keeps reporting
       // correctly (report/QBO queries never mutate on partial refunds, they just
@@ -774,7 +805,8 @@ export const orderService = {
 
       const refundOrder = tx.select().from(schema.orders).where(eq(schema.orders.id, refundId)).get()!
       const refundOrderItems = tx.select().from(schema.orderItems).where(eq(schema.orderItems.orderId, refundId)).all()
-      return { order: refundOrder, items: refundOrderItems, payments: [] }
+      const refundOrderPayments = tx.select().from(schema.payments).where(eq(schema.payments.orderId, refundId)).all()
+      return { order: refundOrder, items: refundOrderItems, payments: refundOrderPayments }
     })
   },
 

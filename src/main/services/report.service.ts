@@ -41,13 +41,17 @@ export const reportService = {
     const totalRevenue = orders.reduce((s, o) => s + o.total, 0)
     const totalDiscount = orders.reduce((s, o) => s + o.discountAmount, 0)
     const totalTax = orders.reduce((s, o) => s + o.taxAmount, 0)
+    // REF- orders are synthetic refund records, not separate transactions — a
+    // fully-refunded order would otherwise count as 2 orders (itself + its
+    // REF- counterpart, both status='refunded') instead of 1.
+    const realOrderCount = orders.filter((o) => !o.orderNumber.startsWith('REF-')).length
 
     return {
-      orderCount: orders.length,
+      orderCount: realOrderCount,
       totalRevenue,
       totalDiscount,
       totalTax,
-      averageOrderValue: orders.length ? totalRevenue / orders.length : 0
+      averageOrderValue: realOrderCount ? totalRevenue / realOrderCount : 0
     }
   },
 
@@ -319,12 +323,13 @@ export const reportService = {
     // Fetch all completed orders with their terminal info
     const orders = sqlite.prepare<[], {
       id: string
+      order_number: string
       terminal_id: string
       terminal_name: string
       total: number
       discount_amount: number
     }>(`
-      SELECT id, terminal_id, terminal_name, total, discount_amount
+      SELECT id, order_number, terminal_id, terminal_name, total, discount_amount
       FROM orders
       WHERE status IN ('completed', 'refunded')
         AND created_at >= ?
@@ -384,7 +389,9 @@ export const reportService = {
         }
         termMap.set(key, agg)
       }
-      agg.orderCount++
+      // REF- orders are synthetic refund records, not separate transactions —
+      // count only the real order, but still fold its (negative) totals in.
+      if (!o.order_number.startsWith('REF-')) agg.orderCount++
       agg.totalRevenue += o.total
       agg.totalDiscount += o.discount_amount
 

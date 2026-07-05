@@ -102,6 +102,18 @@ export const DEFAULT_SETTINGS = {
   qboClientSecret: '',
   qboSandbox: 'false',
   qboRealmId: '',
+
+  // ── Database backups ───────────────────────────────────────────────────────
+  /** JSON array of { id, label, path } — any folder: local, external drive, or a folder already synced by Dropbox/OneDrive/Google Drive. */
+  backupDestinations: '[]',
+  backupEnabled: 'false',
+  /** Hours between automatic backups (6 / 12 / 24 / 168 = weekly). */
+  backupIntervalHours: '24',
+  /** Most recent backups to keep per destination — older app-created backups are pruned. */
+  backupRetentionCount: '14',
+  lastBackupAt: '',
+  /** JSON array of { path, ok, error?, sizeBytes?, at } from the most recent run. */
+  lastBackupResults: '[]',
 }
 
 export type SettingKey = keyof typeof DEFAULT_SETTINGS

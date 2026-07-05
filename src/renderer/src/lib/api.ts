@@ -16,7 +16,9 @@ import type {
   SalesSummary,
   ProductComponent,
   Vendor,
-  VendorPayable
+  VendorPayable,
+  BackupStatus,
+  BackupDestination
 } from '../types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -283,6 +285,16 @@ export const api = {
 
   images: {
     pick: (): Promise<string | null> => bridge.images.pick()
+  },
+
+  backup: {
+    getStatus: (): Promise<BackupStatus> => bridge.backup.getStatus(),
+    addDestination: (label?: string): Promise<BackupDestination[] | null> =>
+      bridge.backup.addDestination(label),
+    removeDestination: (id: string): Promise<BackupDestination[]> => bridge.backup.removeDestination(id),
+    runNow: (): Promise<BackupStatus['lastResults']> => bridge.backup.runNow(),
+    setSchedule: (input: { enabled: boolean; intervalHours: number; retentionCount: number }): Promise<void> =>
+      bridge.backup.setSchedule(input)
   },
 
   vendors: {

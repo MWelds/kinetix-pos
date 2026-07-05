@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import QRCode from 'qrcode'
-import { Save, RefreshCw, ArrowLeftRight, Monitor, Wifi, WifiOff, ExternalLink, FolderOpen, Plus, Edit2, Trash2, Check, X, ImageIcon, Upload, Link2, Link2Off, AlertCircle, RotateCcw, ChevronDown, Search, Scan, CreditCard, Cast } from 'lucide-react'
+import { Save, RefreshCw, ArrowLeftRight, Monitor, Wifi, WifiOff, ExternalLink, FolderOpen, Plus, Edit2, Trash2, Check, X, ImageIcon, Upload, Link2, Link2Off, AlertCircle, RotateCcw, ChevronDown, Search, Scan, CreditCard, Cast, HardDrive } from 'lucide-react'
 import { api } from '../../lib/api'
 import { Input, Textarea, Button } from '../../components/ui'
-import { useUiStore } from '../../stores/ui.store'
+import { useUiStore, type ToastType } from '../../stores/ui.store'
 import { useCartStore } from '../../stores/cart.store'
 import { useLogoStore } from '../../stores/logo.store'
 import { useCurrencyStore } from '../../stores/currency.store'
-import type { Category } from '../../types'
+import type { Category, BackupStatus } from '../../types'
 import {
   CURRENCIES,
   CURRENCY_REGIONS,
@@ -1171,6 +1171,166 @@ function SyncServerSection({
       )}
 
       {/* Embedded server API key — only visible when this machine runs the sync server */}    </section>
+  )
+}
+
+// ─── Database Backup Section ─────────────────────────────────────────────────
+
+function BackupSection({ showToast }: { showToast: (msg: string, type?: ToastType) => void }) {
+  const [status, setStatus] = useState<BackupStatus | null>(null)
+  const [adding, setAdding] = useState(false)
+  const [running, setRunning] = useState(false)
+
+  const load = useCallback(async () => {
+    const s = await api.backup.getStatus()
+    setStatus(s)
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  if (!status) return null
+
+  const handleAddDestination = async () => {
+    setAdding(true)
+    try {
+      const dests = await api.backup.addDestination()
+      if (dests) {
+        setStatus((p) => (p ? { ...p, destinations: dests } : p))
+        showToast('Backup destination added', 'success')
+      }
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  const handleRemove = async (id: string) => {
+    const dests = await api.backup.removeDestination(id)
+    setStatus((p) => (p ? { ...p, destinations: dests } : p))
+  }
+
+  const handleRunNow = async () => {
+    if (status.destinations.length === 0) {
+      showToast('Add a backup destination first', 'error')
+      return
+    }
+    setRunning(true)
+    try {
+      const results = await api.backup.runNow()
+      const okCount = results.filter((r) => r.ok).length
+      showToast(
+        okCount === results.length
+          ? `Backup complete — ${okCount} destination${okCount === 1 ? '' : 's'}`
+          : `Backup finished with errors — ${okCount}/${results.length} succeeded`,
+        okCount === results.length ? 'success' : 'error'
+      )
+      await load()
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  const handleScheduleChange = async (
+    patch: Partial<{ enabled: boolean; intervalHours: number; retentionCount: number }>
+  ) => {
+    const next = {
+      enabled: status.enabled,
+      intervalHours: status.intervalHours,
+      retentionCount: status.retentionCount,
+      ...patch
+    }
+    setStatus((p) => (p ? { ...p, ...next } : p))
+    await api.backup.setSchedule(next)
+  }
+
+  return (
+    <SectionAccordion id="backup" title="Backups" icon={<HardDrive size={16} className="text-emerald-500" />}>
+      <p className="text-xs text-gray-500 mb-4">
+        Back up your database to any folder — a local folder, an external/USB drive, or a
+        folder already synced by Dropbox, OneDrive, or Google Drive (which uploads it to
+        the cloud automatically — no extra setup needed here).
+      </p>
+
+      <div className="space-y-2 mb-3">
+        {status.destinations.length === 0 && (
+          <p className="text-sm text-gray-400">No backup destinations yet — add one below.</p>
+        )}
+        {status.destinations.map((d) => {
+          const result = status.lastResults.find((r) => r.path === d.path)
+          return (
+            <div key={d.id} className="flex items-center gap-2 px-3 py-2 border border-gray-200 rounded-lg">
+              <FolderOpen size={14} className="text-gray-400 shrink-0" />
+              <span className="text-sm text-gray-700 truncate flex-1" title={d.path}>{d.path}</span>
+              {result && (
+                result.ok ? (
+                  <Check size={14} className="text-emerald-500 shrink-0" />
+                ) : (
+                  <span title={result.error}>
+                    <AlertCircle size={14} className="text-red-500 shrink-0" />
+                  </span>
+                )
+              )}
+              <button
+                type="button"
+                onClick={() => handleRemove(d.id)}
+                className="p-1 text-gray-400 hover:text-red-500 rounded"
+                aria-label="Remove destination"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          )
+        })}
+      </div>
+
+      <Button variant="secondary" size="sm" onClick={handleAddDestination} loading={adding} icon={<Plus size={12} />}>
+        Add Destination
+      </Button>
+
+      <div className="border-t border-gray-100 my-4" />
+
+      <Toggle checked={status.enabled} onChange={(v) => handleScheduleChange({ enabled: v })} label="Automatic backups" />
+
+      {status.enabled && (
+        <div className="flex items-center gap-4 mt-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">Frequency</label>
+            <select
+              value={status.intervalHours}
+              onChange={(e) => handleScheduleChange({ intervalHours: parseInt(e.target.value, 10) })}
+              className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm min-h-[38px]"
+            >
+              <option value={6}>Every 6 hours</option>
+              <option value={12}>Every 12 hours</option>
+              <option value={24}>Daily</option>
+              <option value={168}>Weekly</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">Keep last</label>
+            <Input
+              type="number"
+              min="1"
+              max="365"
+              value={String(status.retentionCount)}
+              onChange={(e) => handleScheduleChange({ retentionCount: parseInt(e.target.value, 10) || 1 })}
+              className="w-20"
+            />
+          </div>
+        </div>
+      )}
+
+      {status.lastBackupAt && (
+        <p className="text-xs text-gray-400 mt-4">
+          Last backup: {new Date(status.lastBackupAt).toLocaleString()}
+        </p>
+      )}
+
+      <div className="mt-3">
+        <Button variant="primary" size="sm" onClick={handleRunNow} loading={running} icon={<RefreshCw size={12} />}>
+          Backup Now
+        </Button>
+      </div>
+    </SectionAccordion>
   )
 }
 
@@ -2902,6 +3062,8 @@ export function SettingsScreen() {
           </SectionAccordion>
         )}
 
+        {/* Database Backups */}
+        <BackupSection showToast={showToast} />
 
       </div>
     </div>

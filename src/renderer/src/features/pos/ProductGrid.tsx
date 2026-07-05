@@ -4,9 +4,9 @@ import { Search, Grid, Tag } from 'lucide-react'
 import { api } from '../../lib/api'
 import { useCartStore } from '../../stores/cart.store'
 import { useUiStore } from '../../stores/ui.store'
-import { Input, Spinner, Badge } from '../../components/ui'
+import { Input, Spinner, Badge, Modal } from '../../components/ui'
 import { useCurrencyStore } from '../../stores/currency.store'
-import type { Product, Category } from '../../types'
+import type { Product, Category, ProductVariant } from '../../types'
 import { BARCODE_SCAN_TIMEOUT_MS } from '../../constants'
 
 /** Sentinel placed in imageUrl when the actual data is a large base64 blob stored locally. */
@@ -53,6 +53,7 @@ export function ProductGrid() {
   const [loading, setLoading] = useState(true)
   const addItem = useCartStore((s) => s.addItem)
   const showToast = useUiStore((s) => s.showToast)
+  const [sizePickerProduct, setSizePickerProduct] = useState<Product | null>(null)
 
   // The scrollable container — virtualizer needs a ref to it
   const scrollParentRef = useRef<HTMLDivElement>(null)
@@ -167,6 +168,10 @@ export function ProductGrid() {
   }, [])
 
   function handleAddProduct(product: Product) {
+    if (product.hasVariants) {
+      setSizePickerProduct(product)
+      return
+    }
     addItem({
       productId: product.id,
       productName: product.name,
@@ -175,6 +180,20 @@ export function ProductGrid() {
       unitPrice: product.basePrice,
       taxRate: product.taxRate
     })
+  }
+
+  function handleAddVariant(product: Product, variant: ProductVariant) {
+    addItem({
+      productId: product.id,
+      variantId: variant.id,
+      variantName: variant.name,
+      productName: product.name,
+      sku: variant.sku,
+      quantity: 1,
+      unitPrice: product.basePrice + variant.priceModifier,
+      taxRate: product.taxRate
+    })
+    setSizePickerProduct(null)
   }
 
   const virtualItems = virtualizer.getVirtualItems()
@@ -265,6 +284,14 @@ export function ProductGrid() {
           </div>
         )}
       </div>
+
+      {sizePickerProduct && (
+        <SizePickerModal
+          product={sizePickerProduct}
+          onClose={() => setSizePickerProduct(null)}
+          onPick={(variant) => handleAddVariant(sizePickerProduct, variant)}
+        />
+      )}
     </div>
   )
 }
@@ -280,7 +307,10 @@ interface ProductCardProps {
  */
 const ProductCard = memo(function ProductCard({ product, onAdd }: ProductCardProps) {
   const fmtRaw = useCurrencyStore((s) => s.fmtRaw)
-  const isOutOfStock = product.trackStock && product.quantity <= 0
+  // A variant product's own (no-variant) inventory row is unused — stock lives
+  // on each size instead — so the base quantity can't be used to gate the tile.
+  // The size picker itself disables individual out-of-stock sizes.
+  const isOutOfStock = product.trackStock && !product.hasVariants && product.quantity <= 0
 
   const [imgSrc, setImgSrc] = useState<string | null>(
     product.imageUrl === LOCAL_IMAGE_SENTINEL ? null : product.imageUrl
@@ -333,7 +363,10 @@ const ProductCard = memo(function ProductCard({ product, onAdd }: ProductCardPro
         {fmtRaw(product.basePrice)}
       </p>
 
-      {product.trackStock && product.quantity <= 5 && product.quantity > 0 && (
+      {product.hasVariants && (
+        <Badge color="blue" className="mt-1 text-[10px]">Sizes</Badge>
+      )}
+      {!product.hasVariants && product.trackStock && product.quantity <= 5 && product.quantity > 0 && (
         <Badge color="yellow" className="mt-1 text-[10px]">
           Low: {product.quantity} left
         </Badge>
@@ -344,3 +377,54 @@ const ProductCard = memo(function ProductCard({ product, onAdd }: ProductCardPro
     </button>
   )
 })
+
+interface SizePickerModalProps {
+  product: Product
+  onClose: () => void
+  onPick: (variant: ProductVariant) => void
+}
+
+/** Lets staff pick which size of a variant product to add to the cart. */
+function SizePickerModal({ product, onClose, onPick }: SizePickerModalProps) {
+  const fmtRaw = useCurrencyStore((s) => s.fmtRaw)
+  const [variants, setVariants] = useState<ProductVariant[] | null>(null)
+
+  useEffect(() => {
+    api.products.variants.list(product.id).then(setVariants)
+  }, [product.id])
+
+  return (
+    <Modal isOpen onClose={onClose} title={`${product.name} — Choose a size`} size="sm">
+      {variants === null ? (
+        <div className="flex items-center justify-center py-8">
+          <Spinner size="md" />
+        </div>
+      ) : variants.length === 0 ? (
+        <p className="text-sm text-gray-400 text-center py-8">No sizes set up for this product.</p>
+      ) : (
+        <div className="grid grid-cols-3 gap-2">
+          {variants.map((v) => {
+            const outOfStock = product.trackStock && v.quantity <= 0
+            return (
+              <button
+                key={v.id}
+                type="button"
+                onClick={() => onPick(v)}
+                disabled={outOfStock}
+                className="flex flex-col items-center justify-center p-3 rounded-xl border border-gray-200 hover:border-blue-400 hover:bg-blue-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-gray-200 disabled:hover:bg-transparent"
+              >
+                <span className="text-sm font-semibold text-gray-900">{v.name}</span>
+                <span className="text-xs text-gray-500 mt-0.5">{fmtRaw(product.basePrice + v.priceModifier)}</span>
+                {outOfStock ? (
+                  <span className="text-[10px] text-red-500 mt-1">Out of stock</span>
+                ) : product.trackStock && v.quantity <= 5 ? (
+                  <span className="text-[10px] text-yellow-600 mt-1">{v.quantity} left</span>
+                ) : null}
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </Modal>
+  )
+}

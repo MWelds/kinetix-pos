@@ -5,7 +5,7 @@ import { Button, Badge, Modal, Input, Spinner } from '../../components/ui'
 import { useUiStore } from '../../stores/ui.store'
 import { useAuthStore } from '../../stores/auth.store'
 import { BARCODE_SCAN_TIMEOUT_MS } from '../../constants'
-import type { InventoryItem, Product } from '../../types'
+import type { InventoryItem, Product, ProductVariant } from '../../types'
 
 const PAGE_SIZE = 50
 
@@ -143,6 +143,7 @@ export function InventoryScreen() {
     try {
       await api.inventory.adjust({
         productId: adjustItem.productId,
+        variantId: adjustItem.variantId ?? undefined,
         type: form.type,
         quantity: qty,
         note: form.note || undefined,
@@ -309,6 +310,11 @@ export function InventoryScreen() {
                               <div className="flex items-center gap-1.5">
                                 {packInd && <Package size={13} className="text-indigo-500 shrink-0" />}
                                 <span className="font-medium text-gray-900">{item.productName}</span>
+                                {item.variantName && (
+                                  <span className="text-xs text-blue-600 bg-blue-50 rounded px-1 py-0.5 shrink-0">
+                                    {item.variantName}
+                                  </span>
+                                )}
                                 {packInd && (
                                   <span className="text-xs text-indigo-600 bg-indigo-100 rounded px-1 py-0.5 shrink-0">
                                     pack-linked
@@ -394,7 +400,7 @@ export function InventoryScreen() {
       <Modal
         isOpen={!!adjustItem}
         onClose={() => setAdjustItem(null)}
-        title={`Adjust Inventory — ${adjustItem?.productName ?? ''}`}
+        title={`Adjust Inventory — ${adjustItem?.productName ?? ''}${adjustItem?.variantName ? ` (${adjustItem.variantName})` : ''}`}
         footer={
           <>
             <Button variant="secondary" onClick={() => setAdjustItem(null)}>Cancel</Button>
@@ -513,6 +519,11 @@ function ReceiveStockModal({ isOpen, onClose, onReceived, staffId }: ReceiveStoc
   const [saving, setSaving] = useState(false)
   const showToast = useUiStore((s) => s.showToast)
 
+  // Size, when the selected product has variants — receiving stock for a variant
+  // product without picking one would otherwise land on the base (unused) row.
+  const [variants, setVariants] = useState<ProductVariant[]>([])
+  const [selectedVariantId, setSelectedVariantId] = useState('')
+
   useEffect(() => {
     if (!isOpen) {
       setStep('search')
@@ -521,8 +532,19 @@ function ReceiveStockModal({ isOpen, onClose, onReceived, staffId }: ReceiveStoc
       setSelected(null)
       setQuantity('')
       setNote('')
+      setVariants([])
+      setSelectedVariantId('')
     }
   }, [isOpen])
+
+  useEffect(() => {
+    if (selected?.hasVariants) {
+      api.products.variants.list(selected.id).then(setVariants)
+    } else {
+      setVariants([])
+      setSelectedVariantId('')
+    }
+  }, [selected])
 
   useEffect(() => {
     if (query.trim().length < 2) { setResults([]); return }
@@ -540,6 +562,10 @@ function ReceiveStockModal({ isOpen, onClose, onReceived, staffId }: ReceiveStoc
 
   async function handleReceive() {
     if (!selected) return
+    if (selected.hasVariants && !selectedVariantId) {
+      showToast('Choose a size first', 'error')
+      return
+    }
     const qty = parseInt(quantity, 10)
     if (isNaN(qty) || qty <= 0) {
       showToast('Enter a valid quantity', 'error')
@@ -547,14 +573,16 @@ function ReceiveStockModal({ isOpen, onClose, onReceived, staffId }: ReceiveStoc
     }
     setSaving(true)
     try {
+      const variantLabel = variants.find((v) => v.id === selectedVariantId)?.name
       await api.inventory.adjust({
         productId: selected.id,
+        variantId: selectedVariantId || undefined,
         type: 'receive',
         quantity: qty,
         note: note || undefined,
         staffId
       })
-      showToast(`Received ${qty} units of "${selected.name}"`, 'success')
+      showToast(`Received ${qty} units of "${selected.name}${variantLabel ? ` (${variantLabel})` : ''}"`, 'success')
       onReceived()
     } catch {
       showToast('Failed to receive stock', 'error')
@@ -572,7 +600,13 @@ function ReceiveStockModal({ isOpen, onClose, onReceived, staffId }: ReceiveStoc
         step === 'quantity' ? (
           <>
             <Button variant="secondary" onClick={() => setStep('search')}>Back</Button>
-            <Button onClick={handleReceive} loading={saving}>Confirm Receipt</Button>
+            <Button
+              onClick={handleReceive}
+              loading={saving}
+              disabled={!!selected?.hasVariants && !selectedVariantId}
+            >
+              Confirm Receipt
+            </Button>
           </>
         ) : (
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
@@ -621,6 +655,21 @@ function ReceiveStockModal({ isOpen, onClose, onReceived, staffId }: ReceiveStoc
             <p className="text-sm font-medium text-blue-900">{selected?.name}</p>
             <p className="text-xs text-blue-600">SKU: {selected?.sku}</p>
           </div>
+          {selected?.hasVariants && (
+            <div>
+              <label className="text-sm font-medium text-gray-700 block mb-1">Size</label>
+              <select
+                value={selectedVariantId}
+                onChange={(e) => setSelectedVariantId(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Choose a size...</option>
+                {variants.map((v) => (
+                  <option key={v.id} value={v.id}>{v.name} — {v.quantity} in stock</option>
+                ))}
+              </select>
+            </div>
+          )}
           <Input
             label="Quantity to receive"
             type="number"

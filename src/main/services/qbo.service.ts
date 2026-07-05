@@ -17,7 +17,7 @@ import crypto from 'crypto'
 import { URL } from 'url'
 import { getDatabase } from '../database/connection'
 import * as schema from '../database/schema'
-import { eq, and, gte } from 'drizzle-orm'
+import { eq, and, gte, inArray } from 'drizzle-orm'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -360,7 +360,9 @@ export const qboService = {
   },
 
   /**
-   * Sync all completed orders since the last sync to QBO as Sales Receipts.
+   * Sync all completed orders AND refunds since the last sync to QBO — sales as
+   * Sales Receipts, refunds (order_number starting 'REF-', the app-wide
+   * convention for a refund record — see order.service.ts) as Refund Receipts.
    * Also syncs any new customers referenced by those orders.
    */
   async syncSales(): Promise<QboSyncResult> {
@@ -371,7 +373,7 @@ export const qboService = {
     const orders = db
       .select()
       .from(schema.orders)
-      .where(and(eq(schema.orders.status, 'completed'), gte(schema.orders.updatedAt, lastSync)))
+      .where(and(inArray(schema.orders.status, ['completed', 'refunded']), gte(schema.orders.updatedAt, lastSync)))
       .all()
 
     for (const order of orders) {
@@ -388,32 +390,60 @@ export const qboService = {
           .where(eq(schema.payments.orderId, order.id))
           .all()
 
-        // Build QBO Sales Receipt payload (minimal, uses non-posting accounts)
-        const lines = items.map((item, idx) => ({
-          Id: String(idx + 1),
-          LineNum: idx + 1,
-          Description: `${item.productName}${item.variantName ? ` (${item.variantName})` : ''}`,
-          Amount: item.lineTotal,
-          DetailType: 'SalesItemLineDetail',
-          SalesItemLineDetail: {
-            Qty: item.quantity,
-            UnitPrice: item.unitPrice
+        if (order.orderNumber.startsWith('REF-')) {
+          // Refund order_items/totals are stored negative internally (so they net
+          // against the original sale in revenue reports) — QBO's RefundReceipt
+          // expects positive amounts representing money returned, so flip the
+          // sign back here rather than changing the internal bookkeeping convention.
+          const lines = items.map((item, idx) => ({
+            Id: String(idx + 1),
+            LineNum: idx + 1,
+            Description: `${item.productName}${item.variantName ? ` (${item.variantName})` : ''}`,
+            Amount: -item.lineTotal,
+            DetailType: 'SalesItemLineDetail',
+            SalesItemLineDetail: {
+              Qty: -item.quantity,
+              UnitPrice: item.unitPrice
+            }
+          }))
+
+          const refundReceipt = {
+            DocNumber: order.orderNumber,
+            TxnDate: order.createdAt.split('T')[0],
+            PrivateNote: order.notes ?? 'POS refund',
+            Line: lines,
+            TotalAmt: -order.total
           }
-        }))
 
-        const paymentMethod = payments[0]?.method ?? 'cash'
-        const methodLabel = paymentMethod === 'cash' ? 'Cash' : paymentMethod === 'card' ? 'Credit Card' : 'Other'
+          await qboPost('/refundreceipt', { RefundReceipt: refundReceipt })
+        } else {
+          // Build QBO Sales Receipt payload (minimal, uses non-posting accounts)
+          const lines = items.map((item, idx) => ({
+            Id: String(idx + 1),
+            LineNum: idx + 1,
+            Description: `${item.productName}${item.variantName ? ` (${item.variantName})` : ''}`,
+            Amount: item.lineTotal,
+            DetailType: 'SalesItemLineDetail',
+            SalesItemLineDetail: {
+              Qty: item.quantity,
+              UnitPrice: item.unitPrice
+            }
+          }))
 
-        const receipt = {
-          DocNumber: order.orderNumber,
-          TxnDate: order.createdAt.split('T')[0],
-          PrivateNote: order.notes ?? `POS sale via ${methodLabel}`,
-          Line: lines,
-          ...(order.total !== order.subtotal - order.discountAmount + order.taxAmount ? {} : {}),
-          TotalAmt: order.total
+          const paymentMethod = payments[0]?.method ?? 'cash'
+          const methodLabel = paymentMethod === 'cash' ? 'Cash' : paymentMethod === 'card' ? 'Credit Card' : 'Other'
+
+          const receipt = {
+            DocNumber: order.orderNumber,
+            TxnDate: order.createdAt.split('T')[0],
+            PrivateNote: order.notes ?? `POS sale via ${methodLabel}`,
+            Line: lines,
+            TotalAmt: order.total
+          }
+
+          await qboPost('/salesreceipt', { SalesReceipt: receipt })
         }
 
-        await qboPost('/salesreceipt', { SalesReceipt: receipt })
         result.synced++
       } catch (err) {
         result.failed++

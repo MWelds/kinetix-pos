@@ -1,4 +1,16 @@
-import { eq, gte, lte, and, isNotNull } from 'drizzle-orm'
+import { eq, gte, lte, and, isNotNull, inArray } from 'drizzle-orm'
+
+/**
+ * Orders counted as "sold" for revenue/unit reports. Includes both completed
+ * orders AND refunded ones: a fully-refunded original order and the REF-
+ * order created for it are both status='refunded', but the REF- order's
+ * negative amounts need to be summed in for revenue to net out correctly —
+ * an original order that's still 'completed' (partially refunded) already
+ * keeps its full as-sold total, so including 'refunded' rows too is what
+ * makes partial, full, and repeated partial refunds all net out correctly
+ * with no special-casing per query.
+ */
+const REVENUE_STATUSES: string[] = ['completed', 'refunded']
 import { getDatabase, getSqlite } from '../database/connection'
 import * as schema from '../database/schema'
 
@@ -19,7 +31,7 @@ export const reportService = {
       .from(schema.orders)
       .where(
         and(
-          eq(schema.orders.status, 'completed'),
+          inArray(schema.orders.status, REVENUE_STATUSES),
           gte(schema.orders.createdAt, fromDate),
           lte(schema.orders.createdAt, toDate)
         )
@@ -55,7 +67,7 @@ export const reportService = {
       .leftJoin(schema.orders, eq(schema.orderItems.orderId, schema.orders.id))
       .where(
         and(
-          eq(schema.orders.status, 'completed'),
+          inArray(schema.orders.status, REVENUE_STATUSES),
           gte(schema.orders.createdAt, fromDate),
           lte(schema.orders.createdAt, toDate)
         )
@@ -101,7 +113,7 @@ export const reportService = {
       .leftJoin(schema.staff, eq(schema.orders.staffId, schema.staff.id))
       .where(
         and(
-          eq(schema.orders.status, 'completed'),
+          inArray(schema.orders.status, REVENUE_STATUSES),
           gte(schema.orders.createdAt, fromDate),
           lte(schema.orders.createdAt, toDate)
         )
@@ -144,7 +156,7 @@ export const reportService = {
       .leftJoin(schema.orders, eq(schema.payments.orderId, schema.orders.id))
       .where(
         and(
-          eq(schema.orders.status, 'completed'),
+          inArray(schema.orders.status, REVENUE_STATUSES),
           gte(schema.orders.createdAt, fromDate),
           lte(schema.orders.createdAt, toDate)
         )
@@ -186,7 +198,7 @@ export const reportService = {
       .from(schema.orders)
       .where(
         and(
-          eq(schema.orders.status, 'completed'),
+          inArray(schema.orders.status, REVENUE_STATUSES),
           gte(schema.orders.createdAt, fromDate),
           lte(schema.orders.createdAt, toDate)
         )
@@ -251,7 +263,7 @@ export const reportService = {
       .innerJoin(schema.vendors, eq(schema.products.vendorId, schema.vendors.id))
       .where(
         and(
-          eq(schema.orders.status, 'completed'),
+          inArray(schema.orders.status, REVENUE_STATUSES),
           gte(schema.orders.createdAt, fromDate),
           lte(schema.orders.createdAt, toDate),
           isNotNull(schema.products.vendorId),
@@ -314,7 +326,7 @@ export const reportService = {
     }>(`
       SELECT id, terminal_id, terminal_name, total, discount_amount
       FROM orders
-      WHERE status = 'completed'
+      WHERE status IN ('completed', 'refunded')
         AND created_at >= ?
         AND created_at <= ?
     `).all(fromDate, toDate)
@@ -333,7 +345,7 @@ export const reportService = {
              COALESCE(p.original_amount, p.amount) AS original_amount
       FROM payments p
       INNER JOIN orders o ON p.order_id = o.id
-      WHERE o.status = 'completed'
+      WHERE o.status IN ('completed', 'refunded')
         AND o.created_at >= ?
         AND o.created_at <= ?
     `).all(fromDate, toDate)

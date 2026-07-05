@@ -9,6 +9,8 @@ import type {
   Customer,
   StaffMember,
   Order,
+  OrderItem,
+  RefundItemInput,
   InventoryItem,
   SalesSummary,
   ProductComponent,
@@ -91,7 +93,7 @@ export const api = {
   orders: {
     create: (input: unknown): Promise<{ order: Order; items: unknown[]; payments: unknown[] }> =>
       bridge.orders.create(input),
-    get: (id: string): Promise<{ order: Order; items: unknown[]; payments: unknown[] } | null> =>
+    get: (id: string): Promise<{ order: Order; items: OrderItem[]; payments: unknown[] } | null> =>
       bridge.orders.get(id),
     list: (filters?: {
       status?: string
@@ -105,8 +107,8 @@ export const api = {
       bridge.orders.complete(input),
     voidOrder: (id: string, staffId: string): Promise<void> =>
       bridge.orders.voidOrder(id, staffId),
-    refund: (id: string, itemIds: string[]): Promise<unknown> =>
-      bridge.orders.refund(id, itemIds),
+    refund: (id: string, items: RefundItemInput[]): Promise<{ order: Order; items: OrderItem[]; payments: unknown[] }> =>
+      bridge.orders.refund(id, items),
     hold: (id: string): Promise<void> => bridge.orders.hold(id),
     heldList: (): Promise<Order[]> => bridge.orders.heldList(),
     updateStatus: (id: string, status: string): Promise<void> =>

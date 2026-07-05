@@ -188,6 +188,10 @@ export const orderItems = sqliteTable('order_items', {
   taxAmount: real('tax_amount').notNull().default(0),
   lineTotal: real('line_total').notNull(),
   notes: text('notes'),
+  // Cumulative quantity refunded so far across all refund events on this line.
+  // quantity/unitPrice/discountAmount/taxAmount/lineTotal are the immutable
+  // as-sold record; remaining refundable = quantity - refundedQuantity.
+  refundedQuantity: real('refunded_quantity').notNull().default(0),
   ...timestamps
 })
 

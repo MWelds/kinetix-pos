@@ -11,6 +11,7 @@ import { setMainWindow, startHttpServer } from './display/customer-display'
 import { initSync } from './sync/sync.service'
 import { initSyncV2 } from './sync/sync-v2.service'
 import { initCloudSync } from './sync/cloud-sync.service'
+import { initBackupSchedule } from './services/backup.service'
 import { initFileSync } from './sync/file-sync.service'
 import { startFileSyncServer, getDefaultLocalSharePath } from './sync/file-sync-server'
 import { settingsService } from './services/settings.service'
@@ -145,6 +146,7 @@ app
     initSyncV2()
     initFileSync()
     initCloudSync()
+    initBackupSchedule()
 
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       callback({

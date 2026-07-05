@@ -160,6 +160,13 @@ export const IPC = {
   // Images
   IMAGE_PICK: 'image:pick',
 
+  // Database backups
+  BACKUP_ADD_DESTINATION: 'backup:addDestination',
+  BACKUP_REMOVE_DESTINATION: 'backup:removeDestination',
+  BACKUP_RUN_NOW: 'backup:runNow',
+  BACKUP_GET_STATUS: 'backup:getStatus',
+  BACKUP_SET_SCHEDULE: 'backup:setSchedule',
+
   // Vendors
   VENDORS_LIST: 'vendors:list',
   VENDORS_GET: 'vendors:get',

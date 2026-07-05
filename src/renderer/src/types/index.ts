@@ -229,3 +229,26 @@ export interface VendorPayable {
   cogsToday: number
 }
 
+export interface BackupDestination {
+  id: string
+  label: string
+  path: string
+}
+
+export interface BackupResult {
+  path: string
+  ok: boolean
+  error?: string
+  sizeBytes?: number
+  at: string
+}
+
+export interface BackupStatus {
+  enabled: boolean
+  intervalHours: number
+  retentionCount: number
+  lastBackupAt: string | null
+  lastResults: BackupResult[]
+  destinations: BackupDestination[]
+}
+

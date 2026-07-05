@@ -29,6 +29,7 @@ import { qboService } from '../services/qbo.service'
 import { exportService } from '../services/export.service'
 import { csvImportExportService } from '../services/csv-import-export.service'
 import { vendorService } from '../services/vendor.service'
+import { backupService } from '../services/backup.service'
 import { discountService } from '../services/discount.service'
 import { giftCardService } from '../services/gift-card.service'
 import { getSyncState, runSync, forceFullSync, testConnection, startSyncLoop, stopSyncLoop, onSyncStateChange } from '../sync/sync.service'
@@ -791,6 +792,27 @@ export function registerIpcHandlers(): void {
     const mime = mimeMap[ext] ?? 'image/jpeg'
     const data = readFileSync(filePath)
     return `data:${mime};base64,${data.toString('base64')}`
+  })
+
+  // Database backups
+  ipcMain.handle(IPC.BACKUP_GET_STATUS, () => backupService.getStatus())
+  ipcMain.handle(IPC.BACKUP_ADD_DESTINATION, async (e, label?: string) => {
+    requireRole(e, 'manager')
+    const path = await backupService.pickFolder()
+    if (!path) return null
+    return backupService.addDestination(path, label)
+  })
+  ipcMain.handle(IPC.BACKUP_REMOVE_DESTINATION, (e, id: string) => {
+    requireRole(e, 'manager')
+    return backupService.removeDestination(id)
+  })
+  ipcMain.handle(IPC.BACKUP_RUN_NOW, (e) => {
+    requireRole(e, 'manager')
+    return backupService.runBackupNow()
+  })
+  ipcMain.handle(IPC.BACKUP_SET_SCHEDULE, (e, input: { enabled: boolean; intervalHours: number; retentionCount: number }) => {
+    requireRole(e, 'manager')
+    return backupService.setSchedule(input)
   })
 
   // Vendors

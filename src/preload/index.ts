@@ -210,6 +210,16 @@ const api = {
     pick: () => ipcRenderer.invoke(IPC.IMAGE_PICK)
   },
 
+  // Database backups
+  backup: {
+    getStatus: () => ipcRenderer.invoke(IPC.BACKUP_GET_STATUS),
+    addDestination: (label?: string) => ipcRenderer.invoke(IPC.BACKUP_ADD_DESTINATION, label),
+    removeDestination: (id: string) => ipcRenderer.invoke(IPC.BACKUP_REMOVE_DESTINATION, id),
+    runNow: () => ipcRenderer.invoke(IPC.BACKUP_RUN_NOW),
+    setSchedule: (input: { enabled: boolean; intervalHours: number; retentionCount: number }) =>
+      ipcRenderer.invoke(IPC.BACKUP_SET_SCHEDULE, input)
+  },
+
   // Vendors
   vendors: {
     list: () => ipcRenderer.invoke(IPC.VENDORS_LIST),

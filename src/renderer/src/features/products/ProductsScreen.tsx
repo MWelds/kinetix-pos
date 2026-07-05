@@ -910,6 +910,107 @@ function ProductFormModal({ product, categories, onClose, onSave }: ProductFormM
           <Input label="Tax Rate" type="text" inputMode="decimal" placeholder="0.00" value={form.taxRate} onChange={f('taxRate')} />
         </div>
 
+        {/* Sizes / variants */}
+        <div className="space-y-3">
+          <p className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
+            <Tag size={14} /> Sizes
+          </p>
+          <p className="text-xs text-gray-500 -mt-2">
+            Add sizes to track stock separately per size (e.g. clothing). Leave empty to sell this product as-is.
+          </p>
+
+          <div className="flex flex-wrap gap-1.5">
+            {QUICK_SIZES.map((size) => (
+              <button
+                key={size}
+                type="button"
+                onClick={() => addSizeVariant(size)}
+                className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700 hover:bg-blue-50 hover:text-blue-700 transition-colors"
+              >
+                + {size}
+              </button>
+            ))}
+            <div className="flex items-center gap-1">
+              <input
+                type="text"
+                placeholder="Custom (e.g. 32W)"
+                value={customSizeName}
+                onChange={(e) => setCustomSizeName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); addSizeVariant(customSizeName); setCustomSizeName('') }
+                }}
+                className="w-32 border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                type="button"
+                onClick={() => { addSizeVariant(customSizeName); setCustomSizeName('') }}
+                disabled={!customSizeName.trim()}
+                className="px-2 py-1 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700 hover:bg-blue-50 hover:text-blue-700 disabled:opacity-40 transition-colors"
+              >
+                Add
+              </button>
+            </div>
+          </div>
+
+          {variants.length > 0 && (
+            <div className="border border-gray-200 rounded-xl overflow-hidden divide-y divide-gray-100">
+              {variants.map((v, i) => (
+                <div key={v.id ?? `new-${i}`} className="flex items-center gap-2 px-3 py-2.5 bg-white flex-wrap">
+                  <input
+                    type="text"
+                    value={v.name}
+                    onChange={(e) => updateVariantField(i, 'name', e.target.value)}
+                    placeholder="Size name"
+                    className="w-24 border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <input
+                    type="text"
+                    value={v.sku}
+                    onChange={(e) => updateVariantField(i, 'sku', e.target.value)}
+                    placeholder="SKU"
+                    className="w-32 border border-gray-300 rounded-lg px-2 py-1 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <div className="flex items-center gap-1 text-xs text-gray-500">
+                    <span>Price</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={v.priceModifier}
+                      onChange={(e) => updateVariantField(i, 'priceModifier', e.target.value)}
+                      className="w-20 border border-gray-300 rounded-lg px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  {v.id ? (
+                    <span className="text-xs text-gray-500 ml-auto">
+                      {v.quantity} in stock <span className="text-gray-400">(adjust from Inventory)</span>
+                    </span>
+                  ) : (
+                    <div className="flex items-center gap-1 text-xs text-gray-500 ml-auto">
+                      <span>Starting stock</span>
+                      <input
+                        type="number"
+                        step="1"
+                        min="0"
+                        value={v.quantity}
+                        onChange={(e) => updateVariantField(i, 'quantity', e.target.value)}
+                        className="w-16 border border-gray-300 rounded-lg px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => removeVariant(i)}
+                    className="p-1 text-gray-400 hover:text-red-500 rounded"
+                    aria-label="Remove size"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Product image */}
         <div>
           <label className="text-sm font-medium text-gray-700 block mb-2">Product Image</label>
@@ -1180,107 +1281,6 @@ function ProductFormModal({ product, categories, onClose, onSave }: ProductFormM
             </div>
           </div>
         )}
-
-        {/* Sizes / variants */}
-        <div className="space-y-3">
-          <p className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
-            <Tag size={14} /> Sizes
-          </p>
-          <p className="text-xs text-gray-500 -mt-2">
-            Add sizes to track stock separately per size (e.g. clothing). Leave empty to sell this product as-is.
-          </p>
-
-          <div className="flex flex-wrap gap-1.5">
-            {QUICK_SIZES.map((size) => (
-              <button
-                key={size}
-                type="button"
-                onClick={() => addSizeVariant(size)}
-                className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700 hover:bg-blue-50 hover:text-blue-700 transition-colors"
-              >
-                + {size}
-              </button>
-            ))}
-            <div className="flex items-center gap-1">
-              <input
-                type="text"
-                placeholder="Custom (e.g. 32W)"
-                value={customSizeName}
-                onChange={(e) => setCustomSizeName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') { e.preventDefault(); addSizeVariant(customSizeName); setCustomSizeName('') }
-                }}
-                className="w-32 border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <button
-                type="button"
-                onClick={() => { addSizeVariant(customSizeName); setCustomSizeName('') }}
-                disabled={!customSizeName.trim()}
-                className="px-2 py-1 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700 hover:bg-blue-50 hover:text-blue-700 disabled:opacity-40 transition-colors"
-              >
-                Add
-              </button>
-            </div>
-          </div>
-
-          {variants.length > 0 && (
-            <div className="border border-gray-200 rounded-xl overflow-hidden divide-y divide-gray-100">
-              {variants.map((v, i) => (
-                <div key={v.id ?? `new-${i}`} className="flex items-center gap-2 px-3 py-2.5 bg-white flex-wrap">
-                  <input
-                    type="text"
-                    value={v.name}
-                    onChange={(e) => updateVariantField(i, 'name', e.target.value)}
-                    placeholder="Size name"
-                    className="w-24 border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  <input
-                    type="text"
-                    value={v.sku}
-                    onChange={(e) => updateVariantField(i, 'sku', e.target.value)}
-                    placeholder="SKU"
-                    className="w-32 border border-gray-300 rounded-lg px-2 py-1 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  <div className="flex items-center gap-1 text-xs text-gray-500">
-                    <span>Price</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={v.priceModifier}
-                      onChange={(e) => updateVariantField(i, 'priceModifier', e.target.value)}
-                      className="w-20 border border-gray-300 rounded-lg px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                  {v.id ? (
-                    <span className="text-xs text-gray-500 ml-auto">
-                      {v.quantity} in stock <span className="text-gray-400">(adjust from Inventory)</span>
-                    </span>
-                  ) : (
-                    <div className="flex items-center gap-1 text-xs text-gray-500 ml-auto">
-                      <span>Starting stock</span>
-                      <input
-                        type="number"
-                        step="1"
-                        min="0"
-                        value={v.quantity}
-                        onChange={(e) => updateVariantField(i, 'quantity', e.target.value)}
-                        className="w-16 border border-gray-300 rounded-lg px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => removeVariant(i)}
-                    className="p-1 text-gray-400 hover:text-red-500 rounded"
-                    aria-label="Remove size"
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
 
       </div>
     </Modal>

@@ -1,4 +1,4 @@
-import { eq, desc, and, gte, lte, like, sql } from 'drizzle-orm'
+import { eq, desc, and, gte, lte, like, sql, isNull } from 'drizzle-orm'
 import { getDatabase } from '../database/connection'
 import * as schema from '../database/schema'
 import { generateId } from '../lib/id'
@@ -136,7 +136,8 @@ function deductInventory(
   db: ReturnType<typeof getDatabase>,
   productId: string,
   soldQty: number,
-  now: string
+  now: string,
+  variantId?: string | null
 ): void {
   const product = db
     .select({
@@ -170,11 +171,20 @@ function deductInventory(
     return
   }
 
-  // Case 2 & 3: Standard or composite product - deduct own inventory
+  // Case 2 & 3: Standard or composite product - deduct own inventory. Must
+  // match variantId too — a product with sizes has a separate inventory row
+  // per size, and matching on productId alone would deduct from whichever
+  // row happens to come back first (typically the unused base row) instead
+  // of the size that was actually sold.
   const inv = db
     .select()
     .from(schema.inventory)
-    .where(eq(schema.inventory.productId, productId))
+    .where(
+      and(
+        eq(schema.inventory.productId, productId),
+        variantId ? eq(schema.inventory.variantId, variantId) : isNull(schema.inventory.variantId)
+      )
+    )
     .get()
   if (inv) {
     db.update(schema.inventory)
@@ -222,7 +232,8 @@ function restoreInventory(
   db: ReturnType<typeof getDatabase>,
   productId: string,
   qty: number,
-  now: string
+  now: string,
+  variantId?: string | null
 ): void {
   const product = db
     .select({
@@ -256,11 +267,17 @@ function restoreInventory(
     return
   }
 
-  // Standard / composite product
+  // Standard / composite product — must match variantId too, same reasoning
+  // as deductInventory above.
   const inv = db
     .select()
     .from(schema.inventory)
-    .where(eq(schema.inventory.productId, productId))
+    .where(
+      and(
+        eq(schema.inventory.productId, productId),
+        variantId ? eq(schema.inventory.variantId, variantId) : isNull(schema.inventory.variantId)
+      )
+    )
     .get()
   if (inv) {
     db.update(schema.inventory)
@@ -468,7 +485,7 @@ export const orderService = {
         .all()
 
       for (const item of items) {
-        deductInventory(tx, item.productId, item.quantity, now)
+        deductInventory(tx, item.productId, item.quantity, now, item.variantId)
       }
 
       tx.update(schema.orders)
@@ -519,7 +536,7 @@ export const orderService = {
           .where(eq(schema.orderItems.orderId, orderId))
           .all()
         for (const item of items) {
-          restoreInventory(tx, item.productId, item.quantity, now)
+          restoreInventory(tx, item.productId, item.quantity, now, item.variantId)
         }
 
         // Reverse loyalty points awarded at completion time
@@ -605,7 +622,7 @@ export const orderService = {
 
       // Restore inventory (handles pack and bundle components automatically)
       for (const item of original.items) {
-        restoreInventory(tx, item.productId, item.quantity, now)
+        restoreInventory(tx, item.productId, item.quantity, now, item.variantId)
       }
 
       // Reverse loyalty points earned on the original order
@@ -744,7 +761,7 @@ export const orderService = {
 
       // ── Restore old inventory (C-2 fix) ───────────────────────────────────
       for (const item of oldItems) {
-        restoreInventory(tx, item.productId, item.quantity, now)
+        restoreInventory(tx, item.productId, item.quantity, now, item.variantId)
       }
 
       // ── Reverse old loyalty points for completed/delivered edits ──────────
@@ -874,7 +891,7 @@ export const orderService = {
 
       // ── Deduct inventory for new items (C-2 fix) ──────────────────────────
       for (const item of input.items) {
-        deductInventory(tx, item.productId, item.quantity, now)
+        deductInventory(tx, item.productId, item.quantity, now, item.variantId)
       }
 
       // ── Award updated loyalty points ───────────────────────────────────────

@@ -173,6 +173,21 @@ export function registerIpcHandlers(): void {
     return productService.deleteCategory(id)
   })
 
+  // Variants
+  ipcMain.handle(IPC.VARIANTS_LIST, (_e, productId: string) => productService.listVariants(productId))
+  ipcMain.handle(IPC.VARIANTS_CREATE, (e, productId: string, input) => {
+    requireRole(e, 'manager')
+    return productService.createVariant(productId, input)
+  })
+  ipcMain.handle(IPC.VARIANTS_UPDATE, (e, variantId: string, input) => {
+    requireRole(e, 'manager')
+    return productService.updateVariant(variantId, input)
+  })
+  ipcMain.handle(IPC.VARIANTS_DELETE, (e, variantId: string) => {
+    requireRole(e, 'manager')
+    return productService.deleteVariant(variantId)
+  })
+
   // Inventory
   ipcMain.handle(IPC.INVENTORY_LIST, () => inventoryService.list())
   ipcMain.handle(IPC.INVENTORY_LIST_PAGINATED, (_e, opts) => inventoryService.listPaginated(opts))

@@ -20,7 +20,13 @@ const api = {
     ) => ipcRenderer.invoke(IPC.PRODUCTS_SET_COMPONENTS, compositeProductId, components),
     imageUrl: (id: string) => ipcRenderer.invoke(IPC.PRODUCTS_IMAGE_URL, id),
     listPaginated: (opts: { search?: string; categoryId?: string; offset: number; limit: number }) =>
-      ipcRenderer.invoke(IPC.PRODUCTS_LIST_PAGINATED, opts)
+      ipcRenderer.invoke(IPC.PRODUCTS_LIST_PAGINATED, opts),
+    variants: {
+      list: (productId: string) => ipcRenderer.invoke(IPC.VARIANTS_LIST, productId),
+      create: (productId: string, input: unknown) => ipcRenderer.invoke(IPC.VARIANTS_CREATE, productId, input),
+      update: (variantId: string, input: unknown) => ipcRenderer.invoke(IPC.VARIANTS_UPDATE, variantId, input),
+      delete: (variantId: string) => ipcRenderer.invoke(IPC.VARIANTS_DELETE, variantId)
+    }
   },
 
   // Categories

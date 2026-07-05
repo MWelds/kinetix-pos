@@ -23,6 +23,7 @@ export const IPC = {
   VARIANTS_LIST: 'variants:list',
   VARIANTS_CREATE: 'variants:create',
   VARIANTS_UPDATE: 'variants:update',
+  VARIANTS_DELETE: 'variants:delete',
 
   // Inventory
   INVENTORY_LIST: 'inventory:list',

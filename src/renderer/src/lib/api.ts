@@ -5,6 +5,7 @@
 
 import type {
   Product,
+  ProductVariant,
   Category,
   Customer,
   StaffMember,
@@ -46,7 +47,19 @@ export const api = {
       categoryId?: string
       offset: number
       limit: number
-    }): Promise<{ items: Product[]; total: number }> => bridge.products.listPaginated(opts)
+    }): Promise<{ items: Product[]; total: number }> => bridge.products.listPaginated(opts),
+    variants: {
+      list: (productId: string): Promise<ProductVariant[]> => bridge.products.variants.list(productId),
+      create: (
+        productId: string,
+        input: { name: string; sku: string; barcode?: string; priceModifier?: number; initialQuantity?: number }
+      ): Promise<ProductVariant> => bridge.products.variants.create(productId, input),
+      update: (
+        variantId: string,
+        input: Partial<{ name: string; sku: string; barcode: string; priceModifier: number; isActive: boolean }>
+      ): Promise<ProductVariant> => bridge.products.variants.update(variantId, input),
+      delete: (variantId: string): Promise<void> => bridge.products.variants.delete(variantId)
+    }
   },
 
   categories: {
@@ -69,6 +82,7 @@ export const api = {
     lowStock: (): Promise<InventoryItem[]> => bridge.inventory.lowStock(),
     adjust: (input: {
       productId: string
+      variantId?: string
       type: 'receive' | 'transfer' | 'loss' | 'adjustment'
       quantity: number
       note?: string

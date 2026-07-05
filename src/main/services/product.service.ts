@@ -1,4 +1,4 @@
-import { eq, like, or, and, inArray, sql, count } from 'drizzle-orm'
+import { eq, like, or, and, inArray, sql, count, isNull } from 'drizzle-orm'
 import { getDatabase, getSqlite } from '../database/connection'
 import * as schema from '../database/schema'
 import { generateId } from '../lib/id'
@@ -80,6 +80,8 @@ export interface ProductWithInventory {
   quantity: number
   categoryName: string | null
   categoryColor: string | null
+  /** True if this product has at least one active variant (e.g. sizes) */
+  hasVariants: boolean
 }
 
 export interface ProductComponentDetail {
@@ -125,10 +127,10 @@ function productSelect() {
  * linked individual product. This helper patches the quantity field of every pack product
  * to floor(individualQty / unitsPerPack).
  */
-function applyPackQuantities(
+function applyPackQuantities<T extends { unitsPerPack: number; individualProductId: string | null; quantity: number }>(
   db: ReturnType<typeof getDatabase>,
-  rows: Array<ProductWithInventory>
-): Array<ProductWithInventory> {
+  rows: T[]
+): T[] {
   const packRows = rows.filter((r) => r.unitsPerPack > 1 && r.individualProductId)
   if (packRows.length === 0) return rows
 
@@ -150,6 +152,26 @@ function applyPackQuantities(
   })
 }
 
+/**
+ * Marks each row with `hasVariants` — one extra lightweight query (not a
+ * per-row correlated subquery) so the renderer knows to show a size picker
+ * instead of adding straight to cart.
+ */
+function attachHasVariants<T extends { id: string }>(
+  db: ReturnType<typeof getDatabase>,
+  rows: T[]
+): (T & { hasVariants: boolean })[] {
+  if (rows.length === 0) return rows as (T & { hasVariants: boolean })[]
+  const ids = rows.map((r) => r.id)
+  const withVariants = db
+    .select({ productId: schema.productVariants.productId })
+    .from(schema.productVariants)
+    .where(and(inArray(schema.productVariants.productId, ids), eq(schema.productVariants.isActive, true)))
+    .all()
+  const idSet = new Set(withVariants.map((r) => r.productId))
+  return rows.map((r) => ({ ...r, hasVariants: idSet.has(r.id) }))
+}
+
 export const productService = {
   /** List all active products with current inventory levels */
   listWithInventory(categoryId?: string): ProductWithInventory[] {
@@ -157,7 +179,13 @@ export const productService = {
     const rows = db
       .select(productSelect())
       .from(schema.products)
-      .leftJoin(schema.inventory, eq(schema.products.id, schema.inventory.productId))
+      // Only the product's own (non-variant) inventory row — a variant product
+      // has one inventory row per size, and joining on productId alone would
+      // fan out into one result row per size instead of one row per product.
+      .leftJoin(
+        schema.inventory,
+        and(eq(schema.products.id, schema.inventory.productId), isNull(schema.inventory.variantId))
+      )
       .leftJoin(schema.categories, eq(schema.products.categoryId, schema.categories.id))
       .where(
         and(
@@ -175,7 +203,7 @@ export const productService = {
       trackStock: r.trackStock ?? true,
       quantity: r.quantity ?? 0
     }))
-    return applyPackQuantities(db, base)
+    return attachHasVariants(db, applyPackQuantities(db, base))
   },
 
   /** Search products by name, SKU, or barcode */
@@ -185,7 +213,13 @@ export const productService = {
     const rows = db
       .select(productSelect())
       .from(schema.products)
-      .leftJoin(schema.inventory, eq(schema.products.id, schema.inventory.productId))
+      // Only the product's own (non-variant) inventory row — a variant product
+      // has one inventory row per size, and joining on productId alone would
+      // fan out into one result row per size instead of one row per product.
+      .leftJoin(
+        schema.inventory,
+        and(eq(schema.products.id, schema.inventory.productId), isNull(schema.inventory.variantId))
+      )
       .leftJoin(schema.categories, eq(schema.products.categoryId, schema.categories.id))
       .where(
         and(
@@ -208,7 +242,7 @@ export const productService = {
       trackStock: r.trackStock ?? true,
       quantity: r.quantity ?? 0
     }))
-    return applyPackQuantities(db, base)
+    return attachHasVariants(db, applyPackQuantities(db, base))
   },
 
   /** Look up a product by barcode */
@@ -217,7 +251,13 @@ export const productService = {
     const rows = db
       .select(productSelect())
       .from(schema.products)
-      .leftJoin(schema.inventory, eq(schema.products.id, schema.inventory.productId))
+      // Only the product's own (non-variant) inventory row — a variant product
+      // has one inventory row per size, and joining on productId alone would
+      // fan out into one result row per size instead of one row per product.
+      .leftJoin(
+        schema.inventory,
+        and(eq(schema.products.id, schema.inventory.productId), isNull(schema.inventory.variantId))
+      )
       .leftJoin(schema.categories, eq(schema.products.categoryId, schema.categories.id))
       .where(and(eq(schema.products.barcode, barcode), eq(schema.products.isActive, true)))
       .limit(1)
@@ -230,7 +270,7 @@ export const productService = {
       packProductId: rows[0].packProductId ?? null,
       quantity: rows[0].quantity ?? 0
     }]
-    return applyPackQuantities(db, base)[0]
+    return attachHasVariants(db, applyPackQuantities(db, base))[0]
   },
 
   /** Get a single product by ID (includes full imageUrl) */
@@ -239,7 +279,13 @@ export const productService = {
     const rows = db
       .select(productSelect())
       .from(schema.products)
-      .leftJoin(schema.inventory, eq(schema.products.id, schema.inventory.productId))
+      // Only the product's own (non-variant) inventory row — a variant product
+      // has one inventory row per size, and joining on productId alone would
+      // fan out into one result row per size instead of one row per product.
+      .leftJoin(
+        schema.inventory,
+        and(eq(schema.products.id, schema.inventory.productId), isNull(schema.inventory.variantId))
+      )
       .leftJoin(schema.categories, eq(schema.products.categoryId, schema.categories.id))
       .where(eq(schema.products.id, id))
       .limit(1)
@@ -252,7 +298,7 @@ export const productService = {
       packProductId: rows[0].packProductId ?? null,
       quantity: rows[0].quantity ?? 0
     }]
-    return applyPackQuantities(db, base)[0]
+    return attachHasVariants(db, applyPackQuantities(db, base))[0]
   },
 
   /**
@@ -307,7 +353,13 @@ export const productService = {
     const rows = db
       .select(productSelect())
       .from(schema.products)
-      .leftJoin(schema.inventory, eq(schema.products.id, schema.inventory.productId))
+      // Only the product's own (non-variant) inventory row — a variant product
+      // has one inventory row per size, and joining on productId alone would
+      // fan out into one result row per size instead of one row per product.
+      .leftJoin(
+        schema.inventory,
+        and(eq(schema.products.id, schema.inventory.productId), isNull(schema.inventory.variantId))
+      )
       .leftJoin(schema.categories, eq(schema.products.categoryId, schema.categories.id))
       .where(where)
       .orderBy(schema.products.name)
@@ -325,7 +377,7 @@ export const productService = {
       quantity: r.quantity ?? 0
     }))
 
-    return { items: applyPackQuantities(db, base), total }
+    return { items: attachHasVariants(db, applyPackQuantities(db, base)), total }
   },
 
   /**
@@ -552,16 +604,44 @@ export const productService = {
 
   // ── Variants ────────────────────────────────────────────────────────────────
 
-  listVariants(productId: string) {
+  /** List a product's active variants, joined with their own inventory levels. */
+  listVariants(productId: string): Array<{
+    id: string
+    productId: string
+    name: string
+    sku: string
+    barcode: string | null
+    priceModifier: number
+    isActive: boolean
+    quantity: number
+    lowStockThreshold: number
+  }> {
     const db = getDatabase()
-    return db.select().from(schema.productVariants)
-      .where(eq(schema.productVariants.productId, productId))
+    const rows = db
+      .select({
+        id: schema.productVariants.id,
+        productId: schema.productVariants.productId,
+        name: schema.productVariants.name,
+        sku: schema.productVariants.sku,
+        barcode: schema.productVariants.barcode,
+        priceModifier: schema.productVariants.priceModifier,
+        isActive: schema.productVariants.isActive,
+        quantity: schema.inventory.quantity,
+        lowStockThreshold: schema.inventory.lowStockThreshold,
+      })
+      .from(schema.productVariants)
+      .leftJoin(schema.inventory, eq(schema.inventory.variantId, schema.productVariants.id))
+      .where(and(eq(schema.productVariants.productId, productId), eq(schema.productVariants.isActive, true)))
       .orderBy(schema.productVariants.name)
       .all()
+    return rows.map((r) => ({ ...r, quantity: r.quantity ?? 0, lowStockThreshold: r.lowStockThreshold ?? 5 }))
   },
 
+  /** Create a variant and its own inventory record (mirrors create()'s product+inventory pairing). */
   createVariant(productId: string, input: {
     name: string; sku: string; barcode?: string; priceModifier?: number; isActive?: boolean
+    /** Starting stock count for this size — defaults to 0. */
+    initialQuantity?: number
   }) {
     const db = getDatabase()
     const id = generateId()
@@ -575,6 +655,17 @@ export const productService = {
         priceModifier: input.priceModifier ?? 0,
         isActive: input.isActive ?? true,
         createdAt: now, updatedAt: now
+      })
+      .run()
+    db.insert(schema.inventory)
+      .values({
+        id: generateId(),
+        productId,
+        variantId: id,
+        quantity: input.initialQuantity ?? 0,
+        lowStockThreshold: 5,
+        createdAt: now,
+        updatedAt: now
       })
       .run()
     return db.select().from(schema.productVariants)
@@ -591,5 +682,21 @@ export const productService = {
       .run()
     return db.select().from(schema.productVariants)
       .where(eq(schema.productVariants.id, variantId)).get()
+  },
+
+  /**
+   * Soft-delete a variant and remove its inventory record — mirrors delete()'s
+   * product-level convention. Not a hard delete: historical order_items may
+   * still reference this variant_id.
+   */
+  deleteVariant(variantId: string): void {
+    const db = getDatabase()
+    db.update(schema.productVariants)
+      .set({ isActive: false, updatedAt: new Date().toISOString() })
+      .where(eq(schema.productVariants.id, variantId))
+      .run()
+    db.delete(schema.inventory)
+      .where(eq(schema.inventory.variantId, variantId))
+      .run()
   }
 }

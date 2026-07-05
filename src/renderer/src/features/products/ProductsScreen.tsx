@@ -611,6 +611,18 @@ interface ComponentRow {
   quantity: number
 }
 
+interface VariantRow {
+  /** Present only for a variant already saved to the database. */
+  id?: string
+  name: string
+  sku: string
+  priceModifier: number
+  /** Starting stock for a new variant; read-only display of current stock for an existing one. */
+  quantity: number
+}
+
+const QUICK_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
+
 function ProductFormModal({ product, categories, onClose, onSave }: ProductFormModalProps) {
   const fmtRaw = useCurrencyStore((s) => s.fmtRaw)
   const showToast = useUiStore((s) => s.showToast)
@@ -639,6 +651,12 @@ function ProductFormModal({ product, categories, onClose, onSave }: ProductFormM
   const [compResults, setCompResults] = useState<Product[]>([])
   const [compSearching, setCompSearching] = useState(false)
   const [componentsLoaded, setComponentsLoaded] = useState(false)
+
+  // Sizes / variants state
+  const [variants, setVariants] = useState<VariantRow[]>([])
+  const [originalVariantIds, setOriginalVariantIds] = useState<Set<string>>(new Set())
+  const [variantsLoaded, setVariantsLoaded] = useState(false)
+  const [customSizeName, setCustomSizeName] = useState('')
 
   // Vendor list for consignment dropdown
   const [vendors, setVendors] = useState<Vendor[]>([])
@@ -675,6 +693,55 @@ function ProductFormModal({ product, categories, onClose, onSave }: ProductFormM
       })
     }
   }, [product, componentsLoaded])
+
+  // Load existing variants when editing a product that has them
+  useEffect(() => {
+    if (product?.id && !variantsLoaded) {
+      api.products.variants.list(product.id).then((vars) => {
+        setVariants(
+          vars.map((v) => ({
+            id: v.id,
+            name: v.name,
+            sku: v.sku,
+            priceModifier: v.priceModifier,
+            quantity: v.quantity
+          }))
+        )
+        setOriginalVariantIds(new Set(vars.map((v) => v.id)))
+        setVariantsLoaded(true)
+      })
+    }
+  }, [product, variantsLoaded])
+
+  /** Add a size row if that name isn't already present. */
+  function addSizeVariant(name: string) {
+    if (!name.trim() || variants.some((v) => v.name.toLowerCase() === name.trim().toLowerCase())) return
+    setVariants((prev) => [
+      ...prev,
+      {
+        name: name.trim(),
+        sku: form.sku ? `${form.sku}-${name.trim().toUpperCase()}` : '',
+        priceModifier: 0,
+        quantity: 0
+      }
+    ])
+  }
+
+  function removeVariant(index: number) {
+    setVariants((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  function updateVariantField(index: number, field: 'name' | 'sku' | 'priceModifier' | 'quantity', value: string) {
+    setVariants((prev) =>
+      prev.map((v, i) => {
+        if (i !== index) return v
+        if (field === 'priceModifier' || field === 'quantity') {
+          return { ...v, [field]: parseFloat(value) || 0 }
+        }
+        return { ...v, [field]: value }
+      })
+    )
+  }
 
   // Debounced component search
   useEffect(() => {
@@ -769,6 +836,29 @@ function ProductFormModal({ product, categories, onClose, onSave }: ProductFormM
       } else if (!form.isComposite && savedId && product?.isComposite) {
         await api.products.setComponents(savedId, [])
       }
+
+      // Sizes/variants: diff against what was originally loaded — unlike bundle
+      // components, variants can't be blindly deleted-and-recreated, since each
+      // has its own inventory row that would otherwise be orphaned or reset.
+      if (savedId) {
+        const currentIds = new Set(variants.filter((v) => v.id).map((v) => v.id as string))
+        for (const removedId of originalVariantIds) {
+          if (!currentIds.has(removedId)) await api.products.variants.delete(removedId)
+        }
+        for (const v of variants) {
+          if (v.id) {
+            await api.products.variants.update(v.id, { name: v.name, sku: v.sku, priceModifier: v.priceModifier })
+          } else {
+            await api.products.variants.create(savedId, {
+              name: v.name,
+              sku: v.sku,
+              priceModifier: v.priceModifier,
+              initialQuantity: v.quantity
+            })
+          }
+        }
+      }
+
       onSave()
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to save product', 'error')
@@ -1090,6 +1180,107 @@ function ProductFormModal({ product, categories, onClose, onSave }: ProductFormM
             </div>
           </div>
         )}
+
+        {/* Sizes / variants */}
+        <div className="space-y-3">
+          <p className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
+            <Tag size={14} /> Sizes
+          </p>
+          <p className="text-xs text-gray-500 -mt-2">
+            Add sizes to track stock separately per size (e.g. clothing). Leave empty to sell this product as-is.
+          </p>
+
+          <div className="flex flex-wrap gap-1.5">
+            {QUICK_SIZES.map((size) => (
+              <button
+                key={size}
+                type="button"
+                onClick={() => addSizeVariant(size)}
+                className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700 hover:bg-blue-50 hover:text-blue-700 transition-colors"
+              >
+                + {size}
+              </button>
+            ))}
+            <div className="flex items-center gap-1">
+              <input
+                type="text"
+                placeholder="Custom (e.g. 32W)"
+                value={customSizeName}
+                onChange={(e) => setCustomSizeName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); addSizeVariant(customSizeName); setCustomSizeName('') }
+                }}
+                className="w-32 border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                type="button"
+                onClick={() => { addSizeVariant(customSizeName); setCustomSizeName('') }}
+                disabled={!customSizeName.trim()}
+                className="px-2 py-1 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700 hover:bg-blue-50 hover:text-blue-700 disabled:opacity-40 transition-colors"
+              >
+                Add
+              </button>
+            </div>
+          </div>
+
+          {variants.length > 0 && (
+            <div className="border border-gray-200 rounded-xl overflow-hidden divide-y divide-gray-100">
+              {variants.map((v, i) => (
+                <div key={v.id ?? `new-${i}`} className="flex items-center gap-2 px-3 py-2.5 bg-white flex-wrap">
+                  <input
+                    type="text"
+                    value={v.name}
+                    onChange={(e) => updateVariantField(i, 'name', e.target.value)}
+                    placeholder="Size name"
+                    className="w-24 border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <input
+                    type="text"
+                    value={v.sku}
+                    onChange={(e) => updateVariantField(i, 'sku', e.target.value)}
+                    placeholder="SKU"
+                    className="w-32 border border-gray-300 rounded-lg px-2 py-1 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <div className="flex items-center gap-1 text-xs text-gray-500">
+                    <span>Price</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={v.priceModifier}
+                      onChange={(e) => updateVariantField(i, 'priceModifier', e.target.value)}
+                      className="w-20 border border-gray-300 rounded-lg px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  {v.id ? (
+                    <span className="text-xs text-gray-500 ml-auto">
+                      {v.quantity} in stock <span className="text-gray-400">(adjust from Inventory)</span>
+                    </span>
+                  ) : (
+                    <div className="flex items-center gap-1 text-xs text-gray-500 ml-auto">
+                      <span>Starting stock</span>
+                      <input
+                        type="number"
+                        step="1"
+                        min="0"
+                        value={v.quantity}
+                        onChange={(e) => updateVariantField(i, 'quantity', e.target.value)}
+                        className="w-16 border border-gray-300 rounded-lg px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => removeVariant(i)}
+                    className="p-1 text-gray-400 hover:text-red-500 rounded"
+                    aria-label="Remove size"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
       </div>
     </Modal>

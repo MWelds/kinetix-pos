@@ -5,10 +5,13 @@
 
 import type {
   Product,
+  ProductVariant,
   Category,
   Customer,
   StaffMember,
   Order,
+  OrderItem,
+  RefundItemInput,
   InventoryItem,
   SalesSummary,
   ProductComponent,
@@ -48,7 +51,19 @@ export const api = {
       categoryId?: string
       offset: number
       limit: number
-    }): Promise<{ items: Product[]; total: number }> => bridge.products.listPaginated(opts)
+    }): Promise<{ items: Product[]; total: number }> => bridge.products.listPaginated(opts),
+    variants: {
+      list: (productId: string): Promise<ProductVariant[]> => bridge.products.variants.list(productId),
+      create: (
+        productId: string,
+        input: { name: string; sku: string; barcode?: string; priceModifier?: number; initialQuantity?: number }
+      ): Promise<ProductVariant> => bridge.products.variants.create(productId, input),
+      update: (
+        variantId: string,
+        input: Partial<{ name: string; sku: string; barcode: string; priceModifier: number; isActive: boolean }>
+      ): Promise<ProductVariant> => bridge.products.variants.update(variantId, input),
+      delete: (variantId: string): Promise<void> => bridge.products.variants.delete(variantId)
+    }
   },
 
   categories: {
@@ -71,6 +86,7 @@ export const api = {
     lowStock: (): Promise<InventoryItem[]> => bridge.inventory.lowStock(),
     adjust: (input: {
       productId: string
+      variantId?: string
       type: 'receive' | 'transfer' | 'loss' | 'adjustment'
       quantity: number
       note?: string
@@ -93,7 +109,7 @@ export const api = {
   orders: {
     create: (input: unknown): Promise<{ order: Order; items: unknown[]; payments: unknown[] }> =>
       bridge.orders.create(input),
-    get: (id: string): Promise<{ order: Order; items: unknown[]; payments: unknown[] } | null> =>
+    get: (id: string): Promise<{ order: Order; items: OrderItem[]; payments: unknown[] } | null> =>
       bridge.orders.get(id),
     list: (filters?: {
       status?: string
@@ -107,8 +123,8 @@ export const api = {
       bridge.orders.complete(input),
     voidOrder: (id: string, staffId: string): Promise<void> =>
       bridge.orders.voidOrder(id, staffId),
-    refund: (id: string, itemIds: string[]): Promise<unknown> =>
-      bridge.orders.refund(id, itemIds),
+    refund: (id: string, items: RefundItemInput[]): Promise<{ order: Order; items: OrderItem[]; payments: unknown[] }> =>
+      bridge.orders.refund(id, items),
     hold: (id: string): Promise<void> => bridge.orders.hold(id),
     heldList: (): Promise<Order[]> => bridge.orders.heldList(),
     updateStatus: (id: string, status: string): Promise<void> =>

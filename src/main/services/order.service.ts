@@ -1,4 +1,4 @@
-import { eq, desc, and, gte, lte, like, sql } from 'drizzle-orm'
+import { eq, desc, and, gte, lte, like, sql, isNull } from 'drizzle-orm'
 import { getDatabase } from '../database/connection'
 import * as schema from '../database/schema'
 import { generateId } from '../lib/id'
@@ -82,6 +82,18 @@ export interface OrderWithItems {
   payments: (typeof schema.payments.$inferSelect)[]
 }
 
+export interface RefundItemInput {
+  /** The original order_items row being (partially) refunded. */
+  orderItemId: string
+  /** Quantity to refund this pass — must not exceed that line's remaining refundable quantity. */
+  quantity: number
+}
+
+/** Rounds to the nearest cent — keeps proration across repeated partial refunds from drifting. */
+function round2(n: number): number {
+  return Math.round(n * 100) / 100
+}
+
 /** Generates next order number like POS-000001 */
 function generateOrderNumber(db: ReturnType<typeof getDatabase>): string {
   // Find the highest *valid* numeric POS order. Ordering by createdAt is unsafe
@@ -136,7 +148,8 @@ function deductInventory(
   db: ReturnType<typeof getDatabase>,
   productId: string,
   soldQty: number,
-  now: string
+  now: string,
+  variantId?: string | null
 ): void {
   const product = db
     .select({
@@ -170,11 +183,20 @@ function deductInventory(
     return
   }
 
-  // Case 2 & 3: Standard or composite product - deduct own inventory
+  // Case 2 & 3: Standard or composite product - deduct own inventory. Must
+  // match variantId too — a product with sizes has a separate inventory row
+  // per size, and matching on productId alone would deduct from whichever
+  // row happens to come back first (typically the unused base row) instead
+  // of the size that was actually sold.
   const inv = db
     .select()
     .from(schema.inventory)
-    .where(eq(schema.inventory.productId, productId))
+    .where(
+      and(
+        eq(schema.inventory.productId, productId),
+        variantId ? eq(schema.inventory.variantId, variantId) : isNull(schema.inventory.variantId)
+      )
+    )
     .get()
   if (inv) {
     db.update(schema.inventory)
@@ -222,7 +244,8 @@ function restoreInventory(
   db: ReturnType<typeof getDatabase>,
   productId: string,
   qty: number,
-  now: string
+  now: string,
+  variantId?: string | null
 ): void {
   const product = db
     .select({
@@ -256,11 +279,17 @@ function restoreInventory(
     return
   }
 
-  // Standard / composite product
+  // Standard / composite product — must match variantId too, same reasoning
+  // as deductInventory above.
   const inv = db
     .select()
     .from(schema.inventory)
-    .where(eq(schema.inventory.productId, productId))
+    .where(
+      and(
+        eq(schema.inventory.productId, productId),
+        variantId ? eq(schema.inventory.variantId, variantId) : isNull(schema.inventory.variantId)
+      )
+    )
     .get()
   if (inv) {
     db.update(schema.inventory)
@@ -468,7 +497,7 @@ export const orderService = {
         .all()
 
       for (const item of items) {
-        deductInventory(tx, item.productId, item.quantity, now)
+        deductInventory(tx, item.productId, item.quantity, now, item.variantId)
       }
 
       tx.update(schema.orders)
@@ -519,7 +548,7 @@ export const orderService = {
           .where(eq(schema.orderItems.orderId, orderId))
           .all()
         for (const item of items) {
-          restoreInventory(tx, item.productId, item.quantity, now)
+          restoreInventory(tx, item.productId, item.quantity, now, item.variantId)
         }
 
         // Reverse loyalty points awarded at completion time
@@ -559,8 +588,24 @@ export const orderService = {
     })
   },
 
-  /** Process a refund — restores inventory, reverses loyalty points, all in one transaction. */
-  refund(orderId: string, _itemIds: string[]): OrderWithItems {
+  /**
+   * Process a refund for a specific set of order-item quantities (may be a subset
+   * of the order, and may be called again later against the same order for
+   * whatever remains unrefunded). Restores inventory, prorates loyalty points,
+   * writes an audit log entry, all in one transaction.
+   *
+   * The original order/order_items rows are never mutated except for bumping
+   * each refunded line's `refundedQuantity` — their quantity/price/tax fields
+   * stay the immutable as-sold record (needed for accurate historical
+   * reporting and QuickBooks sync). A real `REF-` order is created with its
+   * own order_items rows for exactly what was refunded this pass. The
+   * original's `status` only flips to 'refunded' once every line has been
+   * fully refunded — report/QBO queries include 'refunded'-status orders in
+   * their sums specifically so this nets out correctly whether the refund is
+   * partial, full, or spread across several passes over time.
+   */
+  refund(orderId: string, refundItems: RefundItemInput[], staffId?: string): OrderWithItems {
+    if (refundItems.length === 0) throw new Error('No items selected to refund')
     const db = getDatabase()
     return db.transaction((tx) => {
       const now = new Date().toISOString()
@@ -572,8 +617,21 @@ export const orderService = {
       const original: OrderWithItems = { order, items: originalItems, payments: originalPays }
 
       const refundId = generateId()
-      const orderNumber = `REF-${original.order.orderNumber}`
+      // orders.order_number is UNIQUE, and an order can be refunded more than once
+      // over time (repeated partial refunds) — each pass needs its own distinct
+      // REF- record, so number them REF-<original>-1, -2, etc.
+      const priorRefunds = tx
+        .select({ count: sql<number>`count(*)` })
+        .from(schema.orders)
+        .where(like(schema.orders.orderNumber, `REF-${original.order.orderNumber}%`))
+        .get()?.count ?? 0
+      const orderNumber = `REF-${original.order.orderNumber}-${priorRefunds + 1}`
 
+      // order_items.order_id has a FOREIGN KEY on orders.id, enforced immediately
+      // (PRAGMA foreign_keys = ON, not deferred) — the REF- order header must exist
+      // before its line items are inserted below. Totals aren't known yet (they're
+      // accumulated while inserting those lines), so insert with placeholders and
+      // update them once the loop finishes.
       tx.insert(schema.orders)
         .values({
           id: refundId,
@@ -585,10 +643,10 @@ export const orderService = {
           // Preserve terminal and order type so per-terminal EOD reports include refunds correctly
           terminalId: original.order.terminalId,
           orderType: original.order.orderType,
-          subtotal: -original.order.subtotal,
-          discountAmount: -original.order.discountAmount,
-          taxAmount: -original.order.taxAmount,
-          total: -original.order.total,
+          subtotal: 0,
+          discountAmount: 0,
+          taxAmount: 0,
+          total: 0,
           notes: `Refund for ${original.order.orderNumber}`,
           loyaltyPointsEarned: 0,
           loyaltyPointsRedeemed: 0,
@@ -598,18 +656,141 @@ export const orderService = {
         })
         .run()
 
-      tx.update(schema.orders)
-        .set({ status: 'refunded', updatedAt: now })
-        .where(eq(schema.orders.id, orderId))
-        .run()
+      // orderItems.lineTotal is each line's contribution to order.subtotal, i.e.
+      // (unitPrice - itemDiscount) * quantity — BEFORE the order-level manual
+      // discount and tax (see create()/updateAndComplete()). orderItems.taxAmount
+      // is always 0 system-wide; tax is only ever tracked as a single flat amount
+      // on the order itself. So the order-level discount/tax/loyalty-redemption
+      // amounts are prorated here by each line's share of the order's subtotal —
+      // this exactly reproduces the original whole-order refund math when 100%
+      // of every line is refunded at once, and is proportionally correct for any
+      // partial subset.
+      const orderSubtotal = original.order.subtotal
+      const loyaltyDeduction = orderSubtotal - original.order.discountAmount + original.order.taxAmount - original.order.total
 
-      // Restore inventory (handles pack and bundle components automatically)
-      for (const item of original.items) {
-        restoreInventory(tx, item.productId, item.quantity, now)
+      let refundSubtotal = 0
+      let refundDiscount = 0
+      let refundTax = 0
+      let refundTotal = 0
+
+      for (const { orderItemId, quantity: requestedQty } of refundItems) {
+        const item = original.items.find((i) => i.id === orderItemId)
+        if (!item) throw new Error(`Order item ${orderItemId} not found on this order`)
+        const remaining = item.quantity - item.refundedQuantity
+        if (requestedQty <= 0 || requestedQty > remaining) {
+          throw new Error(`Cannot refund ${requestedQty} of "${item.productName}" — only ${remaining} remaining`)
+        }
+
+        const itemDiscountPortion = round2((item.discountAmount / item.quantity) * requestedQty)
+        const itemSubtotalPortion = round2((item.lineTotal / item.quantity) * requestedQty)
+        const shareOfOrder = orderSubtotal > 0 ? itemSubtotalPortion / orderSubtotal : 0
+        const orderDiscountPortion = round2(original.order.discountAmount * shareOfOrder)
+        const orderTaxPortion = round2(original.order.taxAmount * shareOfOrder)
+        const loyaltyPortion = round2(loyaltyDeduction * shareOfOrder)
+        const itemTotalPortion = round2(itemSubtotalPortion - orderDiscountPortion + orderTaxPortion - loyaltyPortion)
+
+        refundSubtotal += itemSubtotalPortion
+        refundDiscount += orderDiscountPortion
+        refundTax += orderTaxPortion
+        refundTotal += itemTotalPortion
+
+        tx.insert(schema.orderItems)
+          .values({
+            id: generateId(),
+            orderId: refundId,
+            productId: item.productId,
+            variantId: item.variantId,
+            productName: item.productName,
+            variantName: item.variantName,
+            sku: item.sku,
+            // Negative, matching every dollar field below — a fully-refunded original
+            // order becomes status='refunded' and (per the widened report filter) its
+            // full positive quantity is now counted again, so this REF- line's negative
+            // quantity is what makes "units sold" net back to correct, the same way the
+            // negative dollar amounts make revenue net out correctly.
+            quantity: -requestedQty,
+            unitPrice: item.unitPrice,
+            discountAmount: -itemDiscountPortion,
+            taxAmount: 0,
+            lineTotal: -itemSubtotalPortion,
+            refundedQuantity: 0,
+            createdAt: now,
+            updatedAt: now
+          })
+          .run()
+
+        tx.update(schema.orderItems)
+          .set({ refundedQuantity: item.refundedQuantity + requestedQty, updatedAt: now })
+          .where(eq(schema.orderItems.id, item.id))
+          .run()
+
+        // Restore inventory only for the refunded quantity (handles pack/bundle components).
+        restoreInventory(tx, item.productId, requestedQty, now, item.variantId)
       }
 
-      // Reverse loyalty points earned on the original order
-      if (original.order.customerId && (original.order.loyaltyPointsEarned > 0 || original.order.loyaltyPointsRedeemed > 0)) {
+      // Now that every line's contribution has been accumulated, fill in the
+      // REF- order's real totals (inserted as placeholders above, before the loop).
+      tx.update(schema.orders)
+        .set({
+          subtotal: -refundSubtotal,
+          discountAmount: -refundDiscount,
+          taxAmount: -refundTax,
+          total: -refundTotal,
+          updatedAt: now
+        })
+        .where(eq(schema.orders.id, refundId))
+        .run()
+
+      // Insert a negative payment row for the REF- order, attributed
+      // proportionally to the original order's payment method(s) (split
+      // payments get split refunds). Without this, orders.total nets out
+      // correctly for revenue reports, but the Cash/Card breakdown and the
+      // EOD cash-drawer reconciliation (which read the payments table, not
+      // orders.total) never reflected refunds at all.
+      const totalPaid = original.payments.reduce((s, p) => s + p.amount, 0)
+      if (totalPaid > 0 && refundTotal > 0) {
+        let allocated = 0
+        original.payments.forEach((p, idx) => {
+          const isLast = idx === original.payments.length - 1
+          const amount = isLast ? round2(refundTotal - allocated) : round2(refundTotal * (p.amount / totalPaid))
+          allocated += amount
+          const origAmount = p.originalAmount != null ? round2(amount * (p.originalAmount / p.amount)) : null
+          tx.insert(schema.payments)
+            .values({
+              id: generateId(),
+              orderId: refundId,
+              method: p.method,
+              amount: -amount,
+              currency: p.currency,
+              originalAmount: origAmount != null ? -origAmount : null,
+              reference: p.reference,
+              changeGiven: null,
+              status: 'completed',
+              createdAt: now
+            })
+            .run()
+        })
+      }
+
+      // Only mark the original fully 'refunded' once every line has nothing left —
+      // otherwise leave its status alone so its remaining revenue keeps reporting
+      // correctly (report/QBO queries never mutate on partial refunds, they just
+      // also include this new negative REF- order in their sums).
+      const refreshedItems = tx.select().from(schema.orderItems).where(eq(schema.orderItems.orderId, orderId)).all()
+      const fullyRefunded = refreshedItems.every((i) => i.quantity - i.refundedQuantity <= 0)
+      if (fullyRefunded) {
+        tx.update(schema.orders)
+          .set({ status: 'refunded', updatedAt: now })
+          .where(eq(schema.orders.id, orderId))
+          .run()
+      }
+
+      // Reverse loyalty points proportionally to how much of the order's total this
+      // refund covers — a one-shot full refund naturally reverses everything (ratio 1).
+      if (original.order.customerId && (original.order.loyaltyPointsEarned > 0 || original.order.loyaltyPointsRedeemed > 0) && original.order.total > 0) {
+        const ratio = Math.min(1, refundTotal / original.order.total)
+        const pointsEarnedReversed = Math.round(original.order.loyaltyPointsEarned * ratio)
+        const pointsRedeemedReversed = Math.round(original.order.loyaltyPointsRedeemed * ratio)
         const customer = tx
           .select()
           .from(schema.customers)
@@ -618,10 +799,7 @@ export const orderService = {
         if (customer) {
           tx.update(schema.customers)
             .set({
-              loyaltyPoints: Math.max(
-                0,
-                customer.loyaltyPoints - original.order.loyaltyPointsEarned + original.order.loyaltyPointsRedeemed
-              ),
+              loyaltyPoints: Math.max(0, customer.loyaltyPoints - pointsEarnedReversed + pointsRedeemedReversed),
               updatedAt: now
             })
             .where(eq(schema.customers.id, original.order.customerId))
@@ -629,8 +807,23 @@ export const orderService = {
         }
       }
 
+      // Audit trail — refunds previously left none, unlike voidOrder above.
+      tx.insert(schema.auditLog)
+        .values({
+          id: generateId(),
+          staffId: staffId || undefined,
+          action: 'refund_order',
+          entityType: 'order',
+          entityId: orderId,
+          details: JSON.stringify({ refundOrderId: refundId, items: refundItems }),
+          createdAt: now
+        })
+        .run()
+
       const refundOrder = tx.select().from(schema.orders).where(eq(schema.orders.id, refundId)).get()!
-      return { order: refundOrder, items: [], payments: [] }
+      const refundOrderItems = tx.select().from(schema.orderItems).where(eq(schema.orderItems.orderId, refundId)).all()
+      const refundOrderPayments = tx.select().from(schema.payments).where(eq(schema.payments.orderId, refundId)).all()
+      return { order: refundOrder, items: refundOrderItems, payments: refundOrderPayments }
     })
   },
 
@@ -744,7 +937,7 @@ export const orderService = {
 
       // ── Restore old inventory (C-2 fix) ───────────────────────────────────
       for (const item of oldItems) {
-        restoreInventory(tx, item.productId, item.quantity, now)
+        restoreInventory(tx, item.productId, item.quantity, now, item.variantId)
       }
 
       // ── Reverse old loyalty points for completed/delivered edits ──────────
@@ -874,7 +1067,7 @@ export const orderService = {
 
       // ── Deduct inventory for new items (C-2 fix) ──────────────────────────
       for (const item of input.items) {
-        deductInventory(tx, item.productId, item.quantity, now)
+        deductInventory(tx, item.productId, item.quantity, now, item.variantId)
       }
 
       // ── Award updated loyalty points ───────────────────────────────────────

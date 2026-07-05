@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm'
+import { eq, and, isNull, sql } from 'drizzle-orm'
 import { getDatabase, getSqlite } from '../database/connection'
 import * as schema from '../database/schema'
 import { generateId } from '../lib/id'
@@ -18,6 +18,7 @@ export const inventoryService = {
     id: string
     productId: string
     variantId: string | null
+    variantName: string | null
     quantity: number
     lowStockThreshold: number
     productName: string | null
@@ -35,6 +36,7 @@ export const inventoryService = {
         id: schema.inventory.id,
         productId: schema.inventory.productId,
         variantId: schema.inventory.variantId,
+        variantName: schema.productVariants.name,
         quantity: schema.inventory.quantity,
         lowStockThreshold: schema.inventory.lowStockThreshold,
         productName: schema.products.name,
@@ -49,6 +51,7 @@ export const inventoryService = {
       .from(schema.inventory)
       .leftJoin(schema.products, eq(schema.inventory.productId, schema.products.id))
       .leftJoin(schema.categories, eq(schema.products.categoryId, schema.categories.id))
+      .leftJoin(schema.productVariants, eq(schema.inventory.variantId, schema.productVariants.id))
       .all()
       // Exclude service/non-tracked products from inventory view
       .filter((r) => r.trackStock !== false)
@@ -95,6 +98,7 @@ export const inventoryService = {
       id: string
       productId: string
       variantId: string | null
+      variantName: string | null
       quantity: number
       lowStockThreshold: number
       productName: string | null
@@ -140,7 +144,7 @@ export const inventoryService = {
 
     // Paginated rows
     type RawRow = {
-      id: string; product_id: string; variant_id: string | null
+      id: string; product_id: string; variant_id: string | null; variant_name: string | null
       quantity: number; low_stock_threshold: number
       product_name: string | null; sku: string | null
       category_name: string | null; image_url: string | null
@@ -151,10 +155,11 @@ export const inventoryService = {
       `SELECT i.id, i.product_id, i.variant_id, i.quantity, i.low_stock_threshold,
               p.name AS product_name, p.sku, p.image_url, p.units_per_pack,
               p.individual_product_id, p.pack_product_id,
-              c.name AS category_name
+              c.name AS category_name, v.name AS variant_name
        FROM inventory i
        JOIN products p ON p.id = i.product_id
        LEFT JOIN categories c ON c.id = p.category_id
+       LEFT JOIN product_variants v ON v.id = i.variant_id
        WHERE p.track_stock = 1 ${whereClause}
        ORDER BY p.name ASC
        LIMIT ? OFFSET ?`
@@ -175,6 +180,7 @@ export const inventoryService = {
       id: r.id,
       productId: r.product_id,
       variantId: r.variant_id,
+      variantName: r.variant_name,
       quantity: r.quantity,
       lowStockThreshold: r.low_stock_threshold,
       productName: r.product_name,
@@ -278,11 +284,21 @@ export const inventoryService = {
     const resolvedQuantity =
       unitsPerPack > 1 ? input.quantity * unitsPerPack : input.quantity
 
-    // Find or create inventory record for the resolved product
+    // Find or create inventory record for the resolved product + variant. Must
+    // match on variantId too — a product with multiple variants has a separate
+    // inventory row per variant, and matching on productId alone would silently
+    // adjust whichever row happens to come back first instead of the right one.
     let inv = db
       .select()
       .from(schema.inventory)
-      .where(eq(schema.inventory.productId, resolvedProductId))
+      .where(
+        and(
+          eq(schema.inventory.productId, resolvedProductId),
+          input.variantId
+            ? eq(schema.inventory.variantId, input.variantId)
+            : isNull(schema.inventory.variantId)
+        )
+      )
       .get()
 
     if (!inv) {

@@ -34,6 +34,22 @@ export interface Product {
   quantity: number
   categoryName: string | null
   categoryColor: string | null
+  /** True if this product has at least one active variant (e.g. sizes) */
+  hasVariants: boolean
+}
+
+/** A product variant (e.g. a clothing size) — its own SKU, price adjustment, and stock count. */
+export interface ProductVariant {
+  id: string
+  productId: string
+  name: string
+  sku: string
+  barcode: string | null
+  /** Added to the parent product's basePrice to get this variant's selling price. */
+  priceModifier: number
+  isActive: boolean
+  quantity: number
+  lowStockThreshold: number
 }
 
 export interface Category {
@@ -124,7 +140,7 @@ export interface AuditEntry {
 export interface Order {
   id: string
   orderNumber: string
-  status: 'pending' | 'held' | 'completed' | 'refunded' | 'voided'
+  status: 'pending' | 'held' | 'completed' | 'refunded' | 'voided' | 'delivered' | 'canceled'
   customerId: string | null
   staffId: string | null
   shiftId: string | null
@@ -155,6 +171,14 @@ export interface OrderItem {
   taxAmount: number
   lineTotal: number
   notes: string | null
+  /** Cumulative quantity already refunded from this line — remaining refundable = quantity - refundedQuantity. */
+  refundedQuantity: number
+}
+
+/** One line to refund: the original order_item id and how much of it to refund this pass. */
+export interface RefundItemInput {
+  orderItemId: string
+  quantity: number
 }
 
 export interface Payment {
@@ -178,6 +202,8 @@ export interface InventoryItem {
   id: string
   productId: string
   variantId: string | null
+  /** Size/variant label for this row, e.g. "Medium" — null for a plain product's own row. */
+  variantName: string | null
   /** Raw quantity in individual units (always individual units, regardless of product type) */
   quantity: number
   lowStockThreshold: number

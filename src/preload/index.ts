@@ -20,7 +20,13 @@ const api = {
     ) => ipcRenderer.invoke(IPC.PRODUCTS_SET_COMPONENTS, compositeProductId, components),
     imageUrl: (id: string) => ipcRenderer.invoke(IPC.PRODUCTS_IMAGE_URL, id),
     listPaginated: (opts: { search?: string; categoryId?: string; offset: number; limit: number }) =>
-      ipcRenderer.invoke(IPC.PRODUCTS_LIST_PAGINATED, opts)
+      ipcRenderer.invoke(IPC.PRODUCTS_LIST_PAGINATED, opts),
+    variants: {
+      list: (productId: string) => ipcRenderer.invoke(IPC.VARIANTS_LIST, productId),
+      create: (productId: string, input: unknown) => ipcRenderer.invoke(IPC.VARIANTS_CREATE, productId, input),
+      update: (variantId: string, input: unknown) => ipcRenderer.invoke(IPC.VARIANTS_UPDATE, variantId, input),
+      delete: (variantId: string) => ipcRenderer.invoke(IPC.VARIANTS_DELETE, variantId)
+    }
   },
 
   // Categories
@@ -59,7 +65,8 @@ const api = {
     list: (filters?: unknown) => ipcRenderer.invoke(IPC.ORDERS_LIST, filters),
     complete: (input: unknown) => ipcRenderer.invoke(IPC.ORDERS_COMPLETE, input),
     voidOrder: (id: string, staffId: string) => ipcRenderer.invoke(IPC.ORDERS_VOID, id, staffId),
-    refund: (id: string, itemIds: string[]) => ipcRenderer.invoke(IPC.ORDERS_REFUND, id, itemIds),
+    refund: (id: string, items: { orderItemId: string; quantity: number }[]) =>
+      ipcRenderer.invoke(IPC.ORDERS_REFUND, id, items),
     hold: (id: string) => ipcRenderer.invoke(IPC.ORDERS_HOLD, id),
     heldList: () => ipcRenderer.invoke(IPC.ORDERS_HELD_LIST),
     updateStatus: (id: string, status: string) => ipcRenderer.invoke(IPC.ORDERS_UPDATE_STATUS, id, status),

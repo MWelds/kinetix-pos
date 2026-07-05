@@ -18,7 +18,7 @@ import {
 import { IPC } from './channels'
 import { sendReceiptEmail, sendInvoiceEmail, testSmtpConnection, sendGenericEmail } from '../services/email.service'
 import { productService } from '../services/product.service'
-import { orderService } from '../services/order.service'
+import { orderService, type RefundItemInput } from '../services/order.service'
 import { customerService } from '../services/customer.service'
 import { inventoryService } from '../services/inventory.service'
 import { staffService } from '../services/staff.service'
@@ -174,6 +174,21 @@ export function registerIpcHandlers(): void {
     return productService.deleteCategory(id)
   })
 
+  // Variants
+  ipcMain.handle(IPC.VARIANTS_LIST, (_e, productId: string) => productService.listVariants(productId))
+  ipcMain.handle(IPC.VARIANTS_CREATE, (e, productId: string, input) => {
+    requireRole(e, 'manager')
+    return productService.createVariant(productId, input)
+  })
+  ipcMain.handle(IPC.VARIANTS_UPDATE, (e, variantId: string, input) => {
+    requireRole(e, 'manager')
+    return productService.updateVariant(variantId, input)
+  })
+  ipcMain.handle(IPC.VARIANTS_DELETE, (e, variantId: string) => {
+    requireRole(e, 'manager')
+    return productService.deleteVariant(variantId)
+  })
+
   // Inventory
   ipcMain.handle(IPC.INVENTORY_LIST, () => inventoryService.list())
   ipcMain.handle(IPC.INVENTORY_LIST_PAGINATED, (_e, opts) => inventoryService.listPaginated(opts))
@@ -212,9 +227,9 @@ export function registerIpcHandlers(): void {
     requireRole(e, 'manager')
     return orderService.voidOrder(id, staffId)
   })
-  ipcMain.handle(IPC.ORDERS_REFUND, (e, id: string, itemIds: string[]) => {
+  ipcMain.handle(IPC.ORDERS_REFUND, (e, id: string, items: RefundItemInput[]) => {
     requireRole(e, 'manager')
-    return orderService.refund(id, itemIds)
+    return orderService.refund(id, items, sessionStore.get(e.sender.id)?.staffId)
   })
   ipcMain.handle(IPC.ORDERS_HOLD, (_e, id: string) => orderService.hold(id))
   ipcMain.handle(IPC.ORDERS_HELD_LIST, () => orderService.listHeld())

@@ -124,7 +124,7 @@ export interface AuditEntry {
 export interface Order {
   id: string
   orderNumber: string
-  status: 'pending' | 'held' | 'completed' | 'refunded' | 'voided'
+  status: 'pending' | 'held' | 'completed' | 'refunded' | 'voided' | 'delivered' | 'canceled'
   customerId: string | null
   staffId: string | null
   shiftId: string | null
@@ -155,6 +155,14 @@ export interface OrderItem {
   taxAmount: number
   lineTotal: number
   notes: string | null
+  /** Cumulative quantity already refunded from this line — remaining refundable = quantity - refundedQuantity. */
+  refundedQuantity: number
+}
+
+/** One line to refund: the original order_item id and how much of it to refund this pass. */
+export interface RefundItemInput {
+  orderItemId: string
+  quantity: number
 }
 
 export interface Payment {

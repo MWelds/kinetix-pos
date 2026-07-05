@@ -14,6 +14,7 @@ import { useCartStore } from '../../stores/cart.store'
 import { useCurrencyStore } from '../../stores/currency.store'
 import { ROUTES } from '../../constants'
 import type { Order, OrderItem, Payment } from '../../types'
+import { RefundModal } from './RefundModal'
 
 /** Escape a string for safe interpolation into HTML. */
 function esc(s: string | undefined): string {
@@ -56,6 +57,7 @@ export function OrdersScreen() {
   const [statusFilter, setStatusFilter] = useState('')
   const PAGE_SIZE = 100
   const [selected, setSelected] = useState<{ order: Order; items: OrderItem[]; payments: Payment[] } | null>(null)
+  const [refunding, setRefunding] = useState<Order | null>(null)
   const showToast = useUiStore((s) => s.showToast)
   const { staff } = useAuthStore()
   const cartStore = useCartStore()
@@ -95,16 +97,9 @@ export function OrdersScreen() {
     setSelected(null)
   }
 
-  async function refundOrder(order: Order) {
-    if (!confirm(`Refund order ${order.orderNumber}?`)) return
-    try {
-      await api.orders.refund(order.id, [])
-      showToast('Refund processed', 'success')
-      load()
-      setSelected(null)
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Refund failed', 'error')
-    }
+  function refundOrder(order: Order) {
+    setSelected(null)
+    setRefunding(order)
   }
 
   async function updateStatus(order: Order, status: string) {
@@ -782,6 +777,14 @@ ${esc(cfg.footer)}</pre></body></html>`
             )}
           </div>
         </Modal>
+      )}
+
+      {refunding && (
+        <RefundModal
+          orderId={refunding.id}
+          onClose={() => setRefunding(null)}
+          onRefunded={() => { load(); setSelected(null) }}
+        />
       )}
     </div>
   )

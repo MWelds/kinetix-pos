@@ -18,7 +18,7 @@ import {
 import { IPC } from './channels'
 import { sendReceiptEmail, sendInvoiceEmail, testSmtpConnection, sendGenericEmail } from '../services/email.service'
 import { productService } from '../services/product.service'
-import { orderService } from '../services/order.service'
+import { orderService, type RefundItemInput } from '../services/order.service'
 import { customerService } from '../services/customer.service'
 import { inventoryService } from '../services/inventory.service'
 import { staffService } from '../services/staff.service'
@@ -226,9 +226,9 @@ export function registerIpcHandlers(): void {
     requireRole(e, 'manager')
     return orderService.voidOrder(id, staffId)
   })
-  ipcMain.handle(IPC.ORDERS_REFUND, (e, id: string, itemIds: string[]) => {
+  ipcMain.handle(IPC.ORDERS_REFUND, (e, id: string, items: RefundItemInput[]) => {
     requireRole(e, 'manager')
-    return orderService.refund(id, itemIds)
+    return orderService.refund(id, items, sessionStore.get(e.sender.id)?.staffId)
   })
   ipcMain.handle(IPC.ORDERS_HOLD, (_e, id: string) => orderService.hold(id))
   ipcMain.handle(IPC.ORDERS_HELD_LIST, () => orderService.listHeld())

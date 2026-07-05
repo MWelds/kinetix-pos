@@ -65,7 +65,8 @@ const api = {
     list: (filters?: unknown) => ipcRenderer.invoke(IPC.ORDERS_LIST, filters),
     complete: (input: unknown) => ipcRenderer.invoke(IPC.ORDERS_COMPLETE, input),
     voidOrder: (id: string, staffId: string) => ipcRenderer.invoke(IPC.ORDERS_VOID, id, staffId),
-    refund: (id: string, itemIds: string[]) => ipcRenderer.invoke(IPC.ORDERS_REFUND, id, itemIds),
+    refund: (id: string, items: { orderItemId: string; quantity: number }[]) =>
+      ipcRenderer.invoke(IPC.ORDERS_REFUND, id, items),
     hold: (id: string) => ipcRenderer.invoke(IPC.ORDERS_HOLD, id),
     heldList: () => ipcRenderer.invoke(IPC.ORDERS_HELD_LIST),
     updateStatus: (id: string, status: string) => ipcRenderer.invoke(IPC.ORDERS_UPDATE_STATUS, id, status),

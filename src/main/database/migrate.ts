@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import bcrypt from 'bcryptjs'
 
 /** Schema version — increment whenever tables change */
-const SCHEMA_VERSION = 30
+const SCHEMA_VERSION = 31
 
 /**
  * Runs idempotent DDL migrations on first launch.
@@ -154,6 +154,13 @@ export function runMigrations(sqlite: Database.Database): void {
   // unlike updated_at/deleted_at above this is safe to add as NOT NULL directly.
   if (currentVersion < 30) {
     applyV30(sqlite)
+  }
+
+  // V31: Add refunded_quantity to order_items, tracking cumulative quantity
+  // refunded per line so refunds can be partial and repeated over time.
+  // Constant default (0), safe to add as NOT NULL directly.
+  if (currentVersion < 31) {
+    applyV31(sqlite)
   }
 
   if (currentVersion < SCHEMA_VERSION) {
@@ -1051,6 +1058,20 @@ function applyV30(sqlite: Database.Database): void {
       .prepare(`UPDATE staff SET is_default_pin = 1 WHERE role = 'admin' AND pin = ?`)
       .run(seedHash)
   } catch { /* non-fatal — worst case an existing default-PIN admin isn't flagged */ }
+}
+
+/**
+ * V31: Add refunded_quantity to order_items — tracks cumulative quantity
+ * refunded per line so a single order can be partially refunded, and refunded
+ * again later, without ever mutating the original as-sold quantity/amounts
+ * (those stay untouched for historical/accounting accuracy). Constant default
+ * (0) is correct for every existing row — nothing has been refunded through
+ * this column before it existed.
+ */
+function applyV31(sqlite: Database.Database): void {
+  try {
+    sqlite.exec(`ALTER TABLE order_items ADD COLUMN refunded_quantity REAL NOT NULL DEFAULT 0`)
+  } catch { /* column already exists — idempotent */ }
 }
 
 /**

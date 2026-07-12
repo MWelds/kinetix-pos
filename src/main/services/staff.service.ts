@@ -1,8 +1,8 @@
-import { eq, desc } from 'drizzle-orm'
+import { eq, desc, inArray } from 'drizzle-orm'
 import { getDatabase } from '../database/connection'
 import * as schema from '../database/schema'
 import { generateId } from '../lib/id'
-import { hashPin } from '../lib/pin'
+import { hashPin, candidateHashes, isLegacyHash } from '../lib/pin'
 
 export type StaffRole = 'cashier' | 'manager' | 'admin'
 
@@ -44,14 +44,28 @@ export const staffService = {
   authenticate(pin: string) {
     if (!pin || typeof pin !== 'string' || pin.length === 0) return null
     const db = getDatabase()
-    const hashed = hashPin(pin)
+    // Match either hash scheme in one indexed lookup (current PBKDF2 or legacy
+    // SHA-256) so existing installs keep working during the migration window.
+    const { current, legacy } = candidateHashes(pin)
     const member = db
       .select()
       .from(schema.staff)
-      .where(eq(schema.staff.pin, hashed))
+      .where(inArray(schema.staff.pin, [current, legacy]))
       .get()
 
     if (!member || !member.isActive) return null
+
+    // Transparent upgrade: if this PIN is still stored under the legacy scheme,
+    // rehash it to PBKDF2 now that we know the plaintext. Best-effort — a failed
+    // rehash must never block a valid login.
+    if (isLegacyHash(member.pin)) {
+      try {
+        db.update(schema.staff)
+          .set({ pin: current, updatedAt: new Date().toISOString() })
+          .where(eq(schema.staff.id, member.id))
+          .run()
+      } catch { /* keep legacy hash; will retry on next login */ }
+    }
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { pin: _pin, ...safe } = member

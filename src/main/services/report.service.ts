@@ -242,7 +242,7 @@ export const reportService = {
       .map((r) => ({
         ...r,
         costValue: (r.costPrice ?? 0) * r.quantity,
-        retailValue: r.basePrice * r.quantity
+        retailValue: (r.basePrice ?? 0) * r.quantity
       }))
   },
 
@@ -310,7 +310,7 @@ export const reportService = {
       orderCount: number
       totalRevenue: number
       totalDiscount: number
-      paymentRows: Array<{ method: string; count: number; total: number }>
+      paymentRows: Array<{ method: string; currency: string; count: number; total: number; originalTotal: number }>
     }>
     combined: {
       orderCount: number
@@ -321,29 +321,23 @@ export const reportService = {
     const sqlite = getSqlite()
 
     // Fetch all completed orders with their terminal info
-    const orders = sqlite.prepare<[], {
+    const orders = sqlite.prepare(`
+      SELECT id, order_number, terminal_id, terminal_name, total, discount_amount
+      FROM orders
+      WHERE status IN ('completed', 'refunded')
+        AND created_at >= ?
+        AND created_at <= ?
+    `).all(fromDate, toDate) as Array<{
       id: string
       order_number: string
       terminal_id: string
       terminal_name: string
       total: number
       discount_amount: number
-    }>(`
-      SELECT id, order_number, terminal_id, terminal_name, total, discount_amount
-      FROM orders
-      WHERE status IN ('completed', 'refunded')
-        AND created_at >= ?
-        AND created_at <= ?
-    `).all(fromDate, toDate)
+    }>
 
     // Fetch all payments for those orders (include currency + original_amount for display)
-    const payments = sqlite.prepare<[], {
-      order_id: string
-      method: string
-      currency: string
-      amount: number
-      original_amount: number | null
-    }>(`
+    const payments = sqlite.prepare(`
       SELECT p.order_id, p.method,
              COALESCE(p.currency, 'KYD') AS currency,
              p.amount,
@@ -353,7 +347,13 @@ export const reportService = {
       WHERE o.status IN ('completed', 'refunded')
         AND o.created_at >= ?
         AND o.created_at <= ?
-    `).all(fromDate, toDate)
+    `).all(fromDate, toDate) as Array<{
+      order_id: string
+      method: string
+      currency: string
+      amount: number
+      original_amount: number | null
+    }>
 
     // Group payments by orderId for quick lookup
     const paymentsByOrder = new Map<string, Array<{ method: string; currency: string; amount: number; originalAmount: number }>>()

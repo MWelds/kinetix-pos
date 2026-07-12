@@ -1,4 +1,4 @@
-import { eq, desc, and, gte, lte, like, sql, isNull } from 'drizzle-orm'
+import { eq, desc, and, gte, lte, like, sql, isNull, type SQL } from 'drizzle-orm'
 import { getDatabase } from '../database/connection'
 import * as schema from '../database/schema'
 import { generateId } from '../lib/id'
@@ -848,7 +848,7 @@ export const orderService = {
   }) {
     const db = getDatabase()
     let query = db.select().from(schema.orders).$dynamic()
-    const conditions = []
+    const conditions: SQL<unknown>[] = []
     if (filters?.status) conditions.push(eq(schema.orders.status, filters.status))
     if (filters?.fromDate) conditions.push(gte(schema.orders.createdAt, filters.fromDate))
     if (filters?.toDate) conditions.push(lte(schema.orders.createdAt, filters.toDate))

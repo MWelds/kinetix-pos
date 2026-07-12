@@ -1,4 +1,4 @@
-import { eq, like, or, and, inArray, sql, count, isNull } from 'drizzle-orm'
+import { eq, like, or, and, inArray, count, isNull } from 'drizzle-orm'
 import { getDatabase, getSqlite } from '../database/connection'
 import * as schema from '../database/schema'
 import { generateId } from '../lib/id'
@@ -170,6 +170,31 @@ function attachHasVariants<T extends { id: string }>(
     .all()
   const idSet = new Set(withVariants.map((r) => r.productId))
   return rows.map((r) => ({ ...r, hasVariants: idSet.has(r.id) }))
+}
+
+/** Round to 2dp for derived per-unit prices. */
+function perUnit(amount: number, units: number): number {
+  return Math.round((amount / units) * 100) / 100
+}
+
+/**
+ * Friendly duplicate-SKU guard. SKUs are UNIQUE at the database level (including
+ * soft-deleted products), so without this check a collision surfaces as a cryptic
+ * "UNIQUE constraint failed: products.sku" error.
+ */
+function assertSkuAvailable(db: ReturnType<typeof getDatabase>, sku: string, excludeId?: string): void {
+  const row = db
+    .select({ id: schema.products.id, isActive: schema.products.isActive })
+    .from(schema.products)
+    .where(eq(schema.products.sku, sku))
+    .get()
+  if (row && row.id !== excludeId) {
+    throw new Error(
+      row.isActive
+        ? `A product with SKU "${sku}" already exists — choose a different SKU.`
+        : `A deleted product still uses SKU "${sku}" — choose a different SKU.`
+    )
+  }
 }
 
 export const productService = {
@@ -396,11 +421,88 @@ export const productService = {
     const now = new Date().toISOString()
     const unitsPerPack = (input.unitsPerPack && input.unitsPerPack > 1) ? input.unitsPerPack : 1
 
+    // Fail early with a clear message instead of a raw UNIQUE constraint error.
+    assertSkuAvailable(db, input.sku)
+
     if (unitsPerPack > 1) {
+      assertSkuAvailable(db, input.sku + '-IND')
       const indId = generateId()
 
-      // 1. Insert the pack product (no inventory record)
-      db.insert(schema.products)
+      // All inserts succeed or none do — a partial failure previously left an
+      // orphaned pack row that made every retry fail with a duplicate SKU.
+      //
+      // Insert order matters: individual_product_id / pack_product_id are FOREIGN
+      // KEYs to products(id) and SQLite enforces them immediately, so neither row
+      // can reference the other before it exists. Insert the individual first
+      // (unlinked), then the pack (which can now reference it), then backfill the
+      // individual's pack link.
+      db.transaction((tx) => {
+        // 1. Insert the individual product (owns the shared inventory pool)
+        tx.insert(schema.products)
+          .values({
+            id: indId,
+            name: input.name + ' (Individual)',
+            sku: input.sku + '-IND',
+            barcode: null,
+            description: input.description ? 'Individual unit from ' + input.name : null,
+            categoryId: input.categoryId,
+            basePrice: perUnit(input.basePrice, unitsPerPack),
+            costPrice: input.costPrice != null ? perUnit(input.costPrice, unitsPerPack) : null,
+            imageUrl: input.imageUrl,
+            isComposite: false,
+            isActive: true,
+            taxRate: input.taxRate ?? 0,
+            unitsPerPack: 1,
+            individualProductId: null,
+            packProductId: null,
+            trackStock: input.trackStock ?? true,
+            createdAt: now,
+            updatedAt: now
+          })
+          .run()
+
+        // 2. Insert the pack product (no inventory record)
+        tx.insert(schema.products)
+          .values({
+            id: packId,
+            name: input.name,
+            sku: input.sku,
+            barcode: input.barcode,
+            description: input.description,
+            categoryId: input.categoryId,
+            basePrice: input.basePrice,
+            costPrice: input.costPrice,
+            imageUrl: input.imageUrl,
+            isComposite: false,
+            isActive: true,
+            taxRate: input.taxRate ?? 0,
+            unitsPerPack,
+            individualProductId: indId,
+            packProductId: null,
+            trackStock: input.trackStock ?? true,
+            createdAt: now,
+            updatedAt: now
+          })
+          .run()
+
+        // 3. Backfill the individual → pack link now that the pack row exists
+        tx.update(schema.products)
+          .set({ packProductId: packId })
+          .where(eq(schema.products.id, indId))
+          .run()
+
+        // 4. Inventory record belongs only to the individual product
+        tx.insert(schema.inventory)
+          .values({ id: generateId(), productId: indId, quantity: 0, lowStockThreshold: 5, createdAt: now, updatedAt: now })
+          .run()
+      })
+
+      return this.getById(packId)!
+    }
+
+    // Standard (non-pack) product
+    db.transaction((tx) => {
+      tx.insert(schema.products)
         .values({
           id: packId,
           name: input.name,
@@ -411,102 +513,204 @@ export const productService = {
           basePrice: input.basePrice,
           costPrice: input.costPrice,
           imageUrl: input.imageUrl,
-          isComposite: false,
+          isComposite: input.isComposite ?? false,
           isActive: true,
           taxRate: input.taxRate ?? 0,
-          unitsPerPack,
-          individualProductId: indId,
+          unitsPerPack: 1,
+          individualProductId: null,
           packProductId: null,
           trackStock: input.trackStock ?? true,
           createdAt: now,
           updatedAt: now
         })
         .run()
-
-      // 2. Insert the individual product (owns the shared inventory pool)
-      db.insert(schema.products)
-        .values({
-          id: indId,
-          name: input.name + ' (Individual)',
-          sku: input.sku + '-IND',
-          barcode: null,
-          description: input.description ? 'Individual unit from ' + input.name : null,
-          categoryId: input.categoryId,
-          basePrice: Math.round((input.basePrice / unitsPerPack) * 100) / 100,
-          costPrice: input.costPrice != null
-            ? Math.round((input.costPrice / unitsPerPack) * 100) / 100
-            : null,
-          imageUrl: input.imageUrl,
-          isComposite: false,
-          isActive: true,
-          taxRate: input.taxRate ?? 0,
-          unitsPerPack: 1,
-          individualProductId: null,
-          packProductId: packId,
-          createdAt: now,
-          updatedAt: now
-        })
+      tx.insert(schema.inventory)
+        .values({ id: generateId(), productId: packId, quantity: 0, lowStockThreshold: 5, createdAt: now, updatedAt: now })
         .run()
-
-      // 3. Inventory record belongs only to the individual product
-      db.insert(schema.inventory)
-        .values({ id: generateId(), productId: indId, quantity: 0, lowStockThreshold: 5, createdAt: now, updatedAt: now })
-        .run()
-
-      return this.getById(packId)!
-    }
-
-    // Standard (non-pack) product
-    db.insert(schema.products)
-      .values({
-        id: packId,
-        name: input.name,
-        sku: input.sku,
-        barcode: input.barcode,
-        description: input.description,
-        categoryId: input.categoryId,
-        basePrice: input.basePrice,
-        costPrice: input.costPrice,
-        imageUrl: input.imageUrl,
-        isComposite: input.isComposite ?? false,
-        isActive: true,
-        taxRate: input.taxRate ?? 0,
-        unitsPerPack: 1,
-        individualProductId: null,
-        packProductId: null,
-        trackStock: input.trackStock ?? true,
-        createdAt: now,
-        updatedAt: now
-      })
-      .run()
-    db.insert(schema.inventory)
-      .values({ id: generateId(), productId: packId, quantity: 0, lowStockThreshold: 5, createdAt: now, updatedAt: now })
-      .run()
+    })
     return this.getById(packId)!
   },
 
-  /** Update an existing product */
+  /**
+   * Update an existing product.
+   *
+   * Handles pack transitions that the old implementation silently broke:
+   * - standalone → pack: creates the linked individual product and moves the
+   *   existing stock into it (boxes × unitsPerPack = individual units)
+   * - pack edit: keeps the linked individual product's name/price/category/tax in sync
+   * - pack → standalone (unitsPerPack back to 1): moves the shared stock back
+   *   onto this product and archives the auto-created individual
+   */
   update(id: string, input: UpdateProductInput): ProductWithInventory {
     const db = getDatabase()
-    db.update(schema.products)
-      .set({ ...input, updatedAt: new Date().toISOString() })
-      .where(eq(schema.products.id, id))
-      .run()
+    const existing = db.select().from(schema.products).where(eq(schema.products.id, id)).get()
+    if (!existing) throw new Error('Product not found')
+    const now = new Date().toISOString()
+
+    if (input.sku && input.sku !== existing.sku) assertSkuAvailable(db, input.sku, id)
+
+    // Auto-created individual products can't become packs themselves.
+    if (existing.packProductId) {
+      const { unitsPerPack: _ignored, ...rest } = input
+      db.update(schema.products)
+        .set({ ...rest, updatedAt: now })
+        .where(eq(schema.products.id, id))
+        .run()
+      return this.getById(id)!
+    }
+
+    const wasPack = (existing.unitsPerPack ?? 1) > 1 && !!existing.individualProductId
+    const newUnits = input.unitsPerPack != null
+      ? (input.unitsPerPack > 1 ? input.unitsPerPack : 1)
+      : (existing.unitsPerPack ?? 1)
+
+    const name = input.name ?? existing.name
+    const sku = input.sku ?? existing.sku
+    const basePrice = input.basePrice ?? existing.basePrice
+    const costPrice = input.costPrice !== undefined ? input.costPrice : existing.costPrice
+
+    db.transaction((tx) => {
+      tx.update(schema.products)
+        .set({ ...input, unitsPerPack: newUnits, updatedAt: now })
+        .where(eq(schema.products.id, id))
+        .run()
+
+      if (newUnits > 1 && !wasPack) {
+        // standalone → pack: create the linked individual product
+        assertSkuAvailable(db, sku + '-IND')
+        const indId = generateId()
+        tx.insert(schema.products)
+          .values({
+            id: indId,
+            name: name + ' (Individual)',
+            sku: sku + '-IND',
+            barcode: null,
+            description: existing.description ? 'Individual unit from ' + name : null,
+            categoryId: input.categoryId ?? existing.categoryId,
+            basePrice: perUnit(basePrice, newUnits),
+            costPrice: costPrice != null ? perUnit(costPrice, newUnits) : null,
+            imageUrl: input.imageUrl !== undefined ? input.imageUrl : existing.imageUrl,
+            isComposite: false,
+            isActive: true,
+            taxRate: input.taxRate ?? existing.taxRate ?? 0,
+            unitsPerPack: 1,
+            individualProductId: null,
+            packProductId: id,
+            trackStock: input.trackStock ?? existing.trackStock ?? true,
+            createdAt: now,
+            updatedAt: now
+          })
+          .run()
+
+        // Move this product's stock into the shared pool: existing count was in
+        // boxes, the individual product tracks single units.
+        const inv = tx
+          .select()
+          .from(schema.inventory)
+          .where(and(eq(schema.inventory.productId, id), isNull(schema.inventory.variantId)))
+          .get()
+        if (inv) {
+          tx.update(schema.inventory)
+            .set({ productId: indId, quantity: (inv.quantity ?? 0) * newUnits, updatedAt: now })
+            .where(eq(schema.inventory.id, inv.id))
+            .run()
+        } else {
+          tx.insert(schema.inventory)
+            .values({ id: generateId(), productId: indId, quantity: 0, lowStockThreshold: 5, createdAt: now, updatedAt: now })
+            .run()
+        }
+
+        tx.update(schema.products)
+          .set({ individualProductId: indId, updatedAt: now })
+          .where(eq(schema.products.id, id))
+          .run()
+      } else if (newUnits > 1 && wasPack && existing.individualProductId) {
+        // pack edit: keep the linked individual product in sync
+        tx.update(schema.products)
+          .set({
+            name: name + ' (Individual)',
+            basePrice: perUnit(basePrice, newUnits),
+            costPrice: costPrice != null ? perUnit(costPrice, newUnits) : null,
+            categoryId: input.categoryId ?? existing.categoryId,
+            taxRate: input.taxRate ?? existing.taxRate ?? 0,
+            updatedAt: now
+          })
+          .where(eq(schema.products.id, existing.individualProductId))
+          .run()
+      } else if (newUnits === 1 && wasPack && existing.individualProductId) {
+        // pack → standalone: reclaim the shared stock (in individual units) and
+        // archive the auto-created individual product.
+        const indInv = tx
+          .select()
+          .from(schema.inventory)
+          .where(and(eq(schema.inventory.productId, existing.individualProductId), isNull(schema.inventory.variantId)))
+          .get()
+        if (indInv) {
+          tx.update(schema.inventory)
+            .set({ productId: id, updatedAt: now })
+            .where(eq(schema.inventory.id, indInv.id))
+            .run()
+        } else {
+          tx.insert(schema.inventory)
+            .values({ id: generateId(), productId: id, quantity: 0, lowStockThreshold: 5, createdAt: now, updatedAt: now })
+            .run()
+        }
+        tx.update(schema.products)
+          .set({ isActive: false, packProductId: null, updatedAt: now })
+          .where(eq(schema.products.id, existing.individualProductId))
+          .run()
+        tx.update(schema.products)
+          .set({ individualProductId: null, updatedAt: now })
+          .where(eq(schema.products.id, id))
+          .run()
+      }
+    })
+
     return this.getById(id)!
   },
 
   /** Soft-delete a product and hard-delete its inventory record. */
   delete(id: string): void {
     const db = getDatabase()
-    db.update(schema.products)
-      .set({ isActive: false, updatedAt: new Date().toISOString() })
-      .where(eq(schema.products.id, id))
-      .run()
-    // Remove the inventory row — no longer relevant once the product is deleted.
-    // inventory_adjustments reference product_id directly so history is preserved.
-    db.delete(schema.inventory)
-      .where(eq(schema.inventory.productId, id))
-      .run()
+    const now = new Date().toISOString()
+    const existing = db.select().from(schema.products).where(eq(schema.products.id, id)).get()
+
+        // The auto-created individual product shares the pack's stock pool — deleting
+    // it out from under the pack would break pack sales. Point the user at the pack.
+    if (existing?.packProductId) {
+      const parent = db
+        .select({ name: schema.products.name, isActive: schema.products.isActive })
+        .from(schema.products)
+        .where(eq(schema.products.id, existing.packProductId))
+        .get()
+      if (parent?.isActive) {
+        throw new Error(
+          `"${existing.name}" holds the shared stock for the pack product "${parent.name}". ` +
+          `Delete the pack product instead, or edit it and set units per pack to 1.`
+        )
+      }
+    }
+
+    db.transaction((tx) => {
+      tx.update(schema.products)
+        .set({ isActive: false, updatedAt: now })
+        .where(eq(schema.products.id, id))
+        .run()
+      // Remove the inventory row — no longer relevant once the product is deleted.
+      // inventory_adjustments reference product_id directly so history is preserved.
+      tx.delete(schema.inventory)
+        .where(eq(schema.inventory.productId, id))
+        .run()
+
+      // Deleting a pack detaches its individual product so single units can
+      // continue to be sold from the remaining stock.
+      if (existing?.individualProductId) {
+        tx.update(schema.products)
+          .set({ packProductId: null, updatedAt: now })
+          .where(eq(schema.products.id, existing.individualProductId))
+          .run()
+      }
+    })
   },
 
   // Bundle / Composite

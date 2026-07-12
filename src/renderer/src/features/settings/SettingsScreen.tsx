@@ -1,5 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
-import QRCode from 'qrcode'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Save, RefreshCw, ArrowLeftRight, Monitor, Wifi, WifiOff, ExternalLink, FolderOpen, Plus, Edit2, Trash2, Check, X, ImageIcon, Upload, Link2, Link2Off, AlertCircle, RotateCcw, ChevronDown, Search, Scan, CreditCard, Cast } from 'lucide-react'
 import { api } from '../../lib/api'
 import { Input, Textarea, Button } from '../../components/ui'
@@ -8,6 +7,7 @@ import { useCartStore } from '../../stores/cart.store'
 import { useLogoStore } from '../../stores/logo.store'
 import { useCurrencyStore } from '../../stores/currency.store'
 import type { Category } from '../../types'
+import { buildInvoiceHtml, sampleInvoiceData } from '../../lib/invoice-template'
 import {
   CURRENCIES,
   CURRENCY_REGIONS,
@@ -15,22 +15,6 @@ import {
   DEFAULT_KYD_TO_USD,
   type CurrencyCode
 } from '../../lib/currency'
-
-/** Renders a QR code for a URL onto a canvas element using the `qrcode` package. */
-function QrCode({ url, size = 160 }: { url: string; size?: number }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-
-  useEffect(() => {
-    if (!canvasRef.current || !url) return
-    QRCode.toCanvas(canvasRef.current, url, {
-      width: size,
-      margin: 1,
-      color: { dark: '#000000', light: '#ffffff' }
-    }).catch(() => { /* render failure -- canvas stays blank */ })
-  }, [url, size])
-
-  return <canvas ref={canvasRef} width={size} height={size} className="rounded-lg" />
-}
 
 // Toggle switch primitive
 function Toggle({
@@ -286,113 +270,199 @@ function ReceiptPreviewPane({
 }
 
 // ─── Invoice preview (live, scaled) ─────────────────────────────────────────
-
-interface InvoicePreviewProps {
-  showLogo: boolean
-  footer: string
-  storeName: string
-  storeAddress: string
-  logoBase64: string
-  primaryColor?: string
-  headerMessage?: string
-  customField1?: string
-  customField2?: string
-  customField3?: string
-}
+//
+// Renders the REAL invoice template (src/renderer/src/lib/invoice-template.ts)
+// in a scaled iframe, so what you see here is exactly what prints.
 
 function InvoicePreviewPane({
-  showLogo, footer, storeName, storeAddress, logoBase64,
-  primaryColor = '#1e293b', headerMessage = '',
-  customField1 = '', customField2 = '', customField3 = '',
-}: InvoicePreviewProps) {
-  const logo = showLogo && logoBase64
-    ? <img src={logoBase64} alt="logo" style={{ maxWidth: 80, maxHeight: 40, objectFit: 'contain' }} />
-    : <div style={{ width: 80, height: 40, background: '#e2e8f0', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#94a3b8' }}>LOGO</div>
-
-  const ITEMS = [
-    { name: 'Product A', qty: 2, unit: '$6.00', total: '$12.00' },
-    { name: 'Product B', qty: 1, unit: '$8.50', total: '$8.50' },
-    { name: 'Product C', qty: 3, unit: '$9.00', total: '$27.00' },
-  ]
-  const customLines = [customField1, customField2, customField3].filter(Boolean)
+  settings,
+  logoBase64
+}: {
+  settings: Record<string, string>
+  logoBase64: string
+}) {
+  const html = buildInvoiceHtml(
+    sampleInvoiceData(),
+    {
+      storeName: settings.storeName || 'My Store',
+      storeAddress: settings.storeAddress || '123 Main Street',
+      storePhone: settings.storePhone || '(555) 000-0000',
+      logoBase64,
+      currencySymbol: CURRENCIES[(settings.currency as CurrencyCode) ?? 'USD']?.symbol ?? '$'
+    },
+    settings
+  )
 
   return (
-    <div style={{ position: 'relative', width: '100%', height: 340, overflow: 'hidden', background: '#f1f5f9', borderRadius: 10, border: '1px solid #e2e8f0', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 12 }}>
-      <div style={{ transform: 'scale(0.60)', transformOrigin: 'top center', pointerEvents: 'none', width: 595 }}>
-        {/* A4 invoice mock */}
-        <div style={{ background: '#fff', padding: '32px 40px', fontFamily: 'sans-serif', color: '#1e293b', boxShadow: '0 4px 24px rgba(0,0,0,0.10)', borderRadius: 4 }}>
-          {/* Header */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
-            <div>
-              {logo}
-              <div style={{ marginTop: 8, fontWeight: 700, fontSize: 16 }}>{storeName || 'My Store'}</div>
-              {headerMessage && <div style={{ fontSize: 12, color: '#64748b', fontStyle: 'italic', marginTop: 2 }}>{headerMessage}</div>}
-              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{storeAddress || '123 Main Street'}</div>
-              <div style={{ fontSize: 12, color: '#64748b' }}>Tel: (555) 000-0000</div>
-            </div>
-            <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: 22, fontWeight: 800, color: primaryColor, letterSpacing: -0.5 }}>INVOICE</div>
-              <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>#INV-1042</div>
-              <div style={{ fontSize: 12, color: '#64748b' }}>Date: Today</div>
-              <div style={{ marginTop: 8, display: 'inline-block', border: '2px solid #16a34a', color: '#16a34a', borderRadius: 4, padding: '2px 10px', fontSize: 12, fontWeight: 700, letterSpacing: 1 }}>PAID</div>
-            </div>
-          </div>
-          {/* Bill To */}
-          <div style={{ background: '#f8fafc', borderRadius: 8, padding: '12px 16px', marginBottom: 16, fontSize: 12 }}>
-            <div style={{ fontWeight: 600, color: '#64748b', fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Bill To</div>
-            <div style={{ fontWeight: 600 }}>John Smith</div>
-            <div style={{ color: '#64748b' }}>john@example.com · (555) 111-2222</div>
-          </div>
-          {/* Items table */}
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginBottom: 16 }}>
-            <thead>
-              <tr style={{ background: primaryColor, color: '#fff' }}>
-                <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600 }}>Item</th>
-                <th style={{ padding: '8px 12px', textAlign: 'center', fontWeight: 600 }}>Qty</th>
-                <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>Unit</th>
-                <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ITEMS.map((item, i) => (
-                <tr key={item.name} style={{ background: i % 2 === 0 ? '#f8fafc' : '#fff' }}>
-                  <td style={{ padding: '7px 12px' }}>{item.name}</td>
-                  <td style={{ padding: '7px 12px', textAlign: 'center' }}>{item.qty}</td>
-                  <td style={{ padding: '7px 12px', textAlign: 'right' }}>{item.unit}</td>
-                  <td style={{ padding: '7px 12px', textAlign: 'right', fontWeight: 600 }}>{item.total}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {/* Totals */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <div style={{ width: 220, fontSize: 12 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', color: '#64748b' }}>
-                <span>Subtotal</span><span>$47.50</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', color: '#64748b' }}>
-                <span>Tax (10%)</span><span>$4.75</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderTop: `2px solid ${primaryColor}`, fontWeight: 700, fontSize: 14, color: primaryColor }}>
-                <span>Total</span><span>$52.25</span>
-              </div>
-            </div>
-          </div>
-          {/* Footer */}
-          {(footer || customLines.length > 0) && (
-            <div style={{ marginTop: 24, padding: '12px 16px', background: '#f8fafc', borderRadius: 8, fontSize: 11, color: '#64748b', textAlign: 'center' }}>
-              {footer}
-              {customLines.map((f, i) => <div key={i} style={{ marginTop: 4 }}>{f}</div>)}
-            </div>
-          )}
-        </div>
-      </div>
+    <div style={{ position: 'relative', width: '100%', height: 420, overflow: 'hidden', background: '#f1f5f9', borderRadius: 10, border: '1px solid #e2e8f0', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 12 }}>
+      <iframe
+        title="Invoice preview"
+        srcDoc={html}
+        sandbox=""
+        style={{
+          width: 780,
+          height: 1100,
+          border: 'none',
+          background: '#fff',
+          transform: 'scale(0.52)',
+          transformOrigin: 'top center',
+          pointerEvents: 'none',
+          boxShadow: '0 4px 24px rgba(0,0,0,0.10)',
+          borderRadius: 4
+        }}
+      />
       <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 40, background: 'linear-gradient(to bottom, transparent, #f1f5f9)', borderRadius: '0 0 10px 10px' }} />
-      <div style={{ position: 'absolute', top: 8, right: 10, fontSize: 10, color: '#94a3b8', fontFamily: 'sans-serif' }}>Preview</div>
+      <div style={{ position: 'absolute', top: 8, right: 10, fontSize: 10, color: '#94a3b8', fontFamily: 'sans-serif' }}>Live Preview — prints exactly like this</div>
     </div>
   )
 }
 
+
+// ─── Database Backups Section ────────────────────────────────────────────────
+
+interface BackupStatusShape {
+  enabled: boolean
+  intervalHours: number
+  retention: number
+  directory: string
+  lastBackupAt: string | null
+  lastError: string | null
+  backupCount: number
+  latestFile: string | null
+  running: boolean
+}
+
+function BackupSection({
+  settings,
+  setSetting,
+  showToast
+}: {
+  settings: Record<string, string>
+  setSetting: (key: string, value: string) => void
+  showToast: (msg: string, type?: 'success' | 'error' | 'warning' | 'info') => void
+}) {
+  const [status, setStatus] = useState<BackupStatusShape | null>(null)
+  const [backingUp, setBackingUp] = useState(false)
+
+  const refresh = useCallback(() => {
+    api.backup.status().then(setStatus).catch(() => {})
+  }, [])
+
+  useEffect(() => { refresh() }, [refresh])
+
+  async function handleBackupNow() {
+    setBackingUp(true)
+    try {
+      const res = await api.backup.runNow()
+      showToast(`Backup saved — ${(res.sizeBytes / 1024 / 1024).toFixed(1)} MB`, 'success')
+      refresh()
+    } catch (err) {
+      const msg = err instanceof Error
+        ? err.message.replace(/^Error invoking remote method '[^']*':\s*(Error:\s*)?/, '')
+        : 'Backup failed'
+      showToast(msg || 'Backup failed', 'error')
+    } finally {
+      setBackingUp(false)
+    }
+  }
+
+  async function handlePickDir() {
+    try {
+      const dir = await api.backup.pickDir()
+      if (dir) setSetting('backupCustomPath', dir)
+    } catch { /* dialog dismissed */ }
+  }
+
+  const enabled = (settings.backupEnabled ?? 'true') !== 'false'
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-gray-500">
+        Snapshots the store database while the app runs (safe during sales) and keeps the most
+        recent copies. Changes here are stored with <strong>Save Changes</strong>.
+      </p>
+
+      <div className="flex items-center justify-between py-1">
+        <div>
+          <p className="text-sm font-medium text-gray-800">Automatic Backups</p>
+          <p className="text-xs text-gray-500 mt-0.5">Runs in the background while the POS is open</p>
+        </div>
+        <Toggle checked={enabled} onChange={(v) => setSetting('backupEnabled', String(v))} />
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="text-xs font-medium text-gray-600 block mb-1">Backup Every</label>
+          <select
+            value={settings.backupIntervalHours ?? '24'}
+            onChange={(e) => setSetting('backupIntervalHours', e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          >
+            <option value="6">6 hours</option>
+            <option value="12">12 hours</option>
+            <option value="24">24 hours (daily)</option>
+            <option value="72">3 days</option>
+            <option value="168">7 days</option>
+          </select>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-600 block mb-1">Keep Last</label>
+          <select
+            value={settings.backupRetention ?? '14'}
+            onChange={(e) => setSetting('backupRetention', e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          >
+            <option value="7">7 backups</option>
+            <option value="14">14 backups</option>
+            <option value="30">30 backups</option>
+            <option value="60">60 backups</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label className="text-xs font-medium text-gray-600 block mb-1">Backup Folder</label>
+        <div className="flex items-center gap-2">
+          <input
+            readOnly
+            value={settings.backupCustomPath || status?.directory || ''}
+            className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-600 font-mono"
+          />
+          <Button variant="secondary" size="sm" onClick={handlePickDir}>Browse…</Button>
+          {settings.backupCustomPath ? (
+            <Button variant="secondary" size="sm" onClick={() => setSetting('backupCustomPath', '')}>Reset</Button>
+          ) : null}
+        </div>
+        <p className="text-xs text-gray-400 mt-1">
+          Tip: point this at a synced or network folder (e.g. Synology Drive) so backups leave this machine.
+        </p>
+      </div>
+
+      <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 text-sm text-gray-600 space-y-1">
+        <div className="flex justify-between">
+          <span>Last backup</span>
+          <span className="font-medium text-gray-800">
+            {status?.lastBackupAt ? new Date(status.lastBackupAt).toLocaleString() : 'Never'}
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span>Backups on disk</span>
+          <span className="font-medium text-gray-800">{status?.backupCount ?? 0}</span>
+        </div>
+        {status?.lastError && (
+          <div className="flex justify-between text-red-600">
+            <span>Last error</span>
+            <span className="font-medium">{status.lastError}</span>
+          </div>
+        )}
+      </div>
+
+      <Button onClick={handleBackupNow} loading={backingUp}>
+        Back Up Now
+      </Button>
+    </div>
+  )
+}
 
 // ─── Sync Server Section ──────────────────────────────────────────────────────
 
@@ -405,9 +475,9 @@ function SyncServerSection({
   showToast
 }: {
   settings: Record<string, string>
-  field: (key: string) => (v: string) => void
+  field: (key: string) => (eOrValue: React.ChangeEvent<HTMLInputElement> | string) => void
   onSave: () => Promise<void>
-  showToast: (msg: string, type?: string) => void
+  showToast: (msg: string, type?: 'success' | 'error' | 'warning' | 'info') => void
 }) {
   // ── HTTP sync state ──────────────────────────────────────────────────────────
   const [syncState, setSyncState] = useState<SyncStateShape | null>(null)
@@ -437,13 +507,13 @@ function SyncServerSection({
 
   // ── Effects ──────────────────────────────────────────────────────────────────
   useEffect(() => {
-    api.sync.getState().then(setSyncState).catch(() => {})
+    api.sync.getState().then((v) => setSyncState(v as SyncStateShape)).catch(() => {})
     const unsubHttp = api.sync.onStateChange((s: unknown) => setSyncState(s as SyncStateShape))
 
-    api.syncV2.getState().then(setSyncV2State).catch(() => {})
+    api.syncV2.getState().then((v) => setSyncV2State(v as SyncStateShape)).catch(() => {})
     const unsubV2 = api.syncV2.onStateChange((s: unknown) => setSyncV2State(s as SyncStateShape))
 
-    api.fileSync.getState().then(setFileSyncState).catch(() => {})
+    api.fileSync.getState().then((v) => setFileSyncState(v as SyncStateShape)).catch(() => {})
     const unsubFile = api.fileSync.onStateChange((s: unknown) => setFileSyncState(s as SyncStateShape))
 
     api.app.getLocalIps().then(setLocalIps).catch(() => {})
@@ -451,10 +521,7 @@ function SyncServerSection({
     // Load the server's default local share path so we can display it
     api.fileSync.getLocalSharePath().then(setLocalSharePath).catch(() => {})
 
-    api.cloudSync.getState().then((s) => setCloudSyncState(s as typeof cloudSyncState)).catch(() => {})
-    const unsubCloud = api.cloudSync.onStateChange((s) => setCloudSyncState(s as typeof cloudSyncState))
-
-    return () => { unsubHttp(); unsubV2(); unsubFile(); unsubCloud() }
+    return () => { unsubHttp(); unsubV2(); unsubFile() }
   }, [])
 
   // Server machines must never run the HTTP sync client
@@ -1185,7 +1252,7 @@ function PrinterSection({
 }: {
   settings: Record<string, string>
   onSave: (patches: Record<string, string>) => Promise<void>
-  showToast: (msg: string, type?: string) => void
+  showToast: (msg: string, type?: 'success' | 'error' | 'warning' | 'info') => void
 }) {
   const [printers, setPrinters] = useState<PrinterInfo[]>([])
   const [loading, setLoading] = useState(true)
@@ -1461,6 +1528,19 @@ export function SettingsScreen() {
         invoiceCustomField1: '',
         invoiceCustomField2: '',
         invoiceCustomField3: '',
+        invoiceTemplate: 'classic',
+        invoiceTitleLabel: 'INVOICE',
+        invoiceNumberPrefix: '',
+        invoiceFontSize: 'normal',
+        invoiceMargin: 'normal',
+        invoiceLogoSize: 'medium',
+        invoiceShowSku: 'false',
+        invoiceShowCustomer: 'true',
+        invoiceShowPayments: 'true',
+        invoiceShowPaidStamp: 'true',
+        invoiceShowSignatureLine: 'false',
+        invoiceWatermarkText: '',
+        invoiceDueDays: '',
         displayBgColor: '#0f172a',
         displayBgImage: '',
         networkDisplayAutoStart: 'false',
@@ -1496,6 +1576,11 @@ export function SettingsScreen() {
 
     // Load QBO status
     api.qbo.status().then(setQboStatus).catch(() => {})
+
+    // Cloud sync status badge (rendered in the Cloud Sync section below)
+    api.cloudSync.getState().then((v) => setCloudSyncState(v as typeof cloudSyncState)).catch(() => {})
+    const unsubCloud = api.cloudSync.onStateChange((v) => setCloudSyncState(v as typeof cloudSyncState))
+    return () => { unsubCloud() }
   }, [])
 
   const handleToggleDisplayWindow = useCallback(async () => {
@@ -2173,8 +2258,84 @@ export function SettingsScreen() {
 
         {/* Invoice Settings */}
         <SectionAccordion id="invoices" title="Invoice Settings">
-          <p className="text-xs text-gray-500 mb-4">Invoices are formal A4 documents printed from the Orders screen.</p>
+          <p className="text-xs text-gray-500 mb-4">Invoices are formal A4 documents printed from the Orders screen, the POS, and after payment.</p>
           <div className="space-y-4">
+            {/* Template & Layout */}
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-3">Template &amp; Layout</p>
+              <div className="grid grid-cols-2 gap-4 mb-3">
+                <div>
+                  <label className="text-xs font-medium text-gray-600 block mb-1">Template</label>
+                  <select
+                    value={settings.invoiceTemplate ?? 'classic'}
+                    onChange={(e) => field('invoiceTemplate')(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  >
+                    <option value="classic">Classic — clean header, light table</option>
+                    <option value="modern">Modern — bold colored table header</option>
+                    <option value="compact">Compact — tight, fits more lines</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-gray-600 block mb-1">Font Size</label>
+                  <select
+                    value={settings.invoiceFontSize ?? 'normal'}
+                    onChange={(e) => field('invoiceFontSize')(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  >
+                    <option value="small">Small</option>
+                    <option value="normal">Normal</option>
+                    <option value="large">Large</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-medium text-gray-600 block mb-1">Page Margins</label>
+                  <select
+                    value={settings.invoiceMargin ?? 'normal'}
+                    onChange={(e) => field('invoiceMargin')(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  >
+                    <option value="narrow">Narrow</option>
+                    <option value="normal">Normal</option>
+                    <option value="wide">Wide</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-gray-600 block mb-1">Logo Size</label>
+                  <select
+                    value={settings.invoiceLogoSize ?? 'medium'}
+                    onChange={(e) => field('invoiceLogoSize')(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  >
+                    <option value="small">Small</option>
+                    <option value="medium">Medium</option>
+                    <option value="large">Large</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            {/* Title & Numbering */}
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-3">Title &amp; Numbering</p>
+              <div className="grid grid-cols-2 gap-4">
+                <Input label="Document Title" value={settings.invoiceTitleLabel ?? 'INVOICE'} onChange={field('invoiceTitleLabel')} placeholder="INVOICE" />
+                <Input label="Number Prefix" value={settings.invoiceNumberPrefix ?? ''} onChange={field('invoiceNumberPrefix')} placeholder="e.g. INV-" />
+              </div>
+              <div className="grid grid-cols-2 gap-4 mt-3">
+                <Input
+                  label="Payment Due (days)"
+                  type="text"
+                  inputMode="numeric"
+                  value={settings.invoiceDueDays ?? ''}
+                  onChange={field('invoiceDueDays')}
+                  placeholder="Blank = no due date"
+                />
+                <Input label="Watermark Text" value={settings.invoiceWatermarkText ?? ''} onChange={field('invoiceWatermarkText')} placeholder="e.g. store name — blank = none" />
+              </div>
+              <p className="text-xs text-gray-400 mt-1">Due date only appears on unpaid invoices. The watermark prints faintly across the page.</p>
+            </div>
             {/* Colors & Branding */}
             <div>
               <p className="text-sm font-semibold text-gray-700 mb-3">Colors &amp; Branding</p>
@@ -2234,6 +2395,35 @@ export function SettingsScreen() {
                   <p className="text-sm font-medium text-gray-800">Show Discount Line</p>
                   <Toggle checked={(settings.invoiceShowDiscountLine ?? 'true') === 'true'} onChange={(v) => setBool('invoiceShowDiscountLine', v)} />
                 </div>
+                <div className="flex items-center justify-between py-1">
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">Show SKU Column</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Adds a SKU column to the items table</p>
+                  </div>
+                  <Toggle checked={(settings.invoiceShowSku ?? 'false') === 'true'} onChange={(v) => setBool('invoiceShowSku', v)} />
+                </div>
+                <div className="flex items-center justify-between py-1">
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">Show Customer (Bill To)</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Shown when the order has a customer attached</p>
+                  </div>
+                  <Toggle checked={(settings.invoiceShowCustomer ?? 'true') === 'true'} onChange={(v) => setBool('invoiceShowCustomer', v)} />
+                </div>
+                <div className="flex items-center justify-between py-1">
+                  <p className="text-sm font-medium text-gray-800">Show Payment Details</p>
+                  <Toggle checked={(settings.invoiceShowPayments ?? 'true') === 'true'} onChange={(v) => setBool('invoiceShowPayments', v)} />
+                </div>
+                <div className="flex items-center justify-between py-1">
+                  <p className="text-sm font-medium text-gray-800">Show PAID / UNPAID Stamp</p>
+                  <Toggle checked={(settings.invoiceShowPaidStamp ?? 'true') === 'true'} onChange={(v) => setBool('invoiceShowPaidStamp', v)} />
+                </div>
+                <div className="flex items-center justify-between py-1">
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">Show Signature Line</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Signature and date lines above the footer</p>
+                  </div>
+                  <Toggle checked={(settings.invoiceShowSignatureLine ?? 'false') === 'true'} onChange={(v) => setBool('invoiceShowSignatureLine', v)} />
+                </div>
               </div>
             </div>
             {/* Header & Footer */}
@@ -2257,20 +2447,18 @@ export function SettingsScreen() {
             {/* Live preview */}
             <div>
               <p className="text-sm font-medium text-gray-700 mb-2">Live Preview</p>
-              <InvoicePreviewPane
-                showLogo={(settings.invoiceShowLogo ?? 'true') === 'true'}
-                footer={settings.invoiceFooterText ?? ''}
-                storeName={settings.storeName ?? ''}
-                storeAddress={settings.storeAddress ?? ''}
-                logoBase64={logoBase64 ?? ''}
-                primaryColor={settings.invoicePrimaryColor ?? '#1e293b'}
-                headerMessage={settings.invoiceHeaderMessage ?? ''}
-                customField1={settings.invoiceCustomField1 ?? ''}
-                customField2={settings.invoiceCustomField2 ?? ''}
-                customField3={settings.invoiceCustomField3 ?? ''}
-              />
+              <InvoicePreviewPane settings={settings} logoBase64={logoBase64 ?? ''} />
             </div>
           </div>
+        </SectionAccordion>
+
+        {/* Database Backups */}
+        <SectionAccordion id="backups" title="Database Backups">
+          <BackupSection
+            settings={settings}
+            setSetting={(k, v) => setSettings((p) => ({ ...p, [k]: v }))}
+            showToast={showToast}
+          />
         </SectionAccordion>
 
         <SectionAccordion id="printers" title="Hardware / Printers">
@@ -2626,12 +2814,12 @@ export function SettingsScreen() {
               <div>
                 <div className="flex items-center gap-2 text-emerald-700 font-semibold text-sm">
                   <Link2 size={14} />
-                  Connected: {qboStatus.companyName ?? 'QuickBooks'}
-                  {qboStatus.sandbox && <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">Sandbox</span>}
+                  Connected: {qboStatus?.companyName ?? 'QuickBooks'}
+                  {qboStatus?.sandbox && <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">Sandbox</span>}
                 </div>
-                {qboStatus.lastSyncAt && (
+                {qboStatus?.lastSyncAt && (
                   <p className="text-xs text-emerald-600 mt-1">
-                    Last sync: {new Date(qboStatus.lastSyncAt).toLocaleString()}
+                    Last sync: {new Date(qboStatus?.lastSyncAt ?? 0).toLocaleString()}
                   </p>
                 )}
               </div>

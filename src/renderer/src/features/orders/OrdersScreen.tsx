@@ -15,6 +15,12 @@ import { useCurrencyStore } from '../../stores/currency.store'
 import { ROUTES } from '../../constants'
 import type { Order, OrderItem, Payment } from '../../types'
 import { RefundModal } from './RefundModal'
+import { buildInvoiceHtml } from '../../lib/invoice-template'
+
+/** Escape + preserve line breaks typed in multi-line settings (e.g. footer). */
+function escMultiline(s: string | undefined): string {
+  return esc(s).replace(/\r\n|\r|\n/g, '<br>')
+}
 
 /** Escape a string for safe interpolation into HTML. */
 function esc(s: string | undefined): string {
@@ -138,6 +144,11 @@ export function OrdersScreen() {
           sku: item.sku,
           quantity: item.quantity,
           unitPrice: item.unitPrice,
+          // Effective tax rate reconstructed from the stored as-sold amounts so
+          // re-editing an order keeps its original tax treatment.
+          taxRate: (item.unitPrice - item.discountAmount) * item.quantity > 0
+            ? item.taxAmount / ((item.unitPrice - item.discountAmount) * item.quantity)
+            : 0,
           notes: item.notes ?? undefined,
         })
       }
@@ -251,7 +262,7 @@ export function OrdersScreen() {
     ${changeAmt > 0.005 ? `<tr class="change"><td>Change (${changeCurrCode})</td><td style="text-align:right">${changeCurrSym}${changeAmt.toFixed(2)}</td></tr>` : ''}
   </table>
   ${order.notes ? `<div class="divider"></div><p>Note: ${esc(order.notes)}</p>` : ''}
-  <p class="footer">${esc(cfg.footer)}</p>
+  <p class="footer">${escMultiline(cfg.footer)}</p>
 </body></html>`
 
     // ── Modern template ───────────────────────────────────────────────────────
@@ -304,7 +315,7 @@ export function OrdersScreen() {
     </div>
     ${order.notes ? `<p style="margin-top:12px;font-size:12px;color:#64748b">Note: ${esc(order.notes)}</p>` : ''}
   </div>
-  <div class="footer">${esc(cfg.footer)}</div>
+  <div class="footer">${escMultiline(cfg.footer)}</div>
 </body></html>`
     }
 
@@ -353,104 +364,49 @@ ${esc(cfg.footer)}</pre></body></html>`
     }
   }
 
-  function buildInvoiceHtml(
-    order: Order, items: OrderItem[], payments: Payment[],
-    storeName: string, storeAddress: string, storePhone: string,
-    logoBase64: string, showLogo: boolean, footerText: string
-  ): string {
-    const fmt = (n: number) => `$${Math.abs(n).toFixed(2)}`
-    const isPaid = order.status === 'completed' || order.status === 'refunded' || order.status === 'delivered'
-    const itemRows = items.map((i) => `
-      <tr>
-        <td class="item-name">${esc(i.productName)}${i.variantName ? ` (${esc(i.variantName)})` : ''}</td>
-        <td class="item-center">${i.quantity}</td>
-        <td class="item-right">${fmt(i.unitPrice)}</td>
-        ${order.discountAmount > 0 ? `<td class="item-right">${i.discountAmount > 0 ? `-${fmt(i.discountAmount)}` : '—'}</td>` : ''}
-        <td class="item-right item-bold">${fmt((i.unitPrice - i.discountAmount) * i.quantity)}</td>
-      </tr>`).join('')
-    // Build payment rows with change given sub-row for cash payments
-    const payRows = payments.map((p) => {
-      const changeGiven = (p.changeGiven ?? 0) > 0.005
-        ? `<div class="pay-row" style="color:#10b981;font-size:12px"><span style="padding-left:12px">↳ Change given</span><span>${fmt(p.changeGiven!)}</span></div>`
-        : ''
-      return `<div class="pay-row"><span style="text-transform:capitalize">${p.method.replace(/_/g, ' ')}</span><span>${fmt(p.amount)}</span></div>${changeGiven}`
-    }).join('')
-
-    return `<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>Invoice #${order.orderNumber}</title>
-<style>
-  *{margin:0;padding:0;box-sizing:border-box}
-  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:13px;color:#1e293b;background:#fff;padding:40px}
-  .page{max-width:750px;margin:0 auto}
-  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:40px;padding-bottom:24px;border-bottom:2px solid #e2e8f0}
-  .store-info h1{font-size:22px;font-weight:800;color:#1e293b;margin-bottom:4px}
-  .store-info p{font-size:12px;color:#64748b;line-height:1.6}
-  .logo{max-height:70px;max-width:200px;object-fit:contain}
-  .invoice-meta{text-align:right}
-  .invoice-title{font-size:28px;font-weight:900;color:#3b82f6;letter-spacing:-1px}
-  .invoice-meta p{font-size:12px;color:#64748b;margin-top:4px}
-  .invoice-meta strong{color:#1e293b}
-  .paid-stamp{display:inline-block;border:3px solid #10b981;color:#10b981;font-weight:900;font-size:22px;letter-spacing:2px;padding:4px 16px;border-radius:4px;transform:rotate(-8deg);margin-top:8px;opacity:0.85}
-  .unpaid-stamp{display:inline-block;border:3px solid #ef4444;color:#ef4444;font-weight:900;font-size:22px;letter-spacing:2px;padding:4px 16px;border-radius:4px;transform:rotate(-8deg);margin-top:8px;opacity:0.85}
-  table{width:100%;border-collapse:collapse;margin:24px 0}
-  thead tr{background:#f8fafc;border-bottom:2px solid #e2e8f0}
-  th{padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#64748b;letter-spacing:0.5px}
-  td{padding:10px 12px;border-bottom:1px solid #f1f5f9;vertical-align:top}
-  .item-center{text-align:center} .item-right{text-align:right} .item-bold{font-weight:600}
-  .totals{margin-left:auto;width:260px}
-  .totals-row{display:flex;justify-content:space-between;padding:6px 0;font-size:13px;color:#475569;border-bottom:1px solid #f1f5f9}
-  .totals-total{font-size:16px;font-weight:800;color:#1e293b;border-top:2px solid #1e293b;padding-top:10px;margin-top:4px;display:flex;justify-content:space-between}
-  .payments{margin-top:24px;background:#f8fafc;border-radius:8px;padding:16px 20px}
-  .payments h3{font-size:11px;text-transform:uppercase;color:#64748b;letter-spacing:0.5px;margin-bottom:10px}
-  .pay-row{display:flex;justify-content:space-between;font-size:13px;color:#475569;padding:3px 0;text-transform:capitalize}
-  .footer{margin-top:48px;padding-top:20px;border-top:1px solid #e2e8f0;text-align:center;font-size:12px;color:#94a3b8}
-  @media print{body{padding:20px} @page{margin:1cm}}
-</style></head><body><div class="page">
-  <div class="header">
-    <div class="store-info">
-      ${showLogo && logoBase64 ? `<img class="logo" src="${logoBase64}" alt="Logo" style="margin-bottom:10px;display:block"/>` : ''}
-      <h1>${esc(storeName)}</h1>
-      <p>${storeAddress ? esc(storeAddress) + '<br>' : ''}${esc(storePhone)}</p>
-    </div>
-    <div class="invoice-meta">
-      <div class="invoice-title">INVOICE</div>
-      <p><strong>#${order.orderNumber}</strong></p>
-      <p>Date: <strong>${new Date(order.createdAt).toLocaleDateString()}</strong></p>
-      <p>Time: <strong>${new Date(order.createdAt).toLocaleTimeString()}</strong></p>
-      <div class="${isPaid ? 'paid-stamp' : 'unpaid-stamp'}">${isPaid ? 'PAID' : 'UNPAID'}</div>
-    </div>
-  </div>
-  <table>
-    <thead><tr>
-      <th>Description</th><th style="text-align:center">Qty</th><th style="text-align:right">Unit Price</th>
-      ${order.discountAmount > 0 ? '<th style="text-align:right">Discount</th>' : ''}
-      <th style="text-align:right">Amount</th>
-    </tr></thead>
-    <tbody>${itemRows}</tbody>
-  </table>
-  <div class="totals">
-    ${order.taxAmount > 0 ? `<div class="totals-row"><span>Subtotal</span><span>${fmt(order.subtotal)}</span></div>` : ''}
-    ${order.discountAmount > 0 ? `<div class="totals-row" style="color:#10b981"><span>Discount</span><span>-${fmt(order.discountAmount)}</span></div>` : ''}
-    ${order.taxAmount > 0 ? `<div class="totals-row"><span>Tax</span><span>${fmt(order.taxAmount)}</span></div>` : ''}
-    <div class="totals-total"><span>Total</span><span>${fmt(order.total)}</span></div>
-  </div>
-  ${payments.length > 0 ? `<div class="payments"><h3>Payment Details</h3>${payRows}</div>` : ''}
-  ${order.notes ? `<p style="margin-top:24px;font-size:12px;color:#64748b"><strong>Notes:</strong> ${esc(order.notes)}</p>` : ''}
-  <div class="footer">${esc(footerText)}</div>
-</div></body></html>`
-  }
-
   async function handlePrintInvoice(order: Order, items: OrderItem[], payments: Payment[]) {
     try {
       const s = await api.settings.getAll()
+
+      // Bill To — only fetched when the setting is on and the order has a customer
+      let customerName: string | undefined
+      if ((s.invoiceShowCustomer ?? 'true') === 'true' && order.customerId) {
+        try {
+          const cust = await api.customers.get(order.customerId)
+          if (cust) customerName = `${cust.firstName} ${cust.lastName}`.trim()
+        } catch { /* non-fatal — print without customer */ }
+      }
+
+      const isPaid = order.status === 'completed' || order.status === 'refunded' || order.status === 'delivered'
       const html = buildInvoiceHtml(
-        order, items, payments,
-        s.storeName ?? '',
-        s.storeAddress ?? '',
-        s.storePhone ?? '',
-        s.logoBase64 ?? '',
-        (s.invoiceShowLogo ?? 'true') === 'true',
-        s.invoiceFooterText ?? 'Payment due on receipt. Thank you!'
+        {
+          orderNumber: order.orderNumber,
+          date: new Date(order.createdAt),
+          isPaid,
+          customerName,
+          items: items.map((i) => ({
+            name: i.productName,
+            variantName: i.variantName ?? undefined,
+            sku: i.sku,
+            quantity: i.quantity,
+            unitPrice: i.unitPrice,
+            discountAmount: i.discountAmount
+          })),
+          subtotal: order.subtotal,
+          discountAmount: order.discountAmount,
+          taxAmount: order.taxAmount,
+          total: order.total,
+          payments: payments.map((p) => ({ method: p.method, amount: p.amount, changeGiven: p.changeGiven ?? undefined })),
+          notes: order.notes ?? undefined
+        },
+        {
+          storeName: s.storeName ?? '',
+          storeAddress: s.storeAddress ?? '',
+          storePhone: s.storePhone ?? '',
+          logoBase64: s.logoBase64 ?? '',
+          currencySymbol: CURRENCIES[storeCurrency]?.symbol ?? '$'
+        },
+        s
       )
       const result = await api.invoice.print(html)
       if (result?.success) {

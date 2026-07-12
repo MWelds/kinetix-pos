@@ -5,7 +5,6 @@ import { api } from '../../lib/api'
 import { useCartStore } from '../../stores/cart.store'
 import { useUiStore } from '../../stores/ui.store'
 import { formatCurrency } from '../../lib/currency'
-import { formatDateTime } from '../../lib/dates'
 import type { Order } from '../../types'
 
 interface Props {

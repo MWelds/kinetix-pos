@@ -9,7 +9,7 @@ import http from 'http'
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'crypto'
 import { settingsService } from '../services/settings.service'
 import { getSqlite } from '../database/connection'
-import { hashPin } from '../lib/pin'
+import { candidateHashes, verifyPin } from '../lib/pin'
 import { getLanIp, getLanIps } from '../lib/network'
 import {
   SYNC_TABLES, HAS_UPDATED_AT, MACHINE_SPECIFIC_SETTINGS, LWW_EXCLUDE_COLS,
@@ -149,17 +149,17 @@ type AdminPinResult = 'ok' | 'default_pin' | 'invalid'
 
 function validateAdminPin(pin: string): AdminPinResult {
   if (!pin) return 'invalid'
-  // Hash the supplied PIN once — all stored PINs (staff + dashboardAdminPin) are
-  // SHA-256 hashed so we never compare plaintext against the database.
-  let hashed: string
-  try { hashed = hashPin(pin) } catch { return 'invalid' }
+  // Compute both candidate hashes (current PBKDF2 + legacy SHA-256) so lookups
+  // match a stored PIN in either scheme during the migration window.
+  let current: string, legacy: string
+  try { ({ current, legacy } = candidateHashes(pin)) } catch { return 'invalid' }
 
   // 1. Check the main app's dashboardAdminPin setting (always available, even before any sync).
   //    This is the primary bootstrap path for a fresh server install. It's a distinct,
   //    deliberately-set credential — not a staff row — so is_default_pin doesn't apply.
   try {
     const appPin = settingsService.get('dashboardAdminPin')
-    if (appPin && appPin === hashed) return 'ok'
+    if (appPin && verifyPin(pin, appPin)) return 'ok'
   } catch { /* main db may not be initialised yet — fall through */ }
   // 2. Check central.db for any staff member with dashboard access enabled and matching PIN.
   //    Reject (rather than silently fall through) a match still on its seeded default PIN —
@@ -169,13 +169,13 @@ function validateAdminPin(pin: string): AdminPinResult {
     const db = getServerDb()
     // Note: staff table does NOT have deleted_at — only is_active tracks soft deletes for staff
     const staffRow = db.prepare(
-      `SELECT is_default_pin FROM staff WHERE pin=? AND is_active=1 AND can_access_dashboard=1`
-    ).get(hashed) as { is_default_pin: number } | undefined
+      `SELECT is_default_pin FROM staff WHERE pin IN (?, ?) AND is_active=1 AND can_access_dashboard=1`
+    ).get(current, legacy) as { is_default_pin: number } | undefined
     if (staffRow) return staffRow.is_default_pin ? 'default_pin' : 'ok'
     // 3. Legacy fallback: admin-role staff (before can_access_dashboard column existed).
     const adminRow = db.prepare(
-      `SELECT is_default_pin FROM staff WHERE pin=? AND role='admin' AND is_active=1`
-    ).get(hashed) as { is_default_pin: number } | undefined
+      `SELECT is_default_pin FROM staff WHERE pin IN (?, ?) AND role='admin' AND is_active=1`
+    ).get(current, legacy) as { is_default_pin: number } | undefined
     if (adminRow) return adminRow.is_default_pin ? 'default_pin' : 'ok'
   } catch { /* central.db not ready */ }
   return 'invalid'

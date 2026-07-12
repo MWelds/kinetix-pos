@@ -307,6 +307,12 @@ const api = {
   },
 
   // File-based sync (no HTTP — uses Windows network share)
+  backup: {
+    status: () => ipcRenderer.invoke(IPC.BACKUP_STATUS),
+    runNow: () => ipcRenderer.invoke(IPC.BACKUP_RUN_NOW),
+    pickDir: () => ipcRenderer.invoke(IPC.BACKUP_PICK_DIR)
+  },
+
   fileSync: {
     getState: () => ipcRenderer.invoke(IPC.FILE_SYNC_GET_STATE),
     runNow: () => ipcRenderer.invoke(IPC.FILE_SYNC_RUN_NOW),

@@ -255,3 +255,22 @@ export interface VendorPayable {
   cogsToday: number
 }
 
+
+export type PaymentMethod = 'cash' | 'card' | 'store_credit' | 'gift_card' | 'layaway'
+
+export interface ProductComponent {
+  id: string
+  compositeProductId: string
+  componentProductId: string
+  componentProductName: string
+  componentSku: string
+  quantity: number
+}
+
+export interface SalesSummary {
+  orderCount: number
+  totalRevenue: number
+  totalDiscount: number
+  totalTax: number
+  averageOrderValue: number
+}

@@ -2,48 +2,13 @@ import { BrowserWindow, screen } from 'electron'
 import { sendReceiptEmail, sendInvoiceEmail } from '../services/email.service'
 import { join } from 'path'
 import * as http from 'http'
-import * as os from 'os'
 import { is } from '@electron-toolkit/utils'
 import { getLanIp } from '../lib/network'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface DisplayItem {
-  name: string
-  quantity: number
-  unitPrice: number
-  lineTotal: number
-}
-
-export interface DisplayData {
-  state: 'idle' | 'shopping' | 'payment_processing' | 'complete'
-  storeName?: string
-  items?: DisplayItem[]
-  subtotal?: number
-  discountAmount?: number
-  tax?: number
-  total?: number
-  currency?: string
-  symbol?: string
-  /** Equivalent total in the other currency (shown when KYD is active) */
-  altTotal?: number
-  altCurrency?: string
-  altSymbol?: string
-  customer?: string
-  change?: number
-  changeCurrency?: string
-  changeSymbol?: string
-  loyaltyEarned?: number
-  /** Display appearance settings — pushed once on open */
-  displayBgColor?: string
-  displayBgImage?: string
-  /** Receipt HTML from the just-completed order — used by display for email-to-customer */
-  completedReceiptHtml?: string
-  /** Order number of the just-completed order */
-  orderNumber?: string
-  /** Store logo as base64 data URL — attached automatically by pushData when a logo is cached */
-  logoBase64?: string
-}
+import type { DisplayData } from '../../shared/display-types'
+export type { DisplayData, DisplayItem } from '../../shared/display-types'
 
 // ─── Module-level singletons ──────────────────────────────────────────────────
 
@@ -217,7 +182,7 @@ export function startHttpServer(port: number): Promise<void> {
         // The 800ms pull loop in setMainWindow() keeps lastData fresh independently.
         // logoBase64 is stripped so iOS Safari doesn't choke on a 200KB payload every 800ms.
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { logoBase64: _logo, ...stateForPoll } = lastData as Record<string, unknown>
+        const { logoBase64: _logo, ...stateForPoll } = lastData as unknown as Record<string, unknown>
         const body = JSON.stringify(stateForPoll)
         res.writeHead(200, {
           'Content-Type': 'application/json',

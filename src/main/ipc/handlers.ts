@@ -1,5 +1,5 @@
-import { ipcMain, IpcMainInvokeEvent, BrowserWindow, dialog, app, WebContents } from 'electron'
-import { readFileSync, writeFileSync, unlinkSync, mkdirSync, copyFileSync, existsSync } from 'fs'
+import { ipcMain, IpcMainInvokeEvent, BrowserWindow, dialog, app } from 'electron'
+import { readFileSync, writeFileSync, unlinkSync } from 'fs'
 import { extname, join } from 'path'
 import { tmpdir } from 'os'
 import { randomBytes, randomInt } from 'crypto'
@@ -29,8 +29,7 @@ import { qboService } from '../services/qbo.service'
 import { exportService } from '../services/export.service'
 import { csvImportExportService } from '../services/csv-import-export.service'
 import { vendorService } from '../services/vendor.service'
-import { discountService } from '../services/discount.service'
-import { giftCardService } from '../services/gift-card.service'
+import { backupService } from '../services/backup.service'
 import { getSyncState, runSync, forceFullSync, testConnection, startSyncLoop, stopSyncLoop, onSyncStateChange } from '../sync/sync.service'
 import {
   getSyncV2State, runSyncV2, forceFullSyncV2,
@@ -38,14 +37,14 @@ import {
 } from '../sync/sync-v2.service'
 import {
   getCloudSyncState, runCloudSync, forceFullCloudSync, onCloudSyncStateChange,
-  startCloudSyncLoop, stopCloudSyncLoop,
+  startCloudSyncLoop,
 } from '../sync/cloud-sync.service'
 import { startEmbeddedServer, stopEmbeddedServer, getEmbeddedServerStatus } from '../sync/embedded-server'
 import {
   getFileSyncState, runFileSync, startFileSyncLoop, stopFileSyncLoop,
-  testSharePath, onFileSyncStateChange
+  testSharePath
 } from '../sync/file-sync.service'
-import { startFileSyncServer, stopFileSyncServer, getDefaultLocalSharePath } from '../sync/file-sync-server'
+import { getDefaultLocalSharePath } from '../sync/file-sync-server'
 import { getLanIps, getLanIp } from '../lib/network'
 
 // ── PIN reset code store ─────────────────────────────────────────────────────
@@ -218,10 +217,16 @@ export function registerIpcHandlers(): void {
   })
 
   // Orders
-  ipcMain.handle(IPC.ORDERS_CREATE, (_e, input) => orderService.create(input))
+  ipcMain.handle(IPC.ORDERS_CREATE, (e, input) => {
+    requireRole(e, 'cashier')
+    return orderService.create(input)
+  })
   ipcMain.handle(IPC.ORDERS_GET, (_e, id: string) => orderService.getWithItems(id))
   ipcMain.handle(IPC.ORDERS_LIST, (_e, filters) => orderService.list(filters))
-  ipcMain.handle(IPC.ORDERS_COMPLETE, (_e, input) => orderService.complete(input))
+  ipcMain.handle(IPC.ORDERS_COMPLETE, (e, input) => {
+    requireRole(e, 'cashier')
+    return orderService.complete(input)
+  })
   ipcMain.handle(IPC.ORDERS_VOID, (e, id: string, staffId: string) => {
     requireRole(e, 'manager')
     return orderService.voidOrder(id, staffId)
@@ -230,17 +235,22 @@ export function registerIpcHandlers(): void {
     requireRole(e, 'manager')
     return orderService.refund(id, items, sessionStore.get(e.sender.id)?.staffId)
   })
-  ipcMain.handle(IPC.ORDERS_HOLD, (_e, id: string) => orderService.hold(id))
+  ipcMain.handle(IPC.ORDERS_HOLD, (e, id: string) => {
+    requireRole(e, 'cashier')
+    return orderService.hold(id)
+  })
   ipcMain.handle(IPC.ORDERS_HELD_LIST, () => orderService.listHeld())
-  ipcMain.handle(IPC.ORDERS_UPDATE_STATUS, (_e, id: string, status: string) =>
-    orderService.updateStatus(id, status)
-  )
+  ipcMain.handle(IPC.ORDERS_UPDATE_STATUS, (e, id: string, status: string) => {
+    requireRole(e, 'cashier')
+    return orderService.updateStatus(id, status)
+  })
   ipcMain.handle(IPC.ORDERS_GET_FOR_EDIT, (_e, id: string) =>
     orderService.getWithItems(id)
   )
-  ipcMain.handle(IPC.ORDERS_UPDATE_AND_COMPLETE, (_e, input) =>
-    orderService.updateAndComplete(input)
-  )
+  ipcMain.handle(IPC.ORDERS_UPDATE_AND_COMPLETE, (e, input) => {
+    requireRole(e, 'cashier')
+    return orderService.updateAndComplete(input)
+  })
 
   // Payments
   ipcMain.handle(IPC.PAYMENTS_LIST_FOR_ORDER, (_e, orderId: string) =>
@@ -456,15 +466,18 @@ export function registerIpcHandlers(): void {
   })
 
   // Shifts
-  ipcMain.handle(IPC.SHIFTS_OPEN, (_e, staffId: string, openingCash: number) =>
-    staffService.openShift(staffId, openingCash)
-  )
-  ipcMain.handle(IPC.SHIFTS_CLOSE, (e, shiftId: string, closingCash: number, notes?: string, requestingStaffId?: string) =>
-    staffService.closeShift(shiftId, closingCash, notes, requestingStaffId)
-  )
-  ipcMain.handle(IPC.SHIFTS_CURRENT, (_e, staffId: string) =>
-    staffService.getCurrentShift(staffId)
-  )
+  ipcMain.handle(IPC.SHIFTS_OPEN, (e, staffId: string, openingCash: number) => {
+    requireRole(e, 'cashier')
+    return staffService.openShift(staffId, openingCash)
+  })
+  ipcMain.handle(IPC.SHIFTS_CLOSE, (e, shiftId: string, closingCash: number, notes?: string, requestingStaffId?: string) => {
+    requireRole(e, 'cashier')
+    return staffService.closeShift(shiftId, closingCash, notes, requestingStaffId)
+  })
+  ipcMain.handle(IPC.SHIFTS_CURRENT, (e, staffId: string) => {
+    requireRole(e, 'cashier')
+    return staffService.getCurrentShift(staffId)
+  })
   ipcMain.handle(IPC.SHIFTS_LIST, (e) => {
     requireRole(e, 'manager')
     return staffService.listShifts()
@@ -527,7 +540,13 @@ export function registerIpcHandlers(): void {
   })
 
   // Audit
-  ipcMain.handle(IPC.AUDIT_LOG, (_e, input) => staffService.logAction(input))
+  ipcMain.handle(IPC.AUDIT_LOG, (e, input) => {
+    // Must be authenticated, and the actor is taken from the server-side session
+    // rather than the payload so entries can't be forged or misattributed.
+    requireRole(e, 'cashier')
+    const staffId = sessionStore.get(e.sender.id)?.staffId
+    return staffService.logAction({ ...input, staffId })
+  })
   ipcMain.handle(IPC.AUDIT_LIST, (e, limit?: number) => {
     requireRole(e, 'manager')
     // Cap limit to prevent loading the entire table into memory
@@ -1172,6 +1191,22 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.FILE_SYNC_GET_LOCAL_SHARE_PATH, () =>
     getDefaultLocalSharePath(app.getPath('userData'))
   )
+
+  // ── Automatic DB backups ─────────────────────────────────────────────────
+  ipcMain.handle(IPC.BACKUP_STATUS, () => backupService.getStatus())
+  ipcMain.handle(IPC.BACKUP_RUN_NOW, async (e) => {
+    requireRole(e, 'manager')
+    return backupService.runNow()
+  })
+  ipcMain.handle(IPC.BACKUP_PICK_DIR, async (e) => {
+    requireRole(e, 'manager')
+    const result = await dialog.showOpenDialog({
+      title: 'Choose backup folder',
+      properties: ['openDirectory', 'createDirectory']
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]
+  })
 
   // Staff — get single member by ID
   ipcMain.handle(IPC.STAFF_GET, (_e, id: string) => staffService.get(id))

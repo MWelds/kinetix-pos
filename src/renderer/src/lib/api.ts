@@ -182,7 +182,7 @@ export const api = {
         orderCount: number
         totalRevenue: number
         totalDiscount: number
-        paymentRows: Array<{ method: string; count: number; total: number }>
+        paymentRows: Array<{ method: string; currency: string; count: number; total: number; originalTotal: number }>
       }>
       combined: { orderCount: number; totalRevenue: number; totalDiscount: number }
     }> => bridge.reports.eodByTerminal(from, to)
@@ -357,6 +357,22 @@ export const api = {
     stop: (): Promise<void> => bridge.syncV2.stop(),
     onStateChange: (callback: (state: unknown) => void): (() => void) =>
       bridge.syncV2.onStateChange(callback)
+  },
+
+  backup: {
+    status: (): Promise<{
+      enabled: boolean
+      intervalHours: number
+      retention: number
+      directory: string
+      lastBackupAt: string | null
+      lastError: string | null
+      backupCount: number
+      latestFile: string | null
+      running: boolean
+    }> => bridge.backup.status(),
+    runNow: (): Promise<{ file: string; sizeBytes: number }> => bridge.backup.runNow(),
+    pickDir: (): Promise<string | null> => bridge.backup.pickDir()
   },
 
   fileSync: {

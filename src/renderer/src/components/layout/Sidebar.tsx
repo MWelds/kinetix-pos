@@ -27,10 +27,10 @@ function SyncIndicator() {
     api.settings.get('syncVersion').then((v) => setSyncVersion(v ?? '')).catch(() => {})
 
     // Subscribe to both protocol state streams; only one will be active at a time
-    api.sync.getState().then(setSyncState).catch(() => {})
+    api.sync.getState().then((s) => setSyncState(s as SyncShape)).catch(() => {})
     const unsubV1 = api.sync.onStateChange((s: unknown) => setSyncState(s as SyncShape))
 
-    api.syncV2.getState().then(setSyncV2State).catch(() => {})
+    api.syncV2.getState().then((s) => setSyncV2State(s as SyncShape)).catch(() => {})
     const unsubV2 = api.syncV2.onStateChange((s: unknown) => {
       setSyncV2State(s as SyncShape)
       // When v2 fires state, we're definitely on v2

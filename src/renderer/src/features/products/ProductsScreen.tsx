@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { Plus, Search, Edit, Trash2, Package, Layers, FolderOpen, X, Check, ImagePlus, Store, Loader, Tag, CheckSquare } from 'lucide-react'
+import { Plus, Search, Edit, Trash2, Package, Layers, FolderOpen, X, Check, ImagePlus, Store, Loader, Tag } from 'lucide-react'
 import { api } from '../../lib/api'
 import { CsvImportExportBar } from '../../components/ui/CsvImportExportBar'
 import { Input, Button, Badge, Modal, PageSpinner } from '../../components/ui'
@@ -7,6 +7,12 @@ import { useCurrencyStore } from '../../stores/currency.store'
 import { useUiStore } from '../../stores/ui.store'
 import type { Product, Category, ProductComponent, Vendor } from '../../types'
 import { PriceTagModal } from './PriceTagModal'
+
+/** Strip Electron's "Error invoking remote method 'x': Error: " prefix so users see a clean message. */
+function cleanIpcError(err: unknown, fallback: string): string {
+  if (!(err instanceof Error)) return fallback
+  return err.message.replace(/^Error invoking remote method '[^']*':\s*(Error:\s*)?/, '') || fallback
+}
 
 // ─── Preset category colours ──────────────────────────────────────────────────
 const PRESET_COLORS = [
@@ -263,16 +269,24 @@ export function ProductsScreen() {
 
   async function handleDelete(product: Product) {
     if (!confirm(`Delete "${product.name}"?`)) return
-    await api.products.delete(product.id)
-    showToast('Product deleted', 'success')
+    try {
+      await api.products.delete(product.id)
+      showToast('Product deleted', 'success')
+    } catch (err) {
+      showToast(cleanIpcError(err, 'Failed to delete product'), 'error')
+    }
     load()
   }
 
   async function handleBatchDelete() {
     const count = selectedIds.size
     if (!confirm(`Delete ${count} product${count !== 1 ? 's' : ''}? This cannot be undone.`)) return
-    await Promise.all([...selectedIds].map((id) => api.products.delete(id)))
-    showToast(`${count} product${count !== 1 ? 's' : ''} deleted`, 'success')
+    try {
+      await Promise.all([...selectedIds].map((id) => api.products.delete(id)))
+      showToast(`${count} product${count !== 1 ? 's' : ''} deleted`, 'success')
+    } catch (err) {
+      showToast(cleanIpcError(err, 'Some products could not be deleted'), 'error')
+    }
     setSelectedIds(new Set())
     load()
   }
@@ -861,7 +875,7 @@ function ProductFormModal({ product, categories, onClose, onSave }: ProductFormM
 
       onSave()
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to save product', 'error')
+      showToast(cleanIpcError(err, 'Failed to save product'), 'error')
     } finally { setSaving(false) }
   }
 

@@ -1,7 +1,38 @@
 import { eq } from 'drizzle-orm'
+import { safeStorage } from 'electron'
 import { getDatabase } from '../database/connection'
 import * as schema from '../database/schema'
 import { hashPin } from '../lib/pin'
+
+/**
+ * Settings whose stored value is encrypted at rest with the OS keystore
+ * (Electron safeStorage → DPAPI on Windows). These are also machine-specific
+ * (see MACHINE_SPECIFIC_SETTINGS) so the ciphertext, which is only decryptable
+ * on the machine that wrote it, never syncs to other terminals.
+ */
+const ENCRYPTED_KEYS = new Set(['emailPassword'])
+const ENC_PREFIX = 'enc:v1:'
+
+/** Encrypt a value with the OS keystore. Falls back to plaintext if unavailable. */
+function encryptValue(value: string): string {
+  if (!value) return value
+  try {
+    if (safeStorage.isEncryptionAvailable()) {
+      return ENC_PREFIX + safeStorage.encryptString(value).toString('base64')
+    }
+  } catch { /* keystore unavailable — store as-is rather than lose the value */ }
+  return value
+}
+
+/** Decrypt a value written by encryptValue(). Legacy plaintext passes through. */
+function decryptValue(value: string): string {
+  if (value && value.startsWith(ENC_PREFIX)) {
+    try {
+      return safeStorage.decryptString(Buffer.from(value.slice(ENC_PREFIX.length), 'base64'))
+    } catch { return '' }
+  }
+  return value
+}
 
 export const DEFAULT_SETTINGS = {
   // ── Store ──────────────────────────────────────────────────────────────────
@@ -55,10 +86,25 @@ export const DEFAULT_SETTINGS = {
   invoiceCustomField1: '',
   invoiceCustomField2: '',
   invoiceCustomField3: '',
+  invoiceTemplate: 'classic',
+  invoiceTitleLabel: 'INVOICE',
+  invoiceNumberPrefix: '',
+  invoiceFontSize: 'normal',
+  invoiceMargin: 'normal',
+  invoiceLogoSize: 'medium',
+  invoiceShowSku: 'false',
+  invoiceShowCustomer: 'true',
+  invoiceShowPayments: 'true',
+  invoiceShowPaidStamp: 'true',
+  invoiceShowSignatureLine: 'false',
+  invoiceWatermarkText: '',
+  invoiceDueDays: '',
 
   // ── Customer display ───────────────────────────────────────────────────────
   displayBgColor: '#0f172a',
   displayBgImage: '',
+  networkDisplayAutoStart: 'false',
+  networkDisplayPort: '3031',
 
   // ── Sync — shared ─────────────────────────────────────────────────────────
   syncEnabled: 'false',
@@ -102,6 +148,22 @@ export const DEFAULT_SETTINGS = {
   qboClientSecret: '',
   qboSandbox: 'false',
   qboRealmId: '',
+
+  // ── Cloud sync ─────────────────────────────────────────────────────────────
+  cloudSyncEnabled: 'false',
+  cloudSyncUrl: '',
+  cloudApiKey: '',
+  cloudSyncIntervalSeconds: '300',
+  cloudPushWatermark: '',
+  cloudPullWatermark: '',
+  storeId: '',
+
+  // ── Automatic database backups (machine-specific) ─────────────────────────
+  backupEnabled: 'true',
+  backupIntervalHours: '24',
+  backupRetention: '14',
+  backupCustomPath: '',
+  lastBackupAt: '',
 }
 
 export type SettingKey = keyof typeof DEFAULT_SETTINGS
@@ -122,7 +184,8 @@ export const settingsService = {
   get(key: SettingKey): string {
     const db = getDatabase()
     const row = db.select().from(schema.settings).where(eq(schema.settings.key, key)).get()
-    return row?.value ?? DEFAULT_SETTINGS[key]
+    const raw = row?.value ?? DEFAULT_SETTINGS[key]
+    return ENCRYPTED_KEYS.has(key) ? decryptValue(raw) : raw
   },
 
   set(key: string, value: string): void {
@@ -134,6 +197,9 @@ export const settingsService = {
     let storedValue = value
     if (key === 'dashboardAdminPin' && value.length > 0) {
       storedValue = hashPin(value)
+    } else if (ENCRYPTED_KEYS.has(key) && value.length > 0) {
+      // Encrypt secrets (e.g. SMTP password) at rest with the OS keystore.
+      storedValue = encryptValue(value)
     }
     const db = getDatabase()
     const now = new Date().toISOString()

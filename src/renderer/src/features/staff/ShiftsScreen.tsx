@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import {
   Clock, ChevronDown, ChevronRight, RefreshCw, RotateCcw,
-  ShoppingBag, AlertCircle, User, FileText
+  ShoppingBag, User, FileText
 } from 'lucide-react'
 import { api } from '../../lib/api'
 import { Button, Badge, PageSpinner } from '../../components/ui'

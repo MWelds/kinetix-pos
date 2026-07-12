@@ -8,7 +8,7 @@ import { useUiStore } from './stores/ui.store'
 import { api } from './lib/api'
 import type { CurrencyCode } from './lib/currency'
 import { CURRENCIES } from './lib/currency'
-import type { DisplayData } from '../../main/display/customer-display'
+import type { DisplayData } from '../../shared/display-types'
 import { Sidebar } from './components/layout/Sidebar'
 import { ToastContainer } from './components/ui'
 import { LoginScreen } from './features/staff/LoginScreen'
@@ -86,7 +86,7 @@ function AppShell() {
 /** Pure helper — builds DisplayData from current Zustand state, no side effects. */
 function buildDisplayData(): DisplayData {
   const cart = useCartStore.getState()
-  const { currency, altCurrency, kydToUsdRate, toDisplay } = useCurrencyStore.getState()
+  const { currency, altCurrency, toDisplay } = useCurrencyStore.getState()
   const items = cart.items
   if (items.length === 0) return { state: 'idle' }
   return {
@@ -126,7 +126,7 @@ function buildDisplayData(): DisplayData {
 function DisplaySyncBridge() {
   useEffect(() => {
     // Expose getter for main-process pull loop
-    ;(window as Record<string, unknown>)['__getDisplayData'] = () =>
+    ;(window as unknown as Record<string, unknown>)['__getDisplayData'] = () =>
       JSON.stringify(buildDisplayData())
 
     function push() {
@@ -145,7 +145,7 @@ function DisplaySyncBridge() {
       unsubCart()
       unsubCurrency()
       clearInterval(heartbeat)
-      delete (window as Record<string, unknown>)['__getDisplayData']
+      delete (window as unknown as Record<string, unknown>)['__getDisplayData']
     }
   }, [])
 

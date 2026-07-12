@@ -421,7 +421,7 @@ export function importCustomersCsv(csvText: string): ImportResult {
       const now = new Date().toISOString()
 
       // Try to find existing by email, then by name if no email
-      let existing = null
+      let existing: typeof schema.customers.$inferSelect | null = null
       if (email) {
         existing = db.select().from(schema.customers)
           .all().find((c) => c.email?.toLowerCase() === email.toLowerCase()) ?? null

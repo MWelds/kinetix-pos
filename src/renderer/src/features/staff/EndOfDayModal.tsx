@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import {
   Sun, DollarSign, CreditCard, Printer, CheckCircle,
-  AlertTriangle, X, ChevronRight, ChevronLeft, TrendingUp, ShoppingBag, LogOut, Truck,
+  AlertTriangle, X, ChevronRight, ChevronLeft, TrendingUp, ShoppingBag, Truck,
   Monitor
 } from 'lucide-react'
 import { api } from '../../lib/api'
@@ -36,7 +36,7 @@ interface TerminalSummary {
   orderCount: number
   totalRevenue: number
   totalDiscount: number
-  paymentRows: { method: string; currency: string; count: number; total: number; originalTotal: number; changeTotal: number }[]
+  paymentRows: { method: string; currency: string; count: number; total: number; originalTotal: number }[]
 }
 
 /** One cash-count entry per method × currency that the cashier fills in */
@@ -395,7 +395,7 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
         api.reports.vendorPayables(from, to),
         api.reports.eodByTerminal(from, to)
       ])
-      const payArr = payments as { method: string; currency: string; count: number; total: number; originalTotal: number }[]
+      const payArr = payments as { method: string; currency: string; count: number; total: number; originalTotal: number; changeTotal: number }[]
       const s = sales as { orderCount: number; totalRevenue: number; totalDiscount: number; averageOrderValue: number }
       const daySummary: DaySummary = {
         orderCount: s.orderCount,
@@ -497,11 +497,6 @@ export function EndOfDayModal({ isOpen, onClose }: Props) {
   /** Net primary cash to bank after float and vendor payables */
   const netPrimaryToBank = Math.max(0, primaryCashToDeposit - totalVendorCogs)
 
-  /** Combined KYD-equivalent — used only for the shift-close API call, not displayed */
-  const cashOnlyCounted = entries
-    .filter((e) => e.method === 'cash')
-    .reduce((s, e) => s + (toPrimary(parseFloat(e.counted) || 0, e.currency)), 0)
-  const cashToDeposit = Math.max(0, cashOnlyCounted - closingFloatAmount)
 
   const primarySym = currencySymbol(primaryCurrency)
 

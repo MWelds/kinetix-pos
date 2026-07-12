@@ -120,6 +120,7 @@ export function ProductGrid() {
 
     if (!search) {
       loadProducts()
+      return undefined
     } else {
       const timer = setTimeout(async () => {
         setLoading(true)

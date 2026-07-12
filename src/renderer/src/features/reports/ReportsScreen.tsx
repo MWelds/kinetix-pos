@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { BarChart3, TrendingUp, Download, RefreshCw, Cloud, ChevronDown, Check, AlertCircle, Monitor, DollarSign, CreditCard } from 'lucide-react'
 import { api } from '../../lib/api'
-import { Button, PageSpinner } from '../../components/ui'
+import { PageSpinner } from '../../components/ui'
 import { useCurrencyStore } from '../../stores/currency.store'
 import { CURRENCIES } from '../../lib/currency'
 import { startOfDay, endOfDay, toISODate } from '../../lib/dates'
@@ -276,8 +276,6 @@ export function ReportsScreen() {
 
                 {/* Cash / Card totals in both currencies */}
                 {payments.length > 0 && (() => {
-                  const { currency: primaryCurrency, altCurrency } = useCurrencyStore.getState()
-                  const secondaryCurrency = altCurrency()
                   const allCurrencies = [...new Set(payments.map((r) => r.currency))]
                   const sumBy = (method: string | null, currency: string) =>
                     payments.filter((r) => (method ? r.method === method : true) && r.currency === currency)

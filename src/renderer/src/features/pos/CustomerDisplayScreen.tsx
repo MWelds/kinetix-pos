@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../../lib/api'
-import type { DisplayData } from '../../../../main/display/customer-display'
+import type { DisplayData } from '../../../../shared/display-types'
 
 // ─── State machine views ──────────────────────────────────────────────────────
 

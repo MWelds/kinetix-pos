@@ -107,4 +107,16 @@ export const MACHINE_SPECIFIC_SETTINGS = new Set([
   'cloudApiKey',
   'cloudPushWatermark',
   'cloudPullWatermark',
+
+  // Automatic DB backups — paths and timestamps are per-machine
+  'backupEnabled',
+  'backupIntervalHours',
+  'backupRetention',
+  'backupCustomPath',
+  'lastBackupAt',
+
+  // SMTP password is encrypted at rest with this machine's OS keystore, so the
+  // ciphertext is only decryptable here — it must never sync to other terminals.
+  // Configure email per-terminal (typically only the register that sends mail).
+  'emailPassword',
 ]) satisfies ReadonlySet<string>

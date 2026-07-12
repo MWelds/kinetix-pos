@@ -10,7 +10,7 @@ interface Props {
 }
 
 export function ShiftModal({ isOpen, onClose }: Props) {
-  const { staff, shift, setShift, logout } = useAuthStore()
+  const { staff, shift, setShift } = useAuthStore()
   const showToast = useUiStore((s) => s.showToast)
   const [cashAmount, setCashAmount] = useState('')
   const [notes, setNotes] = useState('')

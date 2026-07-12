@@ -2,13 +2,14 @@ import React, { useState, useEffect } from 'react'
 import {
   CreditCard, Banknote, Gift, Star, Clock, CheckCircle, Printer, Mail
 } from 'lucide-react'
-import { Modal, Button, Input, Badge } from '../../components/ui'
+import { Modal, Button, Input } from '../../components/ui'
 import { useCartStore } from '../../stores/cart.store'
 import { useAuthStore } from '../../stores/auth.store'
 import { useUiStore } from '../../stores/ui.store'
 import { useCurrencyStore } from '../../stores/currency.store'
 import { api } from '../../lib/api'
-import { formatCurrency, convertAmount, CURRENCIES, round2, type CurrencyCode } from '../../lib/currency'
+import { convertAmount, CURRENCIES, round2, type CurrencyCode } from '../../lib/currency'
+import { buildInvoiceHtml } from '../../lib/invoice-template'
 import type { PaymentMethod } from '../../types'
 
 interface PaymentModalProps {
@@ -88,6 +89,11 @@ function esc(s: string | undefined): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
+}
+
+/** Escape + preserve line breaks typed in multi-line settings (e.g. footer). */
+function escMultiline(s: string | undefined): string {
+  return esc(s).replace(/\r\n|\r|\n/g, '<br>')
 }
 
 /** Font stack lookup for configurable receipt fonts. */
@@ -186,7 +192,7 @@ function buildReceiptHtml(
     ${snap.change > 0.01 ? `<tr><td>Change (${snap.changeCurrency})</td><td style="text-align:right">${CURRENCIES[snap.changeCurrency].symbol}${snap.change.toFixed(2)}</td></tr>` : ''}
   </table>
   ${showNotes && snap.notes ? `<div class="divider"></div><p>Note: ${esc(snap.notes)}</p>` : ''}
-  <p class="footer">${esc(footer)}</p>
+  <p class="footer">${escMultiline(footer)}</p>
   ${customFooterLines}
 </body></html>`
 
@@ -240,7 +246,7 @@ function buildReceiptHtml(
     </div>
     ${showNotes && snap.notes ? `<p style="margin-top:12px;font-size:12px;color:#64748b">Note: ${esc(snap.notes)}</p>` : ''}
   </div>
-  <div class="footer">${esc(footer)}</div>
+  <div class="footer">${escMultiline(footer)}</div>
   ${customField1 || customField2 || customField3
     ? `<div class="custom-fields">${[customField1, customField2, customField3].filter(Boolean).map((f) => `<div>${esc(f)}</div>`).join('')}</div>`
     : ''}
@@ -274,7 +280,7 @@ ${notesLine}${esc(footer)}${customLines ? '\n' + customLines : ''}</pre></body><
 export function PaymentModal({ isOpen, onClose, onComplete }: PaymentModalProps) {
   const { items, customer, notes, subtotal, discountAmount, taxAmount, total,
     discountType, discountValue, loyaltyPointsToRedeem, taxRate, taxEnabled, orderType,
-    editingOrderId, editingOrderNumber, setEditingOrder } = useCartStore()
+    editingOrderId, setEditingOrder } = useCartStore()
   const { staff, shift } = useAuthStore()
   const showToast = useUiStore((s) => s.showToast)
   const clearCart = useCartStore((s) => s.clearCart)
@@ -388,16 +394,6 @@ export function PaymentModal({ isOpen, onClose, onComplete }: PaymentModalProps)
 
   function removePayment(index: number) {
     setPayments((prev) => prev.filter((_, i) => i !== index))
-  }
-
-  function handleCurrencyToggle(index: number) {
-    setPayments((prev) => prev.map((p, i) => {
-      if (i !== index) return p
-      const newCurrency: CurrencyCode = p.currency === 'USD' ? 'KYD' : 'USD'
-      const currentAmount = parseFloat(String(p.amount)) || 0
-      const newAmount = round2(convertAmount(currentAmount, p.currency, newCurrency, kydToUsdRate))
-      return { ...p, currency: newCurrency, amount: newAmount }
-    }))
   }
 
   async function handleProcess() {
@@ -560,81 +556,35 @@ export function PaymentModal({ isOpen, onClose, onComplete }: PaymentModalProps)
   }
 
   function buildInvoiceHtmlFromSnap(snap: ReceiptSnapshot): string {
-    const storeName       = storeSettings.storeName          ?? ''
-    const storeAddress    = storeSettings.storeAddress       ?? ''
-    const storePhone      = storeSettings.storePhone         ?? ''
-    const showLogo        = (storeSettings.invoiceShowLogo   ?? 'true') === 'true'
-    const footer          = storeSettings.invoiceFooterText  ?? 'Payment due on receipt. Thank you!'
-    const primaryColor    = storeSettings.invoicePrimaryColor   ?? '#1e293b'
-    const accentColor     = storeSettings.invoiceAccentColor    ?? '#10b981'
-    const headerMessage   = storeSettings.invoiceHeaderMessage  ?? ''
-    const showTaxLine     = (storeSettings.invoiceShowTaxLine      ?? 'true') === 'true'
-    const showDiscountLine= (storeSettings.invoiceShowDiscountLine ?? 'true') === 'true'
-    const customField1    = storeSettings.invoiceCustomField1 ?? ''
-    const customField2    = storeSettings.invoiceCustomField2 ?? ''
-    const customField3    = storeSettings.invoiceCustomField3 ?? ''
-
-    const logoHtml = showLogo && receiptConfig.logoBase64
-      ? `<img src="${receiptConfig.logoBase64}" style="max-height:60px;max-width:200px;object-fit:contain" alt="Logo"/>`
-      : ''
-    const currSym = CURRENCIES[storeCurrency]?.symbol ?? '$'
-    const fmtAmt = (n: number) => `${currSym}${n.toFixed(2)}`
-    const subtotal = snap.subtotal
-    const tax = snap.taxAmount
-    const total = snap.total
-    const rows = snap.items.map((i) =>
-      `<tr><td style="padding:8px 12px">${esc(i.productName)}${i.variantName ? ` (${esc(i.variantName)})` : ''}</td>
-       <td style="padding:8px 12px;text-align:center">${i.quantity}</td>
-       <td style="padding:8px 12px;text-align:right">${fmtAmt(i.unitPrice)}</td>
-       <td style="padding:8px 12px;text-align:right;font-weight:600">${fmtAmt((i.unitPrice - i.discountAmount) * i.quantity)}</td></tr>`
-    ).join('')
-
-    const customFooter = [customField1, customField2, customField3]
-      .filter(Boolean)
-      .map((f) => `<div style="margin-top:4px">${esc(f)}</div>`)
-      .join('')
-
-    return `<!DOCTYPE html><html><head><meta charset="utf-8">
-<style>
-  body{font-family:'Segoe UI',sans-serif;color:#1e293b;margin:0;padding:32px 40px;font-size:13px}
-  h1{margin:0;font-size:22px;font-weight:800;letter-spacing:-0.5px;color:${primaryColor}}
-  table{width:100%;border-collapse:collapse}
-  thead tr{background:${primaryColor};color:#fff}
-  th{padding:9px 12px;text-align:left;font-weight:600;font-size:12px}
-  tbody tr:nth-child(even){background:#f8fafc}
-  .totals td{padding:4px 0;font-size:13px}
-  .grand-total{font-size:16px;font-weight:700;border-top:2px solid ${primaryColor};padding-top:8px!important}
-  .discount-row td{color:${accentColor}}
-  .paid-stamp{display:inline-block;border:2px solid #16a34a;color:#16a34a;border-radius:4px;padding:2px 10px;font-size:12px;font-weight:700;letter-spacing:1px}
-  .section{background:#f8fafc;border-radius:8px;padding:12px 16px;margin-bottom:16px}
-  .footer{margin-top:24px;padding:12px 16px;background:#f8fafc;border-radius:8px;font-size:11px;color:#64748b;text-align:center}
-</style>
-</head><body>
-<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px">
-  <div>${logoHtml}<div style="margin-top:${logoHtml ? 8 : 0}px"><strong style="font-size:16px">${esc(storeName)}</strong>
-    ${headerMessage ? `<div style="font-size:12px;color:#64748b;font-style:italic;margin-top:2px">${esc(headerMessage)}</div>` : ''}
-    ${storeAddress ? `<div style="color:#64748b;font-size:12px;margin-top:2px">${esc(storeAddress)}</div>` : ''}
-    ${storePhone ? `<div style="color:#64748b;font-size:12px">${esc(storePhone)}</div>` : ''}
-  </div></div>
-  <div style="text-align:right"><h1>INVOICE</h1>
-    <div style="color:#64748b;font-size:12px;margin-top:4px">#${snap.orderNumber}</div>
-    <div style="color:#64748b;font-size:12px">${new Date().toLocaleDateString()}</div>
-    <div style="margin-top:8px"><span class="paid-stamp">PAID</span></div>
-  </div>
-</div>
-${snap.customerName ? `<div class="section"><div style="font-weight:600;color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Bill To</div><strong>${esc(snap.customerName)}</strong></div>` : ''}
-<table><thead><tr><th>Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Unit</th><th style="text-align:right">Total</th></tr></thead>
-<tbody>${rows}</tbody></table>
-<div style="display:flex;justify-content:flex-end;margin-top:16px">
-  <table class="totals" style="width:220px">
-    <tr><td>Subtotal</td><td style="text-align:right">${fmtAmt(subtotal)}</td></tr>
-    ${showDiscountLine && snap.discountAmount > 0 ? `<tr class="discount-row"><td>Discount</td><td style="text-align:right">-${fmtAmt(snap.discountAmount)}</td></tr>` : ''}
-    ${showTaxLine && tax > 0 ? `<tr><td>Tax</td><td style="text-align:right">${fmtAmt(tax)}</td></tr>` : ''}
-    <tr class="grand-total"><td>Total</td><td style="text-align:right">${fmtAmt(total)}</td></tr>
-  </table>
-</div>
-${footer || customFooter ? `<div class="footer">${esc(footer)}${customFooter}</div>` : ''}
-</body></html>`
+    return buildInvoiceHtml(
+      {
+        orderNumber: snap.orderNumber,
+        date: new Date(),
+        isPaid: true,
+        customerName: snap.customerName,
+        items: snap.items.map((i) => ({
+          name: i.productName,
+          variantName: i.variantName,
+          quantity: i.quantity,
+          unitPrice: i.unitPrice,
+          discountAmount: i.discountAmount
+        })),
+        subtotal: snap.subtotal,
+        discountAmount: snap.discountAmount,
+        taxAmount: snap.taxAmount,
+        total: snap.total,
+        payments: snap.payments.map((p) => ({ method: p.method, amount: p.amount })),
+        notes: snap.notes
+      },
+      {
+        storeName: storeSettings.storeName ?? '',
+        storeAddress: storeSettings.storeAddress ?? '',
+        storePhone: storeSettings.storePhone ?? '',
+        logoBase64: receiptConfig.logoBase64,
+        currencySymbol: CURRENCIES[storeCurrency]?.symbol ?? '$'
+      },
+      storeSettings
+    )
   }
 
   async function handlePrintInvoice() {

@@ -217,6 +217,11 @@ export const IPC = {
   FILE_SYNC_TEST_PATH: 'fileSync:testPath',
   FILE_SYNC_GET_LOCAL_SHARE_PATH: 'fileSync:getLocalSharePath',
   FILE_SYNC_STATE_PUSH: 'fileSync:statePush',
+
+  // Automatic DB backups
+  BACKUP_RUN_NOW: 'backup:runNow',
+  BACKUP_STATUS: 'backup:status',
+  BACKUP_PICK_DIR: 'backup:pickDir',
 } as const
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC]

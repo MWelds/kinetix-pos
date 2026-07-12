@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Search, UserPlus, User } from 'lucide-react'
+import { Search, UserPlus } from 'lucide-react'
 import { api } from '../../lib/api'
 import { Input, Button, Badge } from '../../components/ui'
 import type { Customer } from '../../types'

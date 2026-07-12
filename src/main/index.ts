@@ -14,6 +14,7 @@ import { initCloudSync } from './sync/cloud-sync.service'
 import { initFileSync } from './sync/file-sync.service'
 import { startFileSyncServer, getDefaultLocalSharePath } from './sync/file-sync-server'
 import { settingsService } from './services/settings.service'
+import { backupService } from './services/backup.service'
 import { startEmbeddedServer } from './sync/embedded-server'
 
 // ─── Crash logger ─────────────────────────────────────────────────────────────
@@ -140,6 +141,8 @@ app
         startFileSyncServer(localSharePath, intervalSec)
       }
     }
+
+    backupService.startScheduler()
 
     initSync()
     initSyncV2()

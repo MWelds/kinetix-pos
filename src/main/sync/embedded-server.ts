@@ -12,7 +12,7 @@ import { getSqlite } from '../database/connection'
 import { candidateHashes, verifyPin } from '../lib/pin'
 import { getLanIp, getLanIps } from '../lib/network'
 import {
-  SYNC_TABLES, HAS_UPDATED_AT, MACHINE_SPECIFIC_SETTINGS, LWW_EXCLUDE_COLS,
+  SYNC_TABLES, SYNC_APPLY_ORDER, HAS_UPDATED_AT, MACHINE_SPECIFIC_SETTINGS, LWW_EXCLUDE_COLS,
   type SyncTable,
 } from './sync.constants'
 
@@ -955,7 +955,10 @@ function createHandler(apiKey: string) {
           let total = 0
           const adjPids: string[] = []
           const skippedTables: { table: string; error: string }[] = []
-          for (const table of SYNC_TABLES) {
+          // Apply in dependency order so FK parents (staff/shifts/customers/products)
+          // exist before the orders/order_items/payments that reference them —
+          // otherwise the server drops pushed orders on a FK violation.
+          for (const table of SYNC_APPLY_ORDER) {
             const rows = body.records[table]
             if (!Array.isArray(rows) || rows.length === 0) continue
             try {
@@ -992,7 +995,8 @@ function createHandler(apiKey: string) {
           let rowsApplied = 0
           const adjPids: string[] = []
 
-          for (const table of SYNC_TABLES) {
+          // Dependency order — FK parents before children (see SYNC_APPLY_ORDER).
+          for (const table of SYNC_APPLY_ORDER) {
             const tablePayload = body.records?.[table]
             if (!tablePayload) continue
 

@@ -2,7 +2,7 @@ import { getSqlite } from '../database/connection'
 import { settingsService } from '../services/settings.service'
 import type { SyncState, SyncRecord, SyncPayload, PullResponse, PushResponse } from './sync.types'
 import {
-  SYNC_TABLES, HAS_UPDATED_AT, MACHINE_SPECIFIC_SETTINGS, LWW_EXCLUDE_COLS,
+  SYNC_TABLES, SYNC_APPLY_ORDER, HAS_UPDATED_AT, MACHINE_SPECIFIC_SETTINGS, LWW_EXCLUDE_COLS,
   type SyncTable,
 } from './sync.constants'
 
@@ -300,13 +300,12 @@ function applyPulledRecords(records: SyncPayload): void {
     }
   })
 
-  for (const [table, rows] of Object.entries(records)) {
-    // Reject any table name not in the known-good allowlist to prevent SQL injection
-    // from a compromised or malicious sync server.
-    if (!SYNC_TABLES.includes(table as SyncTable)) {
-      console.warn(`[sync] applyPulledRecords: ignoring unknown table "${table}"`)
-      continue
-    }
+  // Apply in dependency order so foreign-key parents (staff, shifts, customers,
+  // products …) land before the orders/order_items/payments that reference them.
+  // Manifest order applied orders first, so they hit a FK violation and were
+  // dropped — see SYNC_APPLY_ORDER. Unknown tables in the payload are ignored.
+  for (const table of SYNC_APPLY_ORDER) {
+    const rows = records[table]
     if (Array.isArray(rows) && rows.length > 0) {
       applyTable(table, rows)
     }

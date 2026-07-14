@@ -25,7 +25,7 @@ import { getSqlite } from '../database/connection'
 import { settingsService } from '../services/settings.service'
 import type { SyncState, SyncRecord } from './sync.types'
 import {
-  SYNC_TABLES, HAS_UPDATED_AT, MACHINE_SPECIFIC_SETTINGS, LWW_EXCLUDE_COLS,
+  SYNC_TABLES, SYNC_APPLY_ORDER, HAS_UPDATED_AT, MACHINE_SPECIFIC_SETTINGS, LWW_EXCLUDE_COLS,
   type SyncTable,
 } from './sync.constants'
 
@@ -404,12 +404,15 @@ async function pullChangesV2(serverUrl: string, apiKey: string, terminalId: stri
 function applyPulledRecordsV2(records: V2PullResponse['records']): void {
   const db = getSqlite()
 
-  for (const [table, { upserts, deletes }] of Object.entries(records)) {
-    if (!SYNC_TABLES.includes(table as SyncTable)) {
-      console.warn(`[sync-v2] pull: ignoring unknown table "${table}"`)
-      continue
-    }
+  // Apply in dependency order so foreign-key parents (staff, shifts, customers,
+  // products …) are inserted before the rows that reference them (orders,
+  // order_items, payments). Applying in raw manifest order dropped orders on FK
+  // violations — see SYNC_APPLY_ORDER. Deletes run in reverse (children first).
+  const upsertPass = SYNC_APPLY_ORDER.filter((t) => records[t]?.upserts?.length)
+  const deletePass = [...SYNC_APPLY_ORDER].reverse().filter((t) => records[t]?.deletes?.length)
 
+  for (const table of upsertPass) {
+    const upserts = records[table]!.upserts
     // ── Upserts ──────────────────────────────────────────────────────────────
     if (upserts.length > 0) {
       const applyUpserts = db.transaction((rows: SyncRecord[]) => {
@@ -465,9 +468,12 @@ function applyPulledRecordsV2(records: V2PullResponse['records']): void {
       try { applyUpserts(upserts) }
       catch (err) { console.error(`[sync-v2] upsert failed for ${table}:`, (err as Error).message) }
     }
+  }
 
-    // ── Hard deletes ─────────────────────────────────────────────────────────
-    // These are rare (most deletes are soft via deleted_at), but we honour them.
+  // ── Hard deletes (reverse dependency order — children before parents) ───────
+  // These are rare (most deletes are soft via deleted_at), but we honour them.
+  for (const table of deletePass) {
+    const deletes = records[table]!.deletes
     if (deletes.length > 0) {
       const pkCol = table === 'settings' ? 'key' : 'id'
       const applyDeletes = db.transaction((ids: string[]) => {

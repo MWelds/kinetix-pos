@@ -34,6 +34,43 @@ export const SYNC_TABLES = [
 export type SyncTable = (typeof SYNC_TABLES)[number]
 
 /**
+ * Dependency-ordered (topological) list used when APPLYING synced records.
+ *
+ * SYNC_TABLES is a transfer manifest, not an apply order. Applying records in
+ * that order inserts children before their foreign-key parents — e.g. an
+ * `orders` row (which references shifts/staff/customers/discount_rules) is
+ * applied before those rows exist locally, so SQLite rejects it with a foreign
+ * key violation. The apply code caught and skipped those rows, and because the
+ * v2 sequence cursor still advanced, the dropped order was never re-sent — which
+ * is why orders never replicated between terminals.
+ *
+ * This list orders every referenced (parent) table before the tables that
+ * reference it, so FK constraints are satisfied at insert time. Apply UPSERTS in
+ * this order; apply DELETES in the reverse order (children before parents).
+ */
+export const SYNC_APPLY_ORDER = [
+  // ── Parents / referenced tables (no outgoing FKs, or only to earlier rows) ──
+  'categories',
+  'customers',
+  'staff',
+  'vendors',
+  'gift_cards',
+  'products',            // → categories
+  'product_variants',    // → products
+  'product_components',  // → products
+  'discount_rules',      // → categories, products
+  'inventory',           // → products, product_variants
+  'inventory_adjustments', // → products, product_variants
+  'shifts',              // → staff
+  // ── Children that reference the tables above ────────────────────────────────
+  'orders',              // → customers, staff, shifts, discount_rules
+  'order_items',         // → orders, products, product_variants
+  'payments',            // → orders
+  'vendor_payouts',      // → vendors
+  'settings',
+] as const satisfies readonly SyncTable[]
+
+/**
  * Tables tracked by updated_at for bidirectional upsert (last-write-wins).
  *
  * NOTE: 'inventory' is intentionally included here so that fields like

@@ -224,6 +224,11 @@ export const IPC = {
   FILE_SYNC_TEST_PATH: 'fileSync:testPath',
   FILE_SYNC_GET_LOCAL_SHARE_PATH: 'fileSync:getLocalSharePath',
   FILE_SYNC_STATE_PUSH: 'fileSync:statePush',
+
+  // License
+  LICENSE_GET_INFO: 'license:getInfo',
+  LICENSE_ACTIVATE: 'license:activate',
+  LICENSE_DEACTIVATE: 'license:deactivate',
 } as const
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC]

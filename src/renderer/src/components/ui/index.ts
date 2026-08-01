@@ -1,4 +1,5 @@
 export { Button } from './Button'
+export { FeatureGate } from './FeatureGate'
 export { Input } from './Input'
 export { Textarea } from './Textarea'
 export { Modal } from './Modal'

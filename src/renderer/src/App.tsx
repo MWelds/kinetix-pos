@@ -2,6 +2,7 @@ import React, { useEffect, useState, Component, type ReactNode } from 'react'
 import { HashRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { useAuthStore } from './stores/auth.store'
 import { useCartStore } from './stores/cart.store'
+import { useLicenseStore } from './stores/license.store'
 import { useCurrencyStore } from './stores/currency.store'
 import { useLogoStore } from './stores/logo.store'
 import { useUiStore } from './stores/ui.store'
@@ -170,6 +171,13 @@ function UpdateBanner() {
   return null
 }
 
+/** Loads license info from the main process into the Zustand license store once on startup. */
+function LicenseHydrator() {
+  const load = useLicenseStore((s) => s.load)
+  useEffect(() => { load() }, [load])
+  return null
+}
+
 /** Loads persisted settings from the DB into Zustand stores once on startup. */
 function SettingsHydrator() {
   const setTaxEnabled = useCartStore((s) => s.setTaxEnabled)
@@ -264,6 +272,7 @@ export function App() {
 
       <ToastContainer />
       <SettingsHydrator />
+      <LicenseHydrator />
       <DisplaySyncBridge />
       <UpdateBanner />
     </HashRouter>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import QRCode from 'qrcode'
-import { Save, RefreshCw, ArrowLeftRight, Monitor, Wifi, WifiOff, ExternalLink, FolderOpen, Plus, Edit2, Trash2, Check, X, ImageIcon, Upload, Link2, Link2Off, AlertCircle, RotateCcw, ChevronDown, Search, Scan, CreditCard, Cast } from 'lucide-react'
+import { Save, RefreshCw, ArrowLeftRight, Monitor, Wifi, WifiOff, ExternalLink, FolderOpen, Plus, Edit2, Trash2, Check, X, ImageIcon, Upload, Link2, Link2Off, AlertCircle, RotateCcw, ChevronDown, Search, Scan, CreditCard, Cast, Key } from 'lucide-react'
 import { api } from '../../lib/api'
 import { Input, Textarea, Button } from '../../components/ui'
 import { useUiStore } from '../../stores/ui.store'
@@ -8,6 +8,7 @@ import { useCartStore } from '../../stores/cart.store'
 import { useLogoStore } from '../../stores/logo.store'
 import { useCurrencyStore } from '../../stores/currency.store'
 import type { Category } from '../../types'
+import { LicenseSection } from './LicenseSection'
 import {
   CURRENCIES,
   CURRENCY_REGIONS,
@@ -1778,6 +1779,11 @@ export function SettingsScreen() {
               <p className="text-xs text-gray-400">Recommended: PNG with transparent background, at least 200px wide.</p>
             </div>
           </div>
+        </SectionAccordion>
+
+        {/* License */}
+        <SectionAccordion id="license" title="License" icon={<Key size={16} className="text-blue-500" />} defaultOpen>
+          <LicenseSection />
         </SectionAccordion>
 
         {/* Store Information */}

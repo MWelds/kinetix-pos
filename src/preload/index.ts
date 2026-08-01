@@ -299,6 +299,13 @@ const api = {
     },
   },
 
+  // License
+  license: {
+    getInfo: () => ipcRenderer.invoke(IPC.LICENSE_GET_INFO),
+    activate: (key: string) => ipcRenderer.invoke(IPC.LICENSE_ACTIVATE, key),
+    deactivate: () => ipcRenderer.invoke(IPC.LICENSE_DEACTIVATE),
+  },
+
   // File-based sync (no HTTP — uses Windows network share)
   fileSync: {
     getState: () => ipcRenderer.invoke(IPC.FILE_SYNC_GET_STATE),

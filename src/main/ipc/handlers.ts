@@ -47,6 +47,13 @@ import {
 } from '../sync/file-sync.service'
 import { startFileSyncServer, stopFileSyncServer, getDefaultLocalSharePath } from '../sync/file-sync-server'
 import { getLanIps, getLanIp } from '../lib/network'
+import { getSqlite } from '../database/connection'
+import {
+  initLicenseService,
+  getLicenseInfo,
+  activateLicense,
+  deactivateLicense,
+} from '../services/license.service'
 
 // ── PIN reset code store ─────────────────────────────────────────────────────
 
@@ -95,6 +102,9 @@ function requireRole(e: IpcMainInvokeEvent, minRole: 'cashier' | 'manager' | 'ad
 
 /** Register all IPC handlers. Call once after app is ready. */
 export function registerIpcHandlers(): void {
+  // Init license service with the raw SQLite connection
+  initLicenseService(getSqlite())
+
   // Products
   ipcMain.handle(IPC.PRODUCTS_LIST, (_e, categoryId?: string) =>
     productService.listWithInventory(categoryId)
@@ -1098,5 +1108,16 @@ export function registerIpcHandlers(): void {
 
   // Staff — get single member by ID
   ipcMain.handle(IPC.STAFF_GET, (_e, id: string) => staffService.get(id))
+
+  // ── License ────────────────────────────────────────────────────────────────
+
+  ipcMain.handle(IPC.LICENSE_GET_INFO, () => getLicenseInfo())
+
+  ipcMain.handle(IPC.LICENSE_ACTIVATE, (_e, key: string) => activateLicense(key))
+
+  ipcMain.handle(IPC.LICENSE_DEACTIVATE, () => {
+    deactivateLicense()
+    return { ok: true }
+  })
 
 }
